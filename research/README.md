@@ -1,0 +1,108 @@
+# research/ — 研究材料、来源与证据分级
+
+这里是 Phase 0 的研究记录。它的用途是：几年后有人问"我们凭什么这样建模"，能一条一条查到来源与证据强度。
+
+## 硬规则
+
+**`research/` 对运行时代码物理不可见。** 这些材料用来写规则，**不得用来写 prompt**。构建期 CI 断言：渲染后的 prompt 不得命中本目录下任何长度 ≥8 字的连续片段。
+
+理由：项目已有约 300 万字的真实历史研究材料。只要任何一段进入运行时 prompt，这个世界就读到了自己的未来。而这在工程上极易发生——有人为了让 agent 更懂农业，把 `agriculture-carrying-capacity.md` 的片段塞进 system prompt。见 `critique/llm-storytelling` F5。
+
+## 目录
+
+```
+briefs/     22 份学科研究简报（约 267 万字符）
+critique/   7 份红队审查（约 43 万字符）
+EVIDENCE.md 证据总账（由 briefs 提炼，可核查的账目）
+```
+
+### briefs/ — 学科研究简报
+
+每份的固定结构：本简报要回答的问题 / 已有成熟模型与理论 / 可直接用于本项目的机制清单 / 硬数字与参数表 / 数据集与数据库 / 中国与东亚特定证据 / 学界争议与未解决问题 / 反模式 / **无来源判断（D 级）** / 参考文献（含引文核验标注）。
+
+| 简报 | 一句话结论 |
+|---|---|
+| `abm-methodology` | 必须把空模型支配测试与外生序列置换检验做进内核，否则几乎必然把外生气候注入的兴衰节律误认为自己机制的涌现成果 |
+| `complex-systems-emergence` | "国家自发涌现了"可以给出可计算判据，但没有任何单一指标能挡住隐藏剧情树，必须用配对判据 |
+| `population-dynamics` | 唯一可直接编译成代码的人口内核是 Lee–Tuljapurkar–Puleston 食物比模型；古人口学数据只能校准相对变化，绝不能校准绝对水平 |
+| `agriculture-carrying-capacity` | 承载力永远是导出诊断量，绝不能作为格网常数或驱动规则 |
+| `east-asia-climate-environment` | 正确架构是"真实地理骨架 + 统计同类的合成气候实现"，真实古气候序列降级为分布层校准集 |
+| `economy-markets-trade` | 市场与货币不能被赋予，只能被判定；运输成本比（海:河下:河上:车 = 1:5:10:52）是全链第一因 |
+| `state-formation` | 集中化上限由继承制度稳定性与"实力能否决定胜负"的程度决定，不由人口或粮食盈余决定 |
+| `collective-action-cooperation` | 合作不是 agent 的属性而是博弈的均衡结果；任何把合作/忠诚做成标量的设计都会一次性抹掉整条因果链 |
+| `war-conflict-logistics` | 兵力比几乎不能预测前现代会战胜负（McFadden R²=0.004），真正的硬约束是后勤与士气 |
+| `institutional-evolution` | 制度 = 语法结构（说得清）+ 均衡标注（会不会被遵守）+ 成本模型（养不养得起）三层对象 |
+| `technology-innovation-diffusion` | 扩散在经验上主要是噪声——最好的考古模型也只能解释到达年代方差的 36%，确定性波前与固定科技树同样是反模式 |
+| `cultural-evolution` | 文化必须建成"每模块自带谱系 + 自带有效种群 + 自带吸引子"的多层结构，不是给数值乘修正系数 |
+| `religion-formation-spread` | 内核不该有"宗教诞生"触发器，而该有由生态胁迫/可继承性/俱乐部品价值/监督失效率驱动的组织形态状态机 |
+| `social-networks-information` | 信息边界必须是数据结构级隔离：真实 Event 在类型系统上对 prompt 渲染函数不可见 |
+| `cliodynamics-secular-cycles` | 结构-人口理论的"200-300 年周期"是方程结构的产物而非涌现结果；只采纳机制与危险率形式，拒绝任何带政体年龄的规则 |
+| `china-eastasia-geography-archaeology` | "不复刻真实历史"是通过坐标层与语义层隔离实现的，不是通过换地图实现的 |
+| `stratification-kinship-inheritance` | 不平等的"量级"由财富冲击方差决定、"世袭性"由代际传递系数决定，二者必须分开建模 |
+| `epidemics-disease` | 大疫时点必须由疫源地生态与贸易网络外生决定——一旦疫病能"感知"人口是否过多，它就变成了隐藏剧情 |
+| `writing-records-memory` | "当时存在的记录"与"今天留下的记录"之间存在可量化、方向可预测的巨大落差（抄本存活率 5–20%） |
+| `settlement-urbanization-spatial` | rank-size/Zipf 必须当成涌现的度量而非生成规则；settlement scaling 是唯一有定量预测且被考古反复检验的理论 |
+| `llm-agent-social-simulation` | LLM 的均值可用、分布坍缩、数值不可信、输出不可重跑、调用量与 agent 数同阶时算力立刻不可行 |
+| `provenance-replay-counterfactual` | 三个关键决策：随机数由坐标寻址而非状态迭代、离散抽样用 Gumbel-max、因果是带凭据的类型化边而非 LLM 写的文字 |
+
+### critique/ — 红队审查
+
+7 个独立视角对项目纲领本身的攻击。它们不是建议，是失败模式的清单，每条都带"可观察症状"（跑起来之后我们怎么发现中了这个坑）。
+
+| 审查 | 总判断 |
+|---|---|
+| `pseudo-simulation` | 纲领在结构上无法发现自己已经是剧情树；且全部防御集中在代码层，完全没有防守唯一能让干净内核产出彻底虚假历史的通道：人类回路 |
+| `llm-storytelling` | 纲领第 5 条把边界画在了错误的位置：保护了 P(结果\|事件)，却把事件基率、因果解释权、命名权全交给了 LLM |
+| `emergence-verifiability` | 纲领规定了"什么被允许发生"，却从没规定"什么会让我们判定失败"——没有拒绝域的判据体系不是判据而是修辞 |
+| `causality-bookkeeping` | 第 2 条与第 3 条要求同一个动力学参数朝相反方向取值；真正的问题不是做不出因果链，而是我们一定做得出一条看起来很好的因果链 |
+| `computational-feasibility` | 预算单位写反了：真正的单位是"单次 × 集合规模"，而算力不足不是让项目变慢，是让它失去证伪能力 |
+| `mandate-contradictions` | 纲领把三组互斥目标都写成"必须"却没给裁决规则，于是它会在实现阶段被"哪种写法最省事"这个无人签字的优先级悄悄改写 |
+| `prior-art-postmortem` | 前人失败的共同模式不是想错了，而是没有为自己的核心主张准备能证伪它的实验 |
+
+## 证据分级
+
+- **A** = 多个独立实证来源支持，且有可用的量化参数或范围
+- **B** = 学界有理论共识或机制被广泛接受，但量化弱、参数需自行选择
+- **C** = 存在实质争议、仅单一来源、或结论被后续研究挑战
+- **D** = 无来源，属于我们为了让模拟能跑而做的假设
+
+## 引文核验
+
+每份简报最承重的 8–15 条引文由独立 agent 逐条检索核验，判定为 `confirmed` / `corrected` / `not_found` / `likely_fabricated`，结果回写到简报第 10 节的标注中（`[已核验]` / `[已修正: …]` / `[未找到]` / `[疑似不存在——不得引用]`）。
+
+**当前存疑引文分布**（15 份简报共 37 条）：
+
+| 简报 | 存疑条数 |
+|---|---|
+| `china-eastasia-geography-archaeology` | 9 |
+| `collective-action-cooperation` | 5 |
+| `settlement-urbanization-spatial` | 4 |
+| `stratification-kinship-inheritance` | 3 |
+| `agriculture-carrying-capacity` / `cliodynamics-secular-cycles` / `economy-markets-trade` / `institutional-evolution` / `social-networks-information` | 各 2 |
+| `epidemics-disease` / `llm-agent-social-simulation` / `provenance-replay-counterfactual` / `religion-formation-spread` / `state-formation` / `war-conflict-logistics` | 各 1 |
+
+**"未找到"不等于"不存在"**——冷门文献、非英文文献、付费墙都会导致检索失败。但**凡是标记为存疑的来源，其支撑的结论在采纳前必须重新取证**。`EVIDENCE.md` 把这些条目单列进"失去支撑"小节。
+
+## 已知必须警惕的数据陷阱
+
+这些不是我们的疏忽，是这些数据源的固有属性：
+
+- **缺失 ≠ 不存在**。Whitehouse et al. 2019 *Nature* 因把 61% 的 unknown 重编码为"不存在"而于 2021 年撤稿（Beheim et al. 2021）。世界状态 schema 必须区分 `absent` 与 `unknown`。
+- **HYDE 是反演产品，不是观测数据**。用它校准人口模型是"模型-模型对比"。
+- **SPD（放射性碳日期求和）不适合逐点比较、变化率估计或作为回归变量**。
+- **Ethnographic Atlas / SCCS 有 Galton 问题**（社会之间不独立）、极高缺失率、时间错位（编码的是 19–20 世纪殖民边缘社会）。只能当先验形状。
+- **史料计数不是事件计数**。中国疫病记录前明 247 / 明 1,898 / 清 3,193 条，原作者自陈上升"可能部分反映记录实践的改善"。
+- **Seshat 存在数据粘贴与插值**。中游黄河的 110 个宗教数据点只由 16 次独立观测支撑。
+- **整理版数据集会静默丢数据**。本次直接发现 jrnold/CDB90 整理版 `battles.csv` 丢失了全部 217 个"攻方战败"值，任何基于它的胜负分析都会只保留攻方获胜的战役。**所有外部数据必须做分布 sanity check 并与原始来源对拍。**
+- **单位混乱是历史数据的固有属性**。亩至少有约 10 种大小（相差五倍）；清代银两有 56 种地区标准。标定优先用比率而非绝对值。
+
+## 未做的研究
+
+Phase 0 的检索有明确边界，以下方向尚未覆盖，列在这里以免被误以为已经查过：
+
+- 前现代法律制度与司法（诉讼、成文法典化、习惯法）
+- 手工业组织与技术传承的具体形态（作坊、师徒、行会规章）
+- 海洋史与航海技术的量化参数
+- 音系学/历史语言学的可计算模型（世界内命名引擎需要，目前只有零散记录）
+- 儿童抚养与教育的时间/资源成本
+- 中亚与东南亚的独立考古序列（本轮以中国本部为主）
