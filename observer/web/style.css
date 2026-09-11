@@ -118,7 +118,7 @@ td.clickable,.link{color:var(--accent);cursor:pointer;text-decoration:underline 
 .ev{border-left:3px solid var(--line);padding:8px 10px;margin-bottom:6px;background:#fafaf8;
   border-radius:0 6px 6px 0;cursor:pointer}
 .ev:hover{background:#f3eee4}
-.ev.split{border-color:#7aa7d8}.ev.migrate{border-color:#c8a05a}.ev.extinct{border-color:#c07a72}
+.ev.split{border-color:#7aa7d8}.ev.migrate{border-color:#c8a05a}.ev.extinct{border-color:#c07a72}.ev.share{border-color:#6a8f6a}
 .ev .src{color:var(--muted);font-size:11.5px;margin-top:2px}
 .ev .when{font-weight:600;margin-right:8px;font-variant-numeric:tabular-nums}
 .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}

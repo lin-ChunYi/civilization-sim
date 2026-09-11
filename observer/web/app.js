@@ -54,7 +54,7 @@ const OverviewLogic = {
     return { text: (d > 0 ? "较开局 +" : "较开局 ") + d + u, dir: Math.sign(d) };
   },
   eventTypeCounts(events) {
-    const out = { migrate: 0, split: 0, extinct: 0, other: 0, total: 0 };
+    const out = { migrate: 0, split: 0, extinct: 0, share: 0, other: 0, total: 0 };
     (events || []).forEach((e) => {
       if (e && out[e.type] != null) out[e.type] += 1;
       else out.other += 1;
@@ -108,20 +108,20 @@ const OverviewLogic = {
       sentences.push("这是开局。当前共有 " + (agg.bands == null ? "—" : agg.bands) +
         " 个群体、" + (agg.pop == null ? "—" : agg.pop) + " 人。");
       sentences.push("第 0 年没有上一年度，不显示同比变化。");
-      if (ev.total === 0) sentences.push("本年没有记录到迁移、分裂或群体消失事件。");
+      if (ev.total === 0) sentences.push("本年没有记录到迁移、分裂、群体消失或信息交换事件。");
       else {
         sentences.push("记录到 " + ev.migrate + " 次迁移、" + ev.split +
-          " 次群体分裂、" + ev.extinct + " 次群体消失。");
+          " 次群体分裂、" + ev.extinct + " 次群体消失、" + ev.share + " 次信息交换。");
       }
       return { sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md };
     }
     sentences.push("本年出生 " + births + " 人，非迁移死亡（模型的原规则死亡） " +
       demo + " 人，迁移死亡 " + md + " 人。");
     if (ev.total === 0) {
-      sentences.push("本年没有记录到迁移、分裂或群体消失事件。");
+      sentences.push("本年没有记录到迁移、分裂、群体消失或信息交换事件。");
     } else {
       sentences.push("记录到 " + ev.migrate + " 次迁移、" + ev.split +
-        " 次群体分裂、" + ev.extinct + " 次群体消失。");
+        " 次群体分裂、" + ev.extinct + " 次群体消失、" + ev.share + " 次信息交换。");
     }
     sentences.push("当前共有 " + agg.bands + " 个群体、" + agg.pop + " 人。");
     if (input.ledgerMig != null && input.ledgerMig !== ev.migrate) {
@@ -148,7 +148,22 @@ function setHash(patch) {
   const str = Object.entries(h).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
   history.replaceState(null, "", "#" + str);
 }
-const NEED = () => (S.cfg ? S.cfg.engine.constants.NEED_PC : 730000);
+function runEngineName(run) {
+  return (run && run.engine) || (S.cfg && S.cfg.default_engine) || "exp03";
+}
+function runEngineInfo(run) {
+  const name = runEngineName(run);
+  if (S.cfg && S.cfg.engines && S.cfg.engines[name]) return S.cfg.engines[name];
+  return (S.cfg && S.cfg.engine) || {};
+}
+function engineHasParam(name, param) {
+  const inf = S.cfg && S.cfg.engines && S.cfg.engines[name];
+  return !!(inf && inf.engine_params && inf.engine_params.indexOf(param) >= 0);
+}
+const NEED = () => {
+  const inf = S.run ? runEngineInfo(S.run) : (S.cfg && S.cfg.engine);
+  return (inf && inf.constants && inf.constants.NEED_PC) ? inf.constants.NEED_PC : 730000;
+};
 
 const nf = (x) => (x === null || x === undefined ? "—" : Number(x).toLocaleString("zh-CN"));
 function py(kcal, digits) {
@@ -206,6 +221,8 @@ function renderStatus() {
       (S.run.kind === "preset" ? ` <span class="badge s-off">预生成案例</span>` : ""));
     parts.push(`<b>回放</b> ${esc(OverviewLogic.yearViewLabel(S.t))}`);
     parts.push(`<b>已计算</b> ${S.run.years_recorded ?? S.run.years_done}/${S.run.years} 年`);
+    const einfo = runEngineInfo(S.run);
+    parts.push(`<b>模型</b> ${esc(S.run.engine_path || einfo.engine_path || runEngineName(S.run))}`);
   } else {
     parts.push("尚未选择运行");
   }
@@ -295,13 +312,15 @@ function renderTech() {
   if (!S.run || !S.cfg) { box.textContent = "打开一次运行后显示。"; return; }
   const rec = recNow();
   const arm = S.cfg.arms[S.run.arm];
+  const einfo = runEngineInfo(S.run);
   const rows = [
-    ["模型", S.cfg.engine.engine_path + " @ " + S.cfg.engine.baseline_commit],
-    ["引擎 sha256", (S.cfg.engine.engine_sha256 || "").slice(0, 16) + "…"],
-    ["参数指纹", S.cfg.engine.params_fingerprint],
+    ["本次运行引擎", (S.run.engine || runEngineName(S.run)) + " · " + (S.run.engine_path || einfo.engine_path || "")],
+    ["基线", S.run.baseline_commit || einfo.baseline_commit || "—"],
+    ["引擎 sha256", ((S.run.engine_sha256 || einfo.engine_sha256 || "") + "").slice(0, 16) + "…"],
     ["种子 / 年数", S.run.seed + " / " + S.run.years],
     ["SIGMA_M", S.run.sigma_m + "‰"],
     ["MOVE_MORT_M", S.run.move_mort_m + "‰"],
+    ["SHARE_M", (S.run.share_m == null ? "无此参数" : S.run.share_m + "‰")],
     ["信息条件", arm ? arm.label : S.run.arm],
     ["model_run_id", S.run.model_run_id || "（尚未写入）"],
     ["full_digest", S.run.full_digest || "（尚未写入）"],
@@ -310,6 +329,15 @@ function renderTech() {
     rows.push(["状态哈希", rec.integrity.state_hash]);
     rows.push(["能量守恒误差", String(rec.integrity.conservation_error)]);
     rows.push(["人口恒等误差", String(rec.integrity.population_identity_error)]);
+    if (rec.integrity.share_ledger_error != null) {
+      rows.push(["信息账误差", String(rec.integrity.share_ledger_error)]);
+    }
+    if (rec.share) {
+      rows.push(["本年信息交换（采纳/拒绝）",
+        rec.share.adopted + " / " + rec.share.rejected +
+        "（收到 " + rec.share.received + "）"]);
+      rows.push(["累计采纳", String(rec.share.cum_adopted)]);
+    }
     rows.push(["累计吃掉", py(rec.cum.out_eat) + " 人年口粮"]);
     rows.push(["累计腐损", py(rec.cum.out_spoil) + " 人年口粮"]);
   }
@@ -472,6 +500,12 @@ function renderSide() {
     ["当年迁移误判率", y.mig_total ? pct(y.mig_regret, y.mig_total, 1)
       : `<span class="na">不适用（当年迁移 0 次）</span>`],
   ];
+  if (rec.share) {
+    rows.push(["本年信息交换采纳", `${nf(rec.share.adopted)} <small>条</small>`]);
+    rows.push(["本年信息交换拒绝", `${nf(rec.share.rejected)} <small>条</small>`]);
+    rows.push(["决策因交换而改变", rec.share.decision_changed == null
+      ? `<span class="na">未记录</span>` : `${nf(rec.share.decision_changed)} <small>次</small>`]);
+  }
   $("side-now").innerHTML = rows.map(([k, v]) =>
     `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
   const crows = [
@@ -728,7 +762,7 @@ function renderCharts() {
 
 /* ---------------- 事件 ---------------- */
 function TYPE_LABEL(t) {
-  return ({ migrate: "迁移", split: "分裂", extinct: "群体消失" })[t] || t;
+  return ({ migrate: "迁移", split: "分裂", extinct: "群体消失", share: "信息交换" })[t] || t;
 }
 function renderEvents() {
   const box = $("events");
@@ -773,15 +807,14 @@ function renderEvents() {
   if (!filtered.length) {
     box.innerHTML = `<div class="emptystate">${S.evScope === "year"
       ? (S.t === 0 ? "开局" : "第 " + S.t + " 年") + "没有可核实的" +
-        (S.evFilter === "all" ? "迁移、分裂或群体消失" : TYPE_LABEL(S.evFilter)) + "事件。"
+        (S.evFilter === "all" ? "迁移、分裂、群体消失或信息交换" : TYPE_LABEL(S.evFilter)) + "事件。"
       : "已加载范围内没有符合筛选的事件。"}</div>`;
   } else {
     box.innerHTML = filtered.map((e) => `<div class="ev ${esc(e.type)}" data-t="${e.t}"
-        data-band="${esc(e.band || "")}" data-to="${e.to != null ? e.to : ""}"
-        data-from="${e.from != null ? e.from : ""}">
+        data-band="${esc(e.band || e.receiver || "")}" data-to="${e.to != null ? e.to : ""}"
+        data-from="${e.from != null ? e.from : ""}" data-cell="${e.cell != null ? e.cell : ""}">
         <div><span class="when">${e.t === 0 ? "开局" : "第 " + e.t + " 年"}</span>
-          ${esc(TYPE_LABEL(e.type))} · ${esc(e.text)}
-          ${e.band ? " · " + esc(e.band.slice(0, 8)) + "…" : ""}</div>
+          ${esc(TYPE_LABEL(e.type))} · ${esc(e.text)}</div>
         <div class="src">来源：${esc(e.source || "未标注")}${e.unrecorded
           ? "　·　未记录：" + esc(e.unrecorded) : ""}</div>
       </div>`).join("");
@@ -791,6 +824,7 @@ function renderEvents() {
         band: n.dataset.band || null,
         to: n.dataset.to === "" ? null : +n.dataset.to,
         from: n.dataset.from === "" ? null : +n.dataset.from,
+        cell: n.dataset.cell === "" ? null : +n.dataset.cell,
       });
     }));
   }
@@ -826,6 +860,7 @@ function jumpToEvent(ev) {
   gotoYear(ev.t).then(() => {
     if (ev.to != null) S.selCell = ev.to;
     else if (ev.from != null) S.selCell = ev.from;
+    else if (ev.cell != null && ev.cell !== "") S.selCell = +ev.cell;
     if (ev.band) selectBand(ev.band, { force: true });
     else { renderMap(); renderSide(); }
   });
@@ -833,16 +868,18 @@ function jumpToEvent(ev) {
 
 /* ---------------- 运行记录 ---------------- */
 function renderRuns() {
-  const head = `<tr><th>运行</th><th>状态</th><th>seed</th><th>年数</th><th>SIGMA_M</th>
-    <th>MOVE_MORT_M</th><th>信息条件</th><th>已算/目标</th><th>创建时间</th><th>模型版本</th><th>操作</th></tr>`;
+  const head = `<tr><th>运行</th><th>状态</th><th>引擎</th><th>seed</th><th>年数</th><th>SIGMA_M</th>
+    <th>MOVE_MORT_M</th><th>SHARE_M</th><th>信息条件</th><th>已算/目标</th><th>创建时间</th><th>模型版本</th><th>操作</th></tr>`;
   $("runtable").innerHTML = head + S.runs.map((r) => `<tr class="${S.run && S.run.run_id === r.run_id ? "on" : ""}">
     <td class="clickable" data-open="${esc(r.run_id)}">${esc(r.label || r.run_id)}
       ${r.kind === "preset" ? '<span class="badge s-off">预生成</span>' : ""}</td>
-    <td>${statusBadge(r.status)}</td><td>${r.seed}</td><td>${r.years}</td>
+    <td>${statusBadge(r.status)}</td>
+    <td>${esc(r.engine || "exp03")}</td><td>${r.seed}</td><td>${r.years}</td>
     <td>${r.sigma_m}‰</td><td>${r.move_mort_m}‰</td>
+    <td>${r.share_m == null || r.engine === "exp03" ? "—" : r.share_m + "‰"}</td>
     <td>${S.cfg.arms[r.arm] ? esc(S.cfg.arms[r.arm].label) : esc(r.arm)}</td>
     <td>${r.years_recorded}/${r.years}</td><td>${tsfmt(r.created_at)}</td>
-    <td><small>${esc((r.engine_sha256 || "").slice(0, 8))} @ ${esc(r.baseline_commit || "—")}</small></td>
+    <td><small>${esc(r.engine_path || "")} · ${esc((r.engine_sha256 || "").slice(0, 8))}</small></td>
     <td>${["queued", "running"].includes(r.status)
       ? `<span class="link" data-cancel="${esc(r.run_id)}">取消</span>`
       : (r.kind === "preset" ? "" : `<span class="link" data-del="${esc(r.run_id)}">删除</span>`)}
@@ -1003,9 +1040,16 @@ async function boot() {
   $("f-arm").innerHTML = Object.entries(S.cfg.arms)
     .map(([k, v]) => `<option value="${esc(k)}">${esc(v.label)}</option>`).join("");
   $("armnote").textContent = Object.values(S.cfg.arms).map((v) => v.label + "：" + v.note).join("　");
-  $("footer").textContent = "模型 " + S.cfg.engine.engine_path + " @ " + S.cfg.engine.baseline_commit +
-    " · 仓库 " + (S.cfg.repo_commit || "") +
-    " · 本页只显示本服务自己的数据库。完整哈希与能量账在「技术详情」。";
+  const engines = S.cfg.engines || {};
+  const engineKeys = Object.keys(engines);
+  if (engineKeys.length) {
+    $("f-engine").innerHTML = engineKeys.map((k) =>
+      `<option value="${esc(k)}"${k === S.cfg.default_engine ? " selected" : ""}>${esc(engines[k].engine_label || k)}</option>`).join("");
+    $("f-engine").addEventListener("change", syncEngineForm);
+    syncEngineForm();
+  }
+  $("footer").textContent = "仓库 " + (S.cfg.repo_commit || "") +
+    " · 本页只显示本服务自己的数据库。当前回放用的是该次运行自己的模型路径，不是默认引擎。";
 
   await refresh();
   const hp = hashParams();
@@ -1028,6 +1072,12 @@ async function boot() {
   setInterval(refresh, 1500);
 }
 
+function syncEngineForm() {
+  const wrap = $("f-share-wrap");
+  if (!wrap || !$("f-engine")) return;
+  wrap.hidden = !engineHasParam($("f-engine").value, "share_m");
+}
+
 async function startRun() {
   const lim = S.cfg.limits;
   const seed = OverviewLogic.parseStrictInt($("f-seed").value, { name: "种子 seed", min: 0, max: lim.max_seed });
@@ -1037,9 +1087,17 @@ async function startRun() {
   for (const x of [seed, years, sigma, mort]) {
     if (!x.ok) { flash(x.error, true); return; }
   }
+  const engine = $("f-engine") ? $("f-engine").value : (S.cfg.default_engine || "exp03");
+  let share_m = 0;
+  if (engineHasParam(engine, "share_m")) {
+    const share = OverviewLogic.parseStrictInt($("f-share").value, { name: "SHARE_M", min: 0, max: 1000 });
+    if (!share.ok) { flash(share.error, true); return; }
+    share_m = share.value;
+  }
   const body = {
     seed: seed.value, years: years.value, sigma_m: sigma.value,
     move_mort_m: mort.value, arm: $("f-arm").value, label: $("f-label").value.trim(),
+    engine: engine, share_m: share_m,
   };
   $("b-start").disabled = true;
   try {

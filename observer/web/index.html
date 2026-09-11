@@ -133,6 +133,7 @@
         <button type="button" data-type="migrate">迁移</button>
         <button type="button" data-type="split">分裂</button>
         <button type="button" data-type="extinct">群体消失</button>
+        <button type="button" data-type="share">信息交换</button>
       </div>
     </div>
     <p class="muted" id="ev-load-note"></p>
@@ -169,13 +170,16 @@
 <section id="tab-runs" hidden>
   <div class="panel">
     <h3>发起一次新的模拟</h3>
-    <p class="muted">参数名与含义与模型一致（<code>exp03/verify3.py</code>）。这些是未标定的模型参数，
-       不是对现实的预测。改参数意味着新建一次运行，已有运行不会被改写。小数会被拒绝，不会悄悄取整。</p>
+    <p class="muted">参数名与含义与所选引擎一致。这些是未标定的模型参数，不是对现实的预测。
+       改参数意味着新建一次运行，已有运行不会被改写。小数会被拒绝，不会悄悄取整。
+       引擎列表来自后台 <code>/api/config</code> 的 <code>engines</code>，不在页面里写死。</p>
     <div class="form" id="form">
+      <label>引擎<select id="f-engine"></select></label>
       <label>种子 seed<input id="f-seed" type="text" inputmode="numeric" value="0" autocomplete="off"></label>
       <label>年数 years<input id="f-years" type="text" inputmode="numeric" value="120" autocomplete="off"></label>
       <label>SIGMA_M 资源再生年际波动（‰）<input id="f-sigma" type="text" inputmode="numeric" value="400" autocomplete="off"></label>
       <label>MOVE_MORT_M 迁移死亡强度（‰）<input id="f-mort" type="text" inputmode="numeric" value="50" autocomplete="off"></label>
+      <label id="f-share-wrap" hidden>SHARE_M 同格信息交换参与概率（‰）<input id="f-share" type="text" inputmode="numeric" value="0" autocomplete="off"></label>
       <label>信息条件（对照臂）<select id="f-arm"></select></label>
       <label>备注（可空）<input id="f-label" type="text" maxlength="60" placeholder="例如：对照 MORT=50"></label>
       <button id="b-start" class="btn primary">开始模拟</button>

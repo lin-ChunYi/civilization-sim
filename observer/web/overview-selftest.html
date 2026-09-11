@@ -100,6 +100,13 @@ window.__OBS_MANUAL_BOOT__ = true;
     ok("L28 契约钩子仍在", !!(window.__obs && window.__obs.ykey && window.__obs.esc && window.__obs.boot));
     ok("L29 ykey 按 run+year 隔离", window.__obs.ykey("A", 3) !== window.__obs.ykey("B", 3));
     ok("L30 esc 把标签变成文本", window.__obs.esc("<img src=x>") === "&lt;img src=x&gt;");
+    const evs = L.eventTypeCounts([{ type: "share" }, { type: "share" }, { type: "migrate" }]);
+    ok("L31 信息交换事件单独计数，不混进迁移", evs.share === 2 && evs.migrate === 1 && evs.total === 3);
+    const sShare = L.buildYearSummary({
+      t: 12, year: { births_cum: 1, deaths_demo_cum: 0, mig_deaths_cum: 0 },
+      agg: { pop: 120, bands: 6 }, events: [{ type: "share" }, { type: "share" }], ledgerMig: 0
+    });
+    ok("L32 摘要写出信息交换次数", /2 次信息交换/.test(sShare.sentences.join("")));
   } catch (e) {
     out.push("FAIL 自检脚本本身出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
   }
