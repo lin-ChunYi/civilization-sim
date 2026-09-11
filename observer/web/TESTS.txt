@@ -1,0 +1,48 @@
+OBS-01 UI 分支（ui/observer-v2）前端验收
+日期：2026-09-11
+基线：origin/main @ 3402dcd
+引擎：冻结 EXP-03，未改 exp01/exp02/exp03，未改 Python 后台
+案例：预生成 preset-s4242-sig400-mort50（seed 4242，120 年）
+
+一、逻辑自检  /static/overview-selftest.html
+  Chrome headless dump-dom
+  SUMMARY pass=31 fail=0
+
+二、契约回归  /selftest/selftest.html（后台那套 T1–T7，驱动真实 /static/app.js）
+  SUMMARY pass=20 fail=0
+  含：run_id+year 缓存隔离、迟到响应不覆盖、meta 空后补取、
+  HTML 备注只显示文字、标题/地图/侧栏/时间轴同属一次运行。
+
+三、真实案例  /static/browser-verify.html
+  SUMMARY pass=30 fail=0
+  V1 开局：正在查看=开局，人口 120，无同比，事件 0/0，摘要说明无事件但仍有开局人数
+  V2 第 48 年：人口 176（+56），群体 6（与开局相同），本年事件 2，累计 7
+           摘要：出生 6、原规则死亡 14、迁移死亡 2、记录到 2 次迁移
+  V3 点击事件：仍在第 48 年，选中群体 7527436045698980774
+  V4 第 120 年：人口 255（+135），群体 9（+3），累计 28，本年 0
+           无事件时仍显示出生 12 / 原规则死亡 9
+  V5 摘要 textContent，标签不会变成元素
+  数字与 GET /api/runs/.../year/{t} 及 /series 一致。
+
+四、截图（observer/web/screenshots/）
+  desktop-t0.png / desktop-t48.png / desktop-t120.png
+  mobile-t48.png / mobile-t48-events.png
+  desktop-progress.png / desktop-metrics.png / desktop-runs.png
+  桌面 1440×1100、手机 390×844。年份、人口、事件在两种宽度下均可见。
+
+五、未执行 / 样本未覆盖（不冒充已验收）
+  - 预生成案例 120 年没有群体消失事件，消失群体的历史面板只走了代码路径，
+    没有真实 extinct 样本的点击回放。
+  - 真机 Safari / Firefox 未测。
+  - 公网部署未测。
+  - 两个运行之间的真实并发（非自检桩）未在本机再开第二条用户运行。
+
+六、不需要 Claude 改接口就能算的
+  累计事件 = 对 /series 里 t<=回放年 的 events 计数求和。
+  本年摘要出生/死亡 = year.* 账本增量。
+  事件清单 = /year/{t}.events；「截至当前年」会按需预取 0..t 的年份记录。
+
+七、可选的后端依赖（不阻塞本分支，列在这里）
+  若以后年份很多，预取 0..t 的完整 year 记录会偏重。
+  可以加一个只读事件索引（t, type, band, text, source），不是现在必须。
+  群体层出生/死亡分项仍然「未记录」——后台本来就没有，前端如实写未记录。

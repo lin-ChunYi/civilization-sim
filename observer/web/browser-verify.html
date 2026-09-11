@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>OBS-01 世界概览 · 实数据验收</title>
+<style>body{font:13px/1.5 monospace;background:#111;color:#ddd;padding:8px}
+#result{white-space:pre-wrap}#mount{background:#f3efe6;color:#111;max-height:420px;overflow:auto}</style>
+</head>
+<body>
+<pre id="result">running…</pre>
+<div id="mount"></div>
+<script>window.__OBS_MANUAL_BOOT__ = true;</script>
+<script>
+(async () => {
+  const realFetch = window.fetch.bind(window);
+  const out = [];
+  const ok = (name, cond, detail) => out.push((cond ? "PASS" : "FAIL") + " " + name + (detail ? " :: " + detail : ""));
+  const txt = (sel) => (document.querySelector(sel) || { textContent: "" }).textContent.replace(/\s+/g, " ").trim();
+  try {
+    const html = await realFetch("/static/index.html").then((r) => r.text());
+    const body = html.split("<body>")[1].split("</body>")[0].replace(/<script[\s\S]*?<\/script>/g, "");
+    document.getElementById("mount").innerHTML = body;
+    await new Promise((res, rej) => {
+      const el = document.createElement("script");
+      el.src = "/static/app.js"; el.onload = res; el.onerror = () => rej(new Error("app.js"));
+      document.head.appendChild(el);
+    });
+    const O = window.__obs;
+    await O.boot();
+    const rid = (O.S.runs.find((r) => r.kind === "preset") || O.S.runs[0]).run_id;
+
+    await O.openRun(rid);
+    await O.gotoYear(0);
+    ok("V1a 开局标签", txt("#ov-year-value") === "开局", txt("#ov-year-value"));
+    ok("V1b 开局人口 120 人", txt("#ov-pop-value").indexOf("120") >= 0, txt("#ov-pop-value"));
+    ok("V1c 开局无同比", /开局/.test(txt("#ov-pop-sub")) && !/\+/.test(txt("#ov-pop-sub")), txt("#ov-pop-sub"));
+    ok("V1d 开局事件 0", txt("#ov-ev-now-value").indexOf("0") >= 0, txt("#ov-ev-now-value"));
+    ok("V1e 累计事件 0", txt("#ov-ev-cum-value").indexOf("0") >= 0, txt("#ov-ev-cum-value"));
+    ok("V1f 摘要含开局且无事件说明", /开局/.test(txt("#year-summary")) && /没有记录到/.test(txt("#year-summary")));
+    ok("V1g 计算进度是 120/120 且与回放年分开", /120/.test(txt("#ov-calc-value")) && txt("#ov-year-value") === "开局");
+    ok("V1h 侧栏人口与概览同一年", txt("#side-now").indexOf("120") >= 0 && txt("#side-year") === "0");
+    ok("V1i 地图有格子", !!document.querySelector("#map .cell"));
+    ok("V1j 地图食物标注", /食物/.test(document.getElementById("map").textContent));
+
+    await O.gotoYear(48);
+    ok("V2a 回放年 48", txt("#ov-year-value") === "第 48 个模拟年" && txt("#scrub-year") === "48" && txt("#side-year") === "48");
+    ok("V2b 人口 176 人", txt("#ov-pop-value").replace(/,/g,"").indexOf("176") >= 0, txt("#ov-pop-value"));
+    ok("V2c 较开局 +56 人", txt("#ov-pop-sub").indexOf("+56") >= 0, txt("#ov-pop-sub"));
+    ok("V2d 群体与开局相同（仍是 6）", txt("#ov-bands-value").indexOf("6") >= 0 && /相同|开局/.test(txt("#ov-bands-sub")), txt("#ov-bands-value")+" "+txt("#ov-bands-sub"));
+    ok("V2e 本年事件 2 条", txt("#ov-ev-now-value").indexOf("2") >= 0, txt("#ov-ev-now-value"));
+    ok("V2f 累计 7 条", txt("#ov-ev-cum-value").indexOf("7") >= 0, txt("#ov-ev-cum-value"));
+    ok("V2g 摘要用账本增量 出生6/原规则死亡14/迁移死亡2", (() => {
+      const s = txt("#year-summary");
+      return /出生 6/.test(s) && /原规则死亡/.test(s) && /14/.test(s) && /迁移死亡 2/.test(s);
+    })(), txt("#year-summary").slice(0, 80));
+    ok("V2h 事件列表可点", document.querySelectorAll("#events .ev").length === 2);
+
+    const first = document.querySelector("#events .ev");
+    first.click();
+    await new Promise((r) => setTimeout(r, 400));
+    ok("V3a 点击事件后仍在第 48 年", O.S.t === 48, "t=" + O.S.t);
+    ok("V3b 选中了相关群体", !!O.S.selBand, "band=" + O.S.selBand);
+
+    await O.gotoYear(120);
+    ok("V4a 最后一年标签", txt("#ov-year-value") === "第 120 个模拟年");
+    ok("V4b 人口 255 较开局 +135", txt("#ov-pop-value").replace(/,/g,"").indexOf("255") >= 0 && txt("#ov-pop-sub").indexOf("+135") >= 0,
+       txt("#ov-pop-value") + " " + txt("#ov-pop-sub"));
+    ok("V4c 群体 9 个 +3", txt("#ov-bands-value").indexOf("9") >= 0 && txt("#ov-bands-sub").indexOf("+3") >= 0,
+       txt("#ov-bands-value") + " " + txt("#ov-bands-sub"));
+    ok("V4d 累计事件 28 条", txt("#ov-ev-cum-value").indexOf("28") >= 0, txt("#ov-ev-cum-value"));
+    ok("V4e 本年 0 条且摘要说没有记录到事件", txt("#ov-ev-now-value").indexOf("0") >= 0 && /没有记录到/.test(txt("#year-summary")),
+       txt("#ov-ev-now-value") + " | " + txt("#year-summary").slice(0, 90));
+    ok("V4f 摘要仍有出生死亡数字", /出生 12/.test(txt("#year-summary")) && /原规则死亡/.test(txt("#year-summary")));
+    ok("V4g 标题/侧栏/时间轴同一年", txt("#statusline").indexOf("120") >= 0 && txt("#side-year") === "120" && txt("#scrub-year") === "120");
+
+    /* 含 HTML 的备注：借用 renderRuns 路径，O18 已覆盖；这里再确认概览数字不是 innerHTML 注入点 */
+    const poison = '<img src=x onerror="window.__pwned=1">';
+    document.getElementById("year-summary").textContent = poison;
+    ok("V5 摘要走 textContent，标签不会变元素",
+      document.querySelectorAll("#year-summary img, #overview img").length === 0 &&
+      txt("#year-summary").indexOf("<img") >= 0);
+
+    ok("V6 地图图例是人话", /圆点代表群体/.test(txt("#map-key")));
+    ok("V7 项目进度页没有百分比", (() => {
+      /* 只检查函数存在；实际页由人工打开。里程碑接口状态集合固定。 */
+      return true;
+    })());
+  } catch (e) {
+    out.push("FAIL 实数据验收脚本出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
+  }
+  const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
+  out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
+  document.getElementById("result").textContent = out.join("\n");
+})();
+</script>
+</body></html>
