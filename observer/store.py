@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS runs (
   years         INTEGER NOT NULL,
   sigma_m       INTEGER NOT NULL,
   move_mort_m   INTEGER NOT NULL,
+  share_m       INTEGER NOT NULL DEFAULT 0,
+  engine        TEXT    NOT NULL DEFAULT 'exp03',
   arm           TEXT NOT NULL,
   years_done    INTEGER NOT NULL DEFAULT 0,
   cancel_requested INTEGER NOT NULL DEFAULT 0,
@@ -70,10 +72,19 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+# 旧库升级：只补列，不改已有列，不动已有数据。
+MIGRATIONS = (("share_m", "INTEGER NOT NULL DEFAULT 0"),
+              ("engine", "TEXT NOT NULL DEFAULT 'exp03'"))
+
+
 def init_db() -> None:
     config.RUNS_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        have = {r["name"] for r in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        for col, decl in MIGRATIONS:
+            if col not in have:
+                conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {decl}")
 
 
 def run_dir(run_id: str) -> Path:
@@ -92,7 +103,8 @@ def meta_path(run_id: str) -> Path:
 
 def claim_slot(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: str,
                label: str = "", kind: str = "user", engine: Dict[str, Any],
-               repo_commit: str = "") -> Optional[str]:
+               repo_commit: str = "", share_m: int = 0,
+               engine_name: str = None) -> Optional[str]:
     """**原子**地占用唯一的任务槽并建记录。
 
     “检查空闲 + 占槽 + 建记录”必须在同一个事务里，否则两个同时到达的请求会双双通过检查。
@@ -112,9 +124,10 @@ def claim_slot(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: st
             return None
         conn.execute(
             "INSERT INTO runs (run_id,label,kind,status,created_at,seed,years,sigma_m,"
-            "move_mort_m,arm,engine_sha256,engine_path,baseline_commit,repo_commit) "
-            "VALUES (?,?,?,'queued',?,?,?,?,?,?,?,?,?,?)",
-            (run_id, label, kind, time.time(), seed, years, sigma_m, move_mort_m, arm,
+            "move_mort_m,share_m,engine,arm,engine_sha256,engine_path,baseline_commit,"
+            "repo_commit) VALUES (?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?,?)",
+            (run_id, label, kind, time.time(), seed, years, sigma_m, move_mort_m,
+             share_m, engine_name or config.DEFAULT_ENGINE, arm,
              engine["engine_sha256"], engine["engine_path"], engine["baseline_commit"],
              repo_commit))
         conn.execute("COMMIT")

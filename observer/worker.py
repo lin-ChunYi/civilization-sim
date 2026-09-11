@@ -31,14 +31,16 @@ def execute(run_id: str) -> int:
         return 3
 
     try:
-        st = adapter.make_world(run["seed"], run["sigma_m"], run["move_mort_m"], run["arm"])
-        ident = adapter.run_identity(st)
+        eng = run["engine"] if "engine" in run.keys() else None
+        st = adapter.make_world(run["seed"], run["sigma_m"], run["move_mort_m"], run["arm"],
+                                engine=eng, share_m=run["share_m"] if "share_m" in run.keys() else 0)
+        ident = adapter.run_identity(st, eng)
         meta = adapter.static_run_meta(st)
-        meta["engine"] = adapter.engine_info()
+        meta["engine"] = adapter.engine_info(eng)
         meta["model_run_id"] = ident["model_run_id"]
         store.write_meta(run_id, meta)
 
-        rec = adapter.Recorder()
+        rec = adapter.Recorder(eng)
         path = store.years_path(run_id)
         with path.open("w", encoding="utf-8") as fh:
             store.append_year(fh, rec.year_record(st))          # 第 0 步：开局状态
@@ -53,7 +55,7 @@ def execute(run_id: str) -> int:
                     store.worker_finish(run_id, pid, "canceled", finished_at=time.time(),
                                         years_done=k, error="用户取消")
                     return 0
-                adapter.step(st)                                # 原样调用引擎的 step
+                adapter.step(st, eng)                           # 原样调用引擎的 step
                 store.append_year(fh, rec.year_record(st))
                 now = time.time()
                 if now - last_push > 0.25 or k == run["years"] - 1:
@@ -62,7 +64,7 @@ def execute(run_id: str) -> int:
                         return 4
                     last_push = now
 
-        final = adapter.run_identity(st)
+        final = adapter.run_identity(st, eng)
         ok = store.worker_finish(run_id, pid, "done", finished_at=time.time(),
                                  years_done=run["years"], full_digest=final["full_digest"],
                                  model_run_id=final["model_run_id"])

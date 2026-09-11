@@ -18,41 +18,53 @@ from typing import Any, Dict, List, Optional
 
 from . import config
 
-_MODULE_NAME = "exp03_engine_readonly"
-
-
-@lru_cache(maxsize=1)
-def load_engine():
-    """只读加载冻结引擎，返回 (module, sha256)。"""
-    path = config.ENGINE_PATH
+@lru_cache(maxsize=4)
+def load_engine(name: str = None):
+    """只读加载指定引擎，返回 (module, sha256)。"""
+    name = name or config.DEFAULT_ENGINE
+    if name not in config.ENGINES:
+        raise ValueError(f"未登记的引擎：{name}")
+    path = config.ENGINES[name]["path"]
     src = path.read_bytes()
     sha = hashlib.sha256(src).hexdigest()
-    spec = importlib.util.spec_from_file_location(_MODULE_NAME, str(path))
+    spec = importlib.util.spec_from_file_location(f"{name}_engine_readonly", str(path))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod, sha
 
 
-def engine_info() -> Dict[str, Any]:
-    v3, sha = load_engine()
+def engine_info(name: str = None) -> Dict[str, Any]:
+    name = name or config.DEFAULT_ENGINE
+    cfg = config.ENGINES[name]
+    v3, sha = load_engine(name)
     return {
-        "engine_path": str(config.ENGINE_PATH.relative_to(config.REPO_ROOT)),
+        "engine": name,
+        "engine_label": cfg["label"],
+        "engine_params": cfg["params"],
+        "engine_path": str(cfg["path"].relative_to(config.REPO_ROOT)),
         "engine_sha256": sha,
-        "baseline_commit": config.ENGINE_BASELINE_COMMIT,
-        "params_fingerprint": v3.params_fingerprint(0, 0),
+        "baseline_commit": cfg["baseline_commit"],
+        "params_fingerprint": (v3.params_fingerprint(0, 0, 0) if "share_m" in cfg["params"]
+                               else v3.params_fingerprint(0, 0)),
         "constants": {
             "NEED_PC": v3.NEED_PC, "MILLE": v3.MILLE, "SPLIT_SIZE": v3.SPLIT_SIZE,
             "SPOIL_M": v3.SPOIL_M, "MOVE_LOSS_M": v3.MOVE_LOSS_M,
             "MIG_E_M": v3.MIG_E_M, "MIG_GAIN_M": v3.MIG_GAIN_M,
             "SHOCK_P_M": v3.SHOCK_P_M, "K_HALF": v3.K_HALF,
             "SIGMA_M_MAX": v3.SIGMA_M_MAX, "MOVE_MORT_M_MAX": v3.MOVE_MORT_M_MAX,
+            **({"SHARE_M_MAX": v3.SHARE_M_MAX} if hasattr(v3, "SHARE_M_MAX") else {}),
         },
     }
 
 
-def map_geometry() -> Dict[str, Any]:
+def engines_info() -> Dict[str, Any]:
+    """全部可用引擎。前端据此决定给哪些参数控件。"""
+    return {name: engine_info(name) for name in config.ENGINES}
+
+
+def map_geometry(engine: str = None) -> Dict[str, Any]:
     """静态地图：8×8、第 3/4 列不可通行、pointy-top 六邻接。与引擎同源，不另写一份。"""
-    v3, _ = load_engine()
+    v3, _ = load_engine(engine)
     cells = []
     for i in v3.cells():
         r, c = divmod(i, v3.W)
@@ -67,17 +79,24 @@ def map_geometry() -> Dict[str, Any]:
 
 # ---------------------------------------------------------------- 运行期
 
-def make_world(seed: int, sigma_m: int, move_mort_m: int, arm: str):
+def make_world(seed: int, sigma_m: int, move_mort_m: int, arm: str,
+               engine: str = None, share_m: int = 0):
     """建世界。参数校验由引擎自己做（严格整数 + 范围），这里不重复实现一份。"""
-    v3, _ = load_engine()
+    v3, _ = load_engine(engine)
     poison = config.ARMS[arm]["poison"]
+    if "share_m" in config.ENGINES[engine or config.DEFAULT_ENGINE]["params"]:
+        return v3.make_world(seed, poison, sigma_m, move_mort_m, share_m)
     return v3.make_world(seed, poison, sigma_m, move_mort_m)
 
 
-def step(st):
-    v3, _ = load_engine()
+def step(st, engine: str = None):
+    v3, _ = load_engine(engine)
     v3.step(st)
 
+
+# EXP-04 才有的信息账字段。引擎没有就不出现在记录里（前端要容忍缺席）。
+SHARE_FIELDS = ("share_groups", "share_participants", "share_received",
+                "share_adopted", "share_rejected", "share_decision_changed")
 
 CUM_FIELDS = (
     "births_cum", "deaths_demo_cum", "mig_deaths_cum", "mig_total", "mig_regret",
@@ -96,10 +115,12 @@ def band_display_name(bid: int) -> str:
 class Recorder:
     """把一次运行变成逐年记录。持有自己的上一年缓存，不碰模型对象。"""
 
-    def __init__(self):
+    def __init__(self, engine: str = None):
+        self.engine = engine or config.DEFAULT_ENGINE
         self._prev_cum: Optional[Dict[str, int]] = None
         self._prev_cells: Dict[str, int] = {}
         self._log_len = 0
+        self._share_len = 0
         self._names: Dict[str, str] = {}
         self._birth_year: Dict[str, int] = {}
 
@@ -114,7 +135,7 @@ class Recorder:
         return n
 
     def year_record(self, st) -> Dict[str, Any]:
-        v3, _ = load_engine()
+        v3, _ = load_engine(self.engine)
         t = st["tick"]
         cell_ids = sorted(st["stock"])
         stock = [st["stock"][i] for i in cell_ids]
@@ -137,9 +158,10 @@ class Recorder:
                 "mem": {str(c): [b["mem"][c], b["memt"].get(c)] for c in sorted(b["mem"])},
             })
 
-        cum = {k: st[k] for k in CUM_FIELDS}
-        prev = self._prev_cum or {k: 0 for k in CUM_FIELDS}
-        year = {k: cum[k] - prev[k] for k in CUM_FIELDS}
+        fields = tuple(CUM_FIELDS) + tuple(f for f in SHARE_FIELDS if f in st)
+        cum = {k: st[k] for k in fields}
+        prev = self._prev_cum or {k: 0 for k in fields}
+        year = {k: cum[k] - prev.get(k, 0) for k in fields}
 
         agg = {
             "pop": sum(b["size"] for b in bands),
@@ -152,12 +174,24 @@ class Recorder:
             "population_identity_error": v3.population_identity_error(st),
             "state_hash": v3.state_hash(st),
         }
+        if "share_ledger_error" in dir(v3):
+            integrity["share_ledger_error"] = v3.share_ledger_error(st)
         events = self._events(st, t, cells_now)
-
+        rec = {"t": t, "stock": stock, "bands": bands, "cum": cum, "year": year,
+               "agg": agg, "integrity": integrity, "events": events}
+        if "share_log" in st:                       # EXP-04：信息交换的当年统计
+            rec["share"] = {
+                "groups": year.get("share_groups", 0),
+                "participants": year.get("share_participants", 0),
+                "received": year.get("share_received", 0),
+                "adopted": year.get("share_adopted", 0),
+                "rejected": year.get("share_rejected", 0),
+                "decision_changed": year.get("share_decision_changed", 0),
+                "cum_adopted": cum.get("share_adopted", 0),
+            }
         self._prev_cum = cum
         self._prev_cells = cells_now
-        return {"t": t, "stock": stock, "bands": bands, "cum": cum, "year": year,
-                "agg": agg, "integrity": integrity, "events": events}
+        return rec
 
     # -- 事件：只有两个来源，都标注出来 --------------------------------
     def _events(self, st, t: int, cells_now: Dict[str, int]) -> List[Dict[str, Any]]:
@@ -177,6 +211,20 @@ class Recorder:
                             "text": f"{self._names.get(bid, bid)} 人口归零，被移除"})
         self._log_len = len(log)
 
+        share_log = st.get("share_log")             # 来源三：模型记录的信息交换（EXP-04）
+        if share_log is not None:
+            for (tick, cell, donor, recv, key, val, stamp) in share_log[self._share_len:]:
+                d, r = str(donor), str(recv)
+                out.append({
+                    "type": "share", "source": "模型日志 st['share_log']",
+                    "band": r, "donor": d, "receiver": r, "cell": cell,
+                    "mem_cell": key, "value": val, "memt": stamp,
+                    "text": f"{self._names.get(d, d)} 把第 {key} 号格的记忆"
+                            f"（{val} kcal，记于第 {stamp} 年）传给了 "
+                            f"{self._names.get(r, r)}，地点在第 {cell} 号格",
+                })
+            self._share_len = len(share_log)
+
         for sid, cell in cells_now.items():          # 来源二：状态差分（可核实）
             old = self._prev_cells.get(sid)
             if old is not None and old != cell:
@@ -188,8 +236,8 @@ class Recorder:
         return out
 
 
-def run_identity(st) -> Dict[str, str]:
-    v3, _ = load_engine()
+def run_identity(st, engine: str = None) -> Dict[str, str]:
+    v3, _ = load_engine(engine)
     return {"model_run_id": v3.run_id(st), "full_digest": v3.full_digest(st),
             "state_hash": v3.state_hash(st)}
 

@@ -510,6 +510,68 @@ with TestClient(app) as c4:
 store.write_meta(rm_, {"cell_ids": [0, 1], "cap": [1, 2]})
 check("O21d 重写之后又能正常读回", (store.read_meta(rm_) or {}).get("cap") == [1, 2])
 
+# ---------------------------------------------------------------- EXP-04 接入
+print("\nO24 EXP-04 引擎接入观察台（信息交换事件可展示）")
+with store.connect() as c:
+    c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+with TestClient(app) as c6:
+    cfg = c6.get("/api/config").json()
+    check("O24a /api/config 列出两个引擎",
+          sorted(cfg.get("engines", {})) == ["exp03", "exp04"] and
+          cfg["api_version"] == "obs-1.2", str(sorted(cfg.get("engines", {}))))
+    bad = c6.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp03",
+                                     "share_m": 500})
+    check("O24b exp03 引擎不接受 SHARE_M", bad.status_code == 400, str(bad.json())[:60])
+    bad2 = c6.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp99"})
+    check("O24c 未登记的引擎被拒", bad2.status_code == 400)
+    bad3 = c6.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp04",
+                                      "share_m": 1001})
+    check("O24d SHARE_M 越界被拒", bad3.status_code == 400)
+
+    r = c6.post("/api/runs", json={"seed": 4242, "years": 120, "sigma_m": 400,
+                                   "move_mort_m": 50, "engine": "exp04",
+                                   "share_m": 1000, "label": "EXP-04 接入"})
+    check("O24e exp04 运行可以启动", r.status_code == 200, str(r.json())[:60])
+    if r.status_code == 200:
+        rid4 = r.json()["run_id"]
+        for _ in range(600):
+            row = store.get_run(rid4)
+            if row["status"] in ("done", "failed", "canceled", "interrupted"):
+                break
+            time.sleep(0.05)
+        check("O24f exp04 运行跑完", row["status"] == "done",
+              f"{row['status']} {row['error'][:40]}")
+        yr = c6.get(f"/api/runs/{rid4}/year/{row['years_done']}").json()
+        share_events = [e for e in yr["events"] if e["type"] == "share"]
+        # 找一年确实有交换事件的
+        found = None
+        for t in range(row["years_done"] + 1):
+            rec = c6.get(f"/api/runs/{rid4}/year/{t}").json()
+            ev = [e for e in rec["events"] if e["type"] == "share"]
+            if ev:
+                found = (t, rec, ev)
+                break
+        check("O24g 年份记录里带信息账（share 段）", "share" in yr, str(list(yr)[:9]))
+        check("O24h 信息账恒等误差为 0",
+              yr["integrity"].get("share_ledger_error") == 0,
+              str(yr["integrity"].get("share_ledger_error")))
+        if found:
+            t, rec, ev = found
+            e0 = ev[0]
+            ok_fields = all(k in e0 for k in ("donor", "receiver", "cell", "mem_cell",
+                                              "value", "memt", "source", "text"))
+            print(f"      第 {t} 年的一条交换事件：{e0['text'][:70]}")
+            check("O24i 交换事件带齐“哪一年/谁传给谁/传的什么/原时戳/来源”", ok_fields,
+                  str(sorted(e0)))
+            check("O24j 交换事件的双方 id 是字符串",
+                  isinstance(e0["donor"], str) and isinstance(e0["receiver"], str))
+        else:
+            uncov("O24i 交换事件字段", "这次运行里没有出现交换事件，前提缺失")
+        # 兼容性：exp03 的运行不应该带 share 段
+        pre = next(x for x in c6.get("/api/runs").json()["runs"] if x["kind"] == "preset")
+        rec3 = c6.get(f"/api/runs/{pre['run_id']}/year/1").json()
+        check("O24k exp03 的记录里没有 share 段（前端要容忍缺席）", "share" not in rec3)
+
 # ---------------------------------------------------------------- 探测未知 ≠ 死亡
 print("\nO23 进程探测：查不到不等于死了；回收前要比对状态与 pid")
 with store.connect() as c:

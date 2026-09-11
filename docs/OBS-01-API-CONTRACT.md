@@ -3,7 +3,7 @@
 **这份文件是两边的唯一约定来源。** 后台（Python）与 UI 分支（`observer/web/`）分头改，
 靠它对齐；不各自实现一套数据格式。
 
-契约版本 **`obs-1.1`**，由 `GET /api/config` 的 `api_version` 字段给出。
+契约版本 **`obs-1.2`**，由 `GET /api/config` 的 `api_version` 字段给出。
 **新增字段 → 小版本 +1；删除或改变已有字段的含义 → 必须先改这份文件并知会对方，再动代码。**
 
 ---
@@ -32,7 +32,7 @@
 | 端点 | 返回 |
 |---|---|
 | `GET /api/health` | `{ok, time}` |
-| `GET /api/config` | `{api_version, token_required, limits, arms, engine, repo_commit, data}` |
+| `GET /api/config` | `{api_version, token_required, limits, arms, engine, engines, default_engine, repo_commit, data}` |
 | `GET /api/milestones` | `{statuses, items[], note, repo_commit}`；item = `{id,title,status,updated,commit,note,sources[]}` |
 | `GET /api/map` | `{w,h,barrier_cols[],cells[]}`；cell = `{i,row,col,passable,region,neighbors[]}` |
 | `GET /api/runs` | `{runs[], active}` |
@@ -45,7 +45,7 @@
 
 | 端点 | 说明 |
 |---|---|
-| `POST /api/runs` | body `{seed, years, sigma_m, move_mort_m, arm, label}`，全部**严格整数**（`1.5`/`true` 会被 422 拒绝）；成功 `{run_id, status:"queued"}` |
+| `POST /api/runs` | body `{seed, years, sigma_m, move_mort_m, arm, label, engine, share_m}`，数值全部**严格整数**（`1.5`/`true` 会被 422 拒绝）；成功 `{run_id, status:"queued"}` |
 | `POST /api/runs/{id}/cancel` | 请求取消；若工作进程已不在，直接回收任务槽并标中断 |
 | `DELETE /api/runs/{id}` | 删除非预生成、非进行中的运行 |
 
@@ -56,7 +56,7 @@
 
 ```
 run_id label kind status created_at started_at finished_at
-seed years sigma_m move_mort_m arm
+seed years sigma_m move_mort_m share_m engine arm
 years_done years_recorded cancel_requested
 engine_sha256 engine_path baseline_commit repo_commit model_run_id full_digest
 error pid
@@ -70,6 +70,11 @@ error pid
 - `error` 是人类可读文本，**可能包含用户输入或路径，展示前必须转义或用 textContent**。
 - `label` 由用户填写，服务端**原样保存不做转义**，同样按纯文本展示。
 - `pid` 仅供诊断，UI 不必显示。
+- **`engine`（obs-1.2 新增）** ∈ `exp03 | exp04`，旧记录默认 `exp03`。
+  `share_m` 只对 `exp04` 有意义，`exp03` 的运行恒为 0（提交非 0 会被 400 拒绝）。
+  可用引擎与各自的参数列表由 `GET /api/config` 的 `engines` 给出，
+  形如 `{exp04: {engine_label, engine_params:["sigma_m","move_mort_m","share_m"], ...}}`
+  —— **前端据此决定给哪些参数控件，不要把引擎名和参数写死。**
 
 ### 年份记录（`/year/{t}`）
 
@@ -85,8 +90,19 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
   （键名保留 `_cum` 后缀是历史原因：在 `year` 里它是当年增量，不是累计。）
 - `bands[]` 元素 = `{id, name, cell, size, store, macc, bacc, dacc, mem}`；
   `mem` 是 `{格号: [记得的存量, 时间戳]}`。
-- `events[]` 元素 = `{type, source, text, ...}`，`type ∈ split | migrate | extinct`；
+- `events[]` 元素 = `{type, source, text, ...}`，`type ∈ split | migrate | extinct | share`；
   `source` 写明来自模型日志还是状态差分；`migrate` 还带 `unrecorded` 说明哪些细节无法还原。
+- **`share` 事件（obs-1.2 新增，只有 `engine=exp04` 的运行才有）**：
+  `{type:"share", donor, receiver, cell, mem_cell, value, memt, source, text, band}`
+  —— 即"**哪一年（记录所在的 `t`）、哪个群体（`donor`）向谁（`receiver`）、
+  在哪一格（`cell`）、传了对哪个格（`mem_cell`）的记忆、值是多少（`value` kcal）、
+  那条记忆原本记于哪一年（`memt`，**照抄来源、不刷新**）"。
+  `donor`/`receiver`/`band` 都是**字符串** id。`text` 是已经拼好的中文说明，可直接显示。
+- **`share`（obs-1.2 新增，同上）**：年份记录多一个顶层段
+  `{groups, participants, received, adopted, rejected, decision_changed, cum_adopted}`，
+  前六项是**当年增量**，`cum_adopted` 是累计采纳数。恒等式 `received = adopted + rejected`，
+  校验值在 `integrity.share_ledger_error`（应恒为 0）。
+  **`exp03` 的记录里没有 `share` 段，也没有 `share` 事件；前端必须容忍缺席。**
 
 **累计事件数**：`/series` 每个元素的 `events` 是当年条数，UI 端前缀求和即可得到累计，
 **不需要后台加新字段**（要真加，走 §5 的流程）。
@@ -136,7 +152,25 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 
 ---
 
-## 6. 本轮（obs-1.1）的变化
+## 6. obs-1.2 的变化（EXP-04 接入）
+
+| 变化 | 兼容性 |
+|---|---|
+| run 行新增 `engine`、`share_m` | **新增字段**；旧记录默认 `exp03` / `0` |
+| `POST /api/runs` 新增可选 `engine`、`share_m` | **可选**，不传等于 `exp03` / `0`，旧调用不受影响 |
+| `GET /api/config` 新增 `engines`、`default_engine` | 新增字段，原有 `engine`（默认引擎）保留不变 |
+| 年份记录新增 `share` 段与 `share` 事件 | **只在 `engine=exp04` 时出现**；`exp03` 完全不变 |
+| `integrity` 新增 `share_ledger_error` | 只在 exp04 出现 |
+
+没有任何字段被删除或改名。**建议 UI 这样用**：按 `run.engine` 决定要不要显示"信息交换"一栏；
+事件列表直接渲染 `text` + `source` 即可，要做更细的展示再取结构化字段。
+
+**一处已知的显示错位（留给 UI 分支处理，后台不擅自改前端）**：现有页面顶栏的"模型"读的是
+`/api/config` 里的 `engine`（**默认引擎**），所以打开一次 `exp04` 的运行时，顶栏仍写着
+`exp03/verify3.py`。正确的来源是该次运行自己的 `run.engine` / `run.engine_path` /
+`run.engine_sha256`（早就在 run 行里，obs-1.0 就有）。
+
+## 7. 上一轮（obs-1.1）的变化
 
 | 变化 | 兼容性 |
 |---|---|

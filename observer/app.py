@@ -106,7 +106,9 @@ def get_config():
                    "max_seed": config.MAX_SEED,
                    "write_rate_per_min": config.WRITE_RATE_LIMIT},
         "arms": {k: {"label": v["label"], "note": v["note"]} for k, v in config.ARMS.items()},
-        "engine": adapter.engine_info(),
+        "engine": adapter.engine_info(),          # 默认引擎，保持向后兼容
+        "engines": adapter.engines_info(),        # obs-1.2 新增：全部可用引擎
+        "default_engine": config.DEFAULT_ENGINE,
         "repo_commit": repo_commit(),
         "data": {"runs": store.run_count(), "size_mb": round(store.data_size_mb(), 2)},
     }
@@ -209,10 +211,22 @@ class NewRun(BaseModel):
     move_mort_m: StrictInt = Field(0, description="MOVE_MORT_M：迁移死亡强度，千分之一")
     arm: StrictStr = Field("memory", description="信息条件（对照臂）")
     label: StrictStr = Field("", description="备注")
+    engine: StrictStr = Field(config.DEFAULT_ENGINE, description="模拟引擎：exp03 | exp04")
+    share_m: StrictInt = Field(0, description="SHARE_M：同格信息交换的参与概率，千分之一（仅 exp04）")
 
 
 def _validate(body: NewRun) -> None:
-    v3, _ = adapter.load_engine()
+    if body.engine not in config.ENGINES:
+        raise HTTPException(400, f"engine 只能是 {sorted(config.ENGINES)} 之一")
+    v3, _ = adapter.load_engine(body.engine)
+    params = config.ENGINES[body.engine]["params"]
+    if "share_m" in params:
+        if not (v3.SHARE_M_MIN <= body.share_m <= v3.SHARE_M_MAX):
+            raise HTTPException(400, f"SHARE_M 越界，合法范围 "
+                                     f"[{v3.SHARE_M_MIN}, {v3.SHARE_M_MAX}]")
+    elif body.share_m != 0:
+        raise HTTPException(400, f"引擎 {body.engine} 没有 SHARE_M 这个参数，"
+                                 f"要用同格信息交换请选 exp04")
     if not (0 <= body.seed <= config.MAX_SEED):
         raise HTTPException(400, f"seed 越界，合法范围 [0, {config.MAX_SEED}]")
     if not (config.MIN_YEARS <= body.years <= config.MAX_YEARS):
@@ -242,8 +256,10 @@ def post_run(body: NewRun):
     # 占槽与建记录在同一个事务里完成：两个同时到达的请求只有一个能拿到槽
     run_id = store.claim_slot(seed=body.seed, years=body.years, sigma_m=body.sigma_m,
                               move_mort_m=body.move_mort_m, arm=body.arm,
-                              label=body.label, kind="user",
-                              engine=adapter.engine_info(), repo_commit=repo_commit())
+                              label=body.label, kind="user", share_m=body.share_m,
+                              engine_name=body.engine,
+                              engine=adapter.engine_info(body.engine),
+                              repo_commit=repo_commit())
     if run_id is None:
         act = store.active_run()
         raise HTTPException(409, "已有任务在跑" +

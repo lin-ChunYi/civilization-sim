@@ -17,9 +17,23 @@ WEB_DIR = Path(os.environ.get("OBSERVER_WEB_DIR", OBSERVER_DIR / "web")).resolve
 SELFTEST_DIR = Path(os.environ.get("OBSERVER_SELFTEST_DIR",
                                    OBSERVER_DIR / "tests" / "web")).resolve()
 
-# 模拟引擎：已冻结的 EXP-03 基线，只读加载，绝不修改。
-ENGINE_PATH = REPO_ROOT / "exp03" / "verify3.py"
-ENGINE_BASELINE_COMMIT = "6b6af4f"
+# 模拟引擎。都是只读加载，绝不修改。
+#   exp03：已冻结的基线（迁移死亡代价）
+#   exp04：同格信息交换（已获批准实现，待审）
+ENGINES = {
+    "exp03": {"path": REPO_ROOT / "exp03" / "verify3.py",
+              "baseline_commit": "6b6af4f",
+              "label": "EXP-03 迁移死亡代价（冻结基线）",
+              "params": ["sigma_m", "move_mort_m"]},
+    "exp04": {"path": REPO_ROOT / "exp04" / "verify4.py",
+              "baseline_commit": "本轮实现（待审）",
+              "label": "EXP-04 同格信息交换",
+              "params": ["sigma_m", "move_mort_m", "share_m"]},
+}
+DEFAULT_ENGINE = "exp03"
+# 兼容旧代码的别名
+ENGINE_PATH = ENGINES[DEFAULT_ENGINE]["path"]
+ENGINE_BASELINE_COMMIT = ENGINES[DEFAULT_ENGINE]["baseline_commit"]
 
 # --- 服务端硬上限（不依赖前端控件）---
 MAX_YEARS = int(os.environ.get("OBSERVER_MAX_YEARS", "300"))       # 单次运行年数上限
@@ -32,7 +46,7 @@ WRITE_RATE_LIMIT = int(os.environ.get("OBSERVER_WRITE_RATE", "12"))  # 每 IP �
 QUEUE_GRACE_SEC = float(os.environ.get("OBSERVER_QUEUE_GRACE", "20"))
 
 # API 契约版本。新增字段递增小版本；删改字段必须先改契约文档再动代码。
-API_VERSION = "obs-1.1"
+API_VERSION = "obs-1.2"
 
 # --- 访问保护 ---
 # 设了 OBSERVER_TOKEN：所有 /api 请求都要带令牌（服务端校验，前端不硬编码）。
