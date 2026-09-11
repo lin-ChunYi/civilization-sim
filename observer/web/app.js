@@ -7,8 +7,23 @@ const S = {
   cfg: null, map: null, run: null, meta: null, series: [], years: new Map(),
   runs: [], t: 0, playing: false, speed: 1, view: "truth", selBand: null, selCell: null,
   timer: null, band: null,
+  /* 防止异步请求串运行：每次切换运行 / 年份 / 群体都推进一个令牌，
+     迟到的响应发现令牌已变或运行已换，就只写缓存、不碰界面。 */
+  epoch: 0,
 };
+/* 年份缓存按 run_id + t 隔离，换了运行绝不会读到上一条运行的同一年 */
+const ykey = (runId, t) => `${runId}|${t}`;
+const bump = () => ++S.epoch;
+const stale = (myEpoch, myRun) =>
+  S.epoch !== myEpoch || !S.run || S.run.run_id !== myRun;
 const $ = (id) => document.getElementById(id);
+/* 用户可控的文本（运行备注、后台错误信息等）一律转义后再拼进 innerHTML。
+   能用 textContent 的地方直接用 textContent。 */
+function esc(x) {
+  return String(x === null || x === undefined ? "" : x)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 /* 允许用地址栏定位：#tab=metrics&run=<id>&t=60&b=<band id>，便于分享与自动化检查 */
 function hashParams() {
   const out = {};
@@ -73,7 +88,7 @@ function renderStatus() {
   if (!S.cfg) { box.textContent = "正在连接后台…"; return; }
   const parts = [];
   if (S.run) {
-    parts.push(`<b>当前运行</b> ${S.run.label || S.run.run_id} ${statusBadge(S.run.status)}` +
+    parts.push(`<b>当前运行</b> ${esc(S.run.label || S.run.run_id)} ${statusBadge(S.run.status)}` +
       (S.run.kind === "preset" ? ` <span class="badge s-off">预生成案例</span>` : ""));
     parts.push(`<b>参数</b> seed=${S.run.seed} · years=${S.run.years} · SIGMA_M=${S.run.sigma_m}‰ ·
                 MOVE_MORT_M=${S.run.move_mort_m}‰ · ${S.cfg.arms[S.run.arm].label}`);
@@ -110,7 +125,7 @@ function ramp(f) {                      // 0..1 -> 浅到深的绿
 function renderMap() {
   const svg = $("map");
   if (!S.map || !S.run) { svg.innerHTML = ""; return; }
-  const rec = S.years.get(S.t);
+  const rec = S.years.get(ykey(S.run.run_id, S.t));
   if (!rec) { svg.innerHTML = `<text x="20" y="40" fill="#6b7280">正在读取第 ${S.t} 年…</text>`; return; }
   const cap = S.meta ? S.meta.cap : null;
   const memBand = S.view === "mem" && S.selBand
@@ -206,7 +221,7 @@ function renderMap() {
 
 /* ---------------- 侧栏 ---------------- */
 function renderSide() {
-  const rec = S.years.get(S.t);
+  const rec = S.run ? S.years.get(ykey(S.run.run_id, S.t)) : null;
   $("side-empty").hidden = !!rec;
   $("side-body").hidden = !rec;
   if (!rec) return;
@@ -288,8 +303,10 @@ function renderSide() {
 }
 
 async function loadBand(id) {
+  const myRun = S.run.run_id, myEpoch = S.epoch, myBand = id;
   try {
-    const d = await api(`/api/runs/${S.run.run_id}/band/${id}`);
+    const d = await api(`/api/runs/${myRun}/band/${id}`);
+    if (stale(myEpoch, myRun) || S.selBand !== myBand) return;   // 迟到的轨迹不许贴上来
     S.band = d;
     const box = $("bandmore"); if (!box) return;
     const traj = d.trajectory.map(([t, c]) => `第${t}年→${c}号格`).join("，");
@@ -301,11 +318,15 @@ async function loadBand(id) {
       <div><b>迁移轨迹</b>：${traj}</div>
       <div style="margin-top:4px">${d.source}</div>`;
   } catch (e) {
-    const box = $("bandmore"); if (box) box.innerHTML = `<span class="err">轨迹读取失败：${e.message}</span>`;
+    if (stale(myEpoch, myRun) || S.selBand !== myBand) return;
+    const box = $("bandmore");
+    if (box) box.innerHTML = `<span class="err">轨迹读取失败：${esc(e.message)}</span>`;
   }
 }
 
 function selectBand(id) {
+  bump();                      // 切群体也推进令牌：上一个群体的轨迹响应作废
+  S.band = null;
   S.selBand = (S.selBand === id ? null : id);
   setHash({ b: S.selBand || "" });
   S.selCell = null;
@@ -324,14 +345,24 @@ function setView(v) {
 /* ---------------- 时间轴 ---------------- */
 function maxT() { return Math.max(0, (S.run ? (S.run.years_recorded ?? 0) : 0)); }
 async function gotoYear(t, opts = {}) {
+  if (!S.run) return;
+  const myRun = S.run.run_id;
+  const myEpoch = bump();
   t = Math.max(0, Math.min(t, maxT()));
   S.t = t;
   $("scrub").value = t; $("scrub-year").textContent = t; $("ev-year").textContent = t;
   $("tl-play").textContent = `正在回放：第 ${t} 年`;
-  if (!S.years.has(t)) {
-    try { S.years.set(t, await api(`/api/runs/${S.run.run_id}/year/${t}`)); }
-    catch (e) { flash("读取第 " + t + " 年失败：" + e.message); return; }
+  if (!S.years.has(ykey(myRun, t))) {
+    let rec;
+    try { rec = await api(`/api/runs/${myRun}/year/${t}`); }
+    catch (e) {
+      if (!stale(myEpoch, myRun)) flash("读取第 " + t + " 年失败：" + e.message, true);
+      return;
+    }
+    S.years.set(ykey(myRun, t), rec);     // 缓存照写（数据本身没错），但界面要看令牌
+    if (stale(myEpoch, myRun)) return;    // 已经切到别的运行/年份：迟到的响应不得覆盖
   }
+  if (stale(myEpoch, myRun)) return;
   renderMap(); renderSide(); renderStatus(); renderEvents();
   setHash({ t: String(t) });
   if (!opts.quiet) renderCharts();
@@ -409,7 +440,7 @@ function renderCharts() {
 
 /* ---------------- 事件 ---------------- */
 function renderEvents() {
-  const rec = S.years.get(S.t);
+  const rec = S.run ? S.years.get(ykey(S.run.run_id, S.t)) : null;
   if (!rec) { $("events").innerHTML = `<div class="emptystate">没有数据</div>`; return; }
   $("events").innerHTML = rec.events.length
     ? rec.events.map((e) => `<div class="ev ${e.type}">
@@ -433,17 +464,17 @@ function renderRuns() {
   const head = `<tr><th>运行</th><th>状态</th><th>seed</th><th>年数</th><th>SIGMA_M</th>
     <th>MOVE_MORT_M</th><th>信息条件</th><th>已算/目标</th><th>创建时间</th><th>模型版本</th><th>操作</th></tr>`;
   $("runtable").innerHTML = head + S.runs.map((r) => `<tr class="${S.run && S.run.run_id === r.run_id ? "on" : ""}">
-    <td class="clickable" data-open="${r.run_id}">${r.label || r.run_id}
+    <td class="clickable" data-open="${esc(r.run_id)}">${esc(r.label || r.run_id)}
       ${r.kind === "preset" ? '<span class="badge s-off">预生成</span>' : ""}</td>
     <td>${statusBadge(r.status)}</td><td>${r.seed}</td><td>${r.years}</td>
     <td>${r.sigma_m}‰</td><td>${r.move_mort_m}‰</td>
-    <td>${S.cfg.arms[r.arm] ? S.cfg.arms[r.arm].label : r.arm}</td>
+    <td>${S.cfg.arms[r.arm] ? esc(S.cfg.arms[r.arm].label) : esc(r.arm)}</td>
     <td>${r.years_recorded}/${r.years}</td><td>${tsfmt(r.created_at)}</td>
-    <td><small>${(r.engine_sha256 || "").slice(0, 8)} @ ${r.baseline_commit || "—"}</small></td>
+    <td><small>${esc((r.engine_sha256 || "").slice(0, 8))} @ ${esc(r.baseline_commit || "—")}</small></td>
     <td>${["queued", "running"].includes(r.status)
       ? `<span class="link" data-cancel="${r.run_id}">取消</span>`
       : (r.kind === "preset" ? "" : `<span class="link" data-del="${r.run_id}">删除</span>`)}
-      ${r.error ? `<div class="err"><small>${r.error}</small></div>` : ""}</td></tr>`).join("");
+      ${r.error ? `<div class="err"><small>${esc(r.error)}</small></div>` : ""}</td></tr>`).join("");
   $("runtable").querySelectorAll("[data-open]").forEach((n) =>
     n.addEventListener("click", () => openRun(n.dataset.open)));
   $("runtable").querySelectorAll("[data-cancel]").forEach((n) =>
@@ -460,35 +491,51 @@ function renderRuns() {
 }
 
 async function openRun(id) {
-  S.run = await api(`/api/runs/${id}`);
-  S.meta = S.run.meta; S.years.clear(); S.selBand = null; S.selCell = null; S.band = null;
+  const myEpoch = bump();
+  setPlaying(false);
+  let run, ser;
+  try {
+    run = await api(`/api/runs/${id}`);
+    if (S.epoch !== myEpoch) return;              // 期间又切了运行：这次结果作废
+    ser = await api(`/api/runs/${id}/series`);
+    if (S.epoch !== myEpoch) return;
+  } catch (e) {
+    if (S.epoch === myEpoch) flash("打开运行失败：" + e.message, true);
+    return;
+  }
+  S.run = run;
+  S.meta = run.meta || null;        // 新运行可能还没落 meta.json，refresh() 会自动补取
+  S.years.clear(); S.selBand = null; S.selCell = null; S.band = null;
+  S.series = ser.series;
   S.view = "truth"; $("v-truth").classList.add("on"); $("v-mem").classList.remove("on");
-  const d = await api(`/api/runs/${id}/series`); S.series = d.series;
   $("scrub").max = maxT();
   $("tl-calc").textContent = `已计算到：第 ${maxT()} 年 / 目标 ${S.run.years} 年`;
+  setHash({ run: id, b: "", view: "" });
   await gotoYear(0);
   renderRuns(); renderCharts(); renderStatus();
-  setHash({ run: id });
 }
 
 /* ---------------- 里程碑 ---------------- */
 async function renderMilestones() {
   const d = await api("/api/milestones");
-  const bold = (x) => String(x).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  const bold = (x) => esc(x).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");   // 先转义，再认粗体
   const cls = { "已验收": "s-done", "已实现待审": "s-run", "进行中": "s-run", "待批准": "s-wait", "未开始": "s-off" };
   $("ms-note").textContent = d.note;
   $("milestones").innerHTML = d.items.map((m) => `<div class="ms">
-    <h4>${m.title} <span class="badge ${cls[m.status] || "s-off"}">${m.status}</span></h4>
+    <h4>${esc(m.title)} <span class="badge ${cls[m.status] || "s-off"}">${esc(m.status)}</span></h4>
     <div>${bold(m.note)}</div>
-    <div class="meta">更新：${m.updated}　·　提交：${m.commit}　·　来源：${m.sources.join("、")}</div>
-  </div>`).join("") + `<div class="muted">仓库 HEAD：${d.repo_commit || "未知"}　·　
+    <div class="meta">更新：${esc(m.updated)}　·　提交：${esc(m.commit)}　·　来源：${esc(m.sources.join("、"))}</div>
+  </div>`).join("") + `<div class="muted">仓库 HEAD：${esc(d.repo_commit || "未知")}　·　
     状态只有这五种：${d.statuses.join(" / ")}，不给总体百分比。</div>`;
 }
 
 /* ---------------- 杂项 ---------------- */
-function flash(msg) {
-  const n = $("formnote"); n.innerHTML = msg; n.scrollIntoView({ block: "nearest" });
-  setTimeout(() => { if (n.innerHTML === msg) n.innerHTML = ""; }, 6000);
+function flash(msg, bad) {
+  const n = $("formnote");
+  n.textContent = String(msg);          // 纯文本：后台回显的内容里可能带用户输入
+  n.classList.toggle("err", !!bad);
+  n.scrollIntoView({ block: "nearest" });
+  setTimeout(() => { if (n.textContent === String(msg)) n.textContent = ""; }, 6000);
 }
 function showTab(name) {
   ["world", "metrics", "events", "runs", "progress"].forEach((t) => {
@@ -506,21 +553,28 @@ async function refresh() {
     const d = await api("/api/runs");
     S.runs = d.runs;
     if (S.run) {
-      const cur = S.runs.find((r) => r.run_id === S.run.run_id);
+      const myRun = S.run.run_id, myEpoch = S.epoch;
+      const cur = S.runs.find((r) => r.run_id === myRun);
       if (cur) {
         const grew = cur.years_recorded > (S.run.years_recorded ?? 0);
         Object.assign(S.run, cur);
         $("scrub").max = maxT();
         $("tl-calc").textContent = `已计算到：第 ${maxT()} 年 / 目标 ${S.run.years} 年`;
         if (grew) {
-          const d2 = await api(`/api/runs/${S.run.run_id}/series`);
+          const d2 = await api(`/api/runs/${myRun}/series`);
+          if (stale(myEpoch, myRun)) return;      // 已切走：不要把别人的曲线画上去
           S.series = d2.series; renderCharts();
+        }
+        if (!S.meta) {                            // 新运行首次读取 meta 为空 -> 自动补取
+          const d3 = await api(`/api/runs/${myRun}`);
+          if (stale(myEpoch, myRun)) return;
+          if (d3.meta) { S.meta = d3.meta; renderMap(); renderSide(); }
         }
       }
     }
     renderRuns(); renderStatus();
   } catch (e) {
-    $("statusline").innerHTML = `<span class="err">后台读取失败：${e.message}</span>`;
+    $("statusline").innerHTML = `<span class="err">后台读取失败：${esc(e.message)}</span>`;
   }
 }
 
@@ -548,7 +602,7 @@ async function boot() {
   } catch (e) {
     $("statusline").innerHTML = e.status === 401
       ? `<span class="err">需要访问令牌：请在右上角填入后点“保存”。</span>`
-      : `<span class="err">后台连接失败：${e.message}</span>`;
+      : `<span class="err">后台连接失败：${esc(e.message)}</span>`;
     return;
   }
   S.map = await api("/api/map");
@@ -598,13 +652,20 @@ async function startRun() {
     await refresh(); await openRun(r.run_id);
     showTab("world");
   } catch (e) {
-    flash(`<span class="err">启动失败：${e.message}</span>`);
+    flash("启动失败：" + e.message, true);
   } finally {
     $("b-start").disabled = false;
   }
 }
 
-boot().catch((e) => { $("statusline").innerHTML = `<span class="err">初始化失败：${e.message}</span>`; });
+/* 供 selftest.html 驱动的测试钩子。只读地暴露内部状态与几个入口，不改变运行时行为。 */
+window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot };
+
+if (!window.__OBS_MANUAL_BOOT__) {
+  boot().catch((e) => {
+    $("statusline").innerHTML = `<span class="err">初始化失败：${esc(e.message)}</span>`;
+  });
+}
 
 /* 诊断用：#diag=1 时把关键元素宽度写进页面标题，便于用截图核对布局 */
 if (hashParams().diag === "1") {

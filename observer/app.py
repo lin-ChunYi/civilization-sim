@@ -228,23 +228,29 @@ def _validate(body: NewRun) -> None:
 @app.post("/api/runs", dependencies=[Depends(require_write)])
 def post_run(body: NewRun):
     _validate(body)
-    act = store.active_run()
-    if act:
-        raise HTTPException(409, f"已有任务在跑（{act['run_id']}，"
-                                 f"{act['years_done']}/{act['years']} 年）。"
-                                 f"本版同时只执行一个模拟任务，请等它结束或先取消。")
     if store.run_count() >= config.MAX_RUNS:
         raise HTTPException(409, f"运行条数已达上限 {config.MAX_RUNS}，请先删除旧运行。")
     if store.data_size_mb() >= config.MAX_DATA_MB:
         raise HTTPException(409, f"数据目录已达上限 {config.MAX_DATA_MB} MB，请先删除旧运行。")
 
-    run_id = store.create_run(seed=body.seed, years=body.years, sigma_m=body.sigma_m,
+    # 占槽与建记录在同一个事务里完成：两个同时到达的请求只有一个能拿到槽
+    run_id = store.claim_slot(seed=body.seed, years=body.years, sigma_m=body.sigma_m,
                               move_mort_m=body.move_mort_m, arm=body.arm,
                               label=body.label, kind="user",
                               engine=adapter.engine_info(), repo_commit=repo_commit())
-    proc = subprocess.Popen([sys.executable, "-m", "observer.worker", run_id],
-                            cwd=str(config.REPO_ROOT), start_new_session=True)
-    store.set_status(run_id, "queued", pid=proc.pid)
+    if run_id is None:
+        act = store.active_run()
+        raise HTTPException(409, "已有任务在跑" +
+                            (f"（{act['run_id']}，{act['years_done']}/{act['years']} 年）"
+                             if act else "") +
+                            "。本版同时只执行一个模拟任务，请等它结束或先取消。")
+    try:
+        proc = subprocess.Popen([sys.executable, "-m", "observer.worker", run_id],
+                                cwd=str(config.REPO_ROOT), start_new_session=True)
+    except Exception as exc:                                    # noqa: BLE001
+        store.drop_run_row(run_id)                              # 起不来就把槽还回去
+        raise HTTPException(500, f"工作进程启动失败：{type(exc).__name__}: {exc}")
+    store.set_pid(run_id, proc.pid)      # 只写 pid，不碰 status（工作进程可能已经 running）
     return {"run_id": run_id, "status": "queued"}
 
 

@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>OBS-01 前端回归自检</title>
+<link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<pre id="result" style="background:#111;color:#0f0;padding:8px;font:12px/1.5 monospace">running…</pre>
+<div id="mount"></div>
+
+<script>
+/* 前端回归自检：用受控的 fetch 桩驱动真正的 app.js，检查
+   （1）迟到的响应不得覆盖当前选择；（2）年份缓存按 run 隔离；
+   （3）meta 为空时自动补取；（4）用户输入只能以文本出现。
+   由 observer/run_tests.py 用 headless Chrome --dump-dom 跑，解析 #result。 */
+window.__OBS_MANUAL_BOOT__ = true;          // 阻止 app.js 自己 boot
+(function () {                               // 包进 IIFE：不能污染全局词法作用域，
+const realFetch = window.fetch.bind(window);
+const LAT = {};                              // 每个 URL 的人为延迟（毫秒）
+const OVERRIDE = {};                          // 允许测试中途改返回值
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const NEED = 730000;
+function mkCells() {
+  const cells = [];
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    const i = r * 8 + c, passable = c !== 3 && c !== 4;
+    cells.push({ i, row: r, col: c, passable,
+      region: c < 3 ? "A" : (c > 4 ? "B" : "-"), neighbors: passable ? [i] : [] });
+  }
+  return { w: 8, h: 8, barrier_cols: [3, 4], cells };
+}
+function mkYear(t, pop) {
+  const cum = { births_cum: 10, deaths_demo_cum: 5, mig_deaths_cum: 1, mig_total: 3,
+    mig_regret: 0, need_cum: 1000, deficit_cum: 10, personyear_cum: 100, stale_sum: 0,
+    inflow: 0, out_eat: 0, out_spoil: 0, out_move: 0, out_lost: 0, prop_total: 0,
+    prop_conflict: 0, clim_nominal: 0, clim_planned: 0, clim_credited: 0, clim_capped: 0 };
+  const year = Object.assign({}, cum);
+  return { t, stock: Array(64).fill(NEED * 10),
+    bands: [{ id: "9007199254740993", name: "群体-TEST01", cell: 0, size: pop,
+              store: NEED, macc: 0, bacc: 0, dacc: 0, mem: { "0": [NEED * 10, t] } }],
+    cum, year, agg: { pop, bands: 1, stock_total: NEED * 640, store_total: NEED },
+    integrity: { conservation_error: 0, population_identity_error: 0, state_hash: "deadbeefdeadbeef" },
+    events: [] };
+}
+const XSS_LABEL = '<img src=x onerror="window.__pwned=1">运行B';
+const XSS_ERR = '<script>window.__pwned2=1<\/script>失败原因';
+const META = { cell_ids: [...Array(64).keys()], cap: Array(64).fill(NEED * 100),
+               regen: Array(64).fill(NEED * 20), start_stock: 1, start_store: 1, pop_start: 120 };
+const RUNS = [
+  { run_id: "A", label: "运行A", kind: "user", status: "done", created_at: 1e9, started_at: 1e9,
+    finished_at: 1e9, seed: 1, years: 20, sigma_m: 0, move_mort_m: 0, arm: "memory",
+    years_done: 20, years_recorded: 20, engine_sha256: "abc123", baseline_commit: "6b6af4f",
+    error: "", full_digest: "d" },
+  { run_id: "B", label: XSS_LABEL, kind: "user", status: "done", created_at: 1e9, started_at: 1e9,
+    finished_at: 1e9, seed: 2, years: 20, sigma_m: 0, move_mort_m: 0, arm: "memory",
+    years_done: 20, years_recorded: 20, engine_sha256: "abc123", baseline_commit: "6b6af4f",
+    error: "", full_digest: "d" },
+  { run_id: "C", label: "运行C", kind: "user", status: "failed", created_at: 1e9, started_at: 1e9,
+    finished_at: 1e9, seed: 3, years: 20, sigma_m: 0, move_mort_m: 0, arm: "memory",
+    years_done: 0, years_recorded: 0, engine_sha256: "abc123", baseline_commit: "6b6af4f",
+    error: XSS_ERR, full_digest: "" },
+];
+const POP = { A: 111111, B: 222222, C: 0 };
+
+window.fetch = async function (url, opts) {
+  const u = String(url);
+  if (!u.startsWith("/api/")) return realFetch(url, opts);
+  if (LAT[u]) await delay(LAT[u]);
+  let body = null;
+  if (u === "/api/config") {
+    body = { token_required: false,
+      limits: { min_years: 1, max_years: 300, max_runs: 50, max_data_mb: 512,
+                max_seed: 2147483647, write_rate_per_min: 12 },
+      arms: { memory: { label: "记忆臂（默认）", note: "n" },
+              omniscient: { label: "全知对照臂", note: "n" } },
+      engine: { engine_path: "exp03/verify3.py", engine_sha256: "abc123def456",
+                baseline_commit: "6b6af4f", params_fingerprint: "fp",
+                constants: { NEED_PC: NEED, MILLE: 1000 } },
+      repo_commit: "testcommit", data: { runs: 3, size_mb: 1 } };
+  } else if (u === "/api/map") { body = mkCells(); }
+  else if (u === "/api/runs") { body = { runs: RUNS, active: null }; }
+  else if (/^\/api\/runs\/[A-C]$/.test(u)) {
+    const id = u.split("/")[3];
+    const r = Object.assign({}, RUNS.find((x) => x.run_id === id));
+    r.meta = OVERRIDE["meta:" + id] === undefined ? META : OVERRIDE["meta:" + id];
+    body = r;
+  } else if (/\/series$/.test(u)) {
+    const id = u.split("/")[3];
+    body = { run_id: id, series: [0, 1, 2, 3, 4, 5].map((t) => {
+      const y = mkYear(t, POP[id]);
+      return { t, agg: y.agg, year: y.year, cum: y.cum, integrity: y.integrity, events: 0 }; }) };
+  } else if (/\/year\/\d+$/.test(u)) {
+    const id = u.split("/")[3], t = +u.split("/").pop();
+    body = mkYear(t, POP[id]);
+  } else if (/\/band\//.test(u)) {
+    const id = u.split("/")[3], bid = u.split("/").pop();
+    body = { id: bid, name: "轨迹来自运行" + id, first_seen: 0, last_seen: 5,
+             origin: "开局的初始群体", parent: null, born_at: null, children: [],
+             extinct_at: null, trajectory: [[0, 0]], sizes: [[0, 20]], source: "测试桩" };
+  } else { body = {}; }
+  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+};
+// 否则这里的 const NEED 会和 app.js 里的 const NEED 重复声明，app.js 整个不执行
+window.__T = { LAT, OVERRIDE, META, XSS_LABEL, XSS_ERR, realFetch };
+})();
+</script>
+
+<script>
+(async () => {
+  const { LAT, OVERRIDE, META, XSS_LABEL, XSS_ERR, realFetch } = window.__T;
+  const out = [];
+  /* 被测脚本可以换：?app=/static/xxx.js 用来跑“注入版”，验证这些检查真的会红 */
+  const APP = new URLSearchParams(location.search).get("app") || "/static/app.js";
+  const loadScript = (src) => new Promise((res, rej) => {
+    const el = document.createElement("script");
+    el.src = src; el.onload = res; el.onerror = () => rej(new Error("加载失败：" + src));
+    document.head.appendChild(el);
+  });
+  const ok = (name, cond, detail) => out.push(`${cond ? "PASS" : "FAIL"} ${name}${detail ? " :: " + detail : ""}`);
+  const txt = (sel) => (document.querySelector(sel) || { textContent: "" }).textContent;
+  try {
+    // 把真正的 index.html 骨架装进来（去掉它自己的 script 标签）
+    const html = await realFetch("/static/index.html").then((r) => r.text());
+    const body = html.split("<body>")[1].split("</body>")[0].replace(/<script[\s\S]*?<\/script>/g, "");
+    document.getElementById("mount").innerHTML = body;
+    await loadScript(APP);
+
+    const O = window.__obs;
+    await O.boot();
+    ok("T0 自检页能驱动真实 app.js 启动", !!O.S.cfg && !!O.S.map);
+
+    // ---- T1 迟到的年份响应不得覆盖当前选择 ----
+    await O.openRun("A");
+    LAT["/api/runs/A/year/5"] = 500;             // A 的第 5 年故意慢
+    const pending = O.gotoYear(5);               // 不 await：让它挂在半空
+    await O.openRun("B");                        // 期间切到 B
+    await pending;                               // 再让 A 的响应回来
+    await new Promise((r) => setTimeout(r, 50));
+    ok("T1a 切换后当前运行仍是 B", O.S.run.run_id === "B", "run=" + O.S.run.run_id);
+    ok("T1b 迟到的 A 年份没有改写回放年份", O.S.t === 0, "t=" + O.S.t);
+    ok("T1c 侧栏显示的是 B 的人口", txt("#side-now").includes("222,222"),
+       txt("#side-now").slice(0, 40));
+    ok("T1d 标题栏对应 B", txt("#statusline").includes("运行B"));
+    ok("T1e 时间轴年份显示 0", txt("#scrub-year") === "0", txt("#scrub-year"));
+    delete LAT["/api/runs/A/year/5"];
+    await O.gotoYear(5);                          // 现在真的去看 B 的第 5 年
+    ok("T1f 迟到的 A 响应没有污染 B 的第 5 年", txt("#side-now").includes("222,222"),
+       txt("#side-now").slice(0, 24));
+    await O.gotoYear(0);
+
+    // ---- T2 年份缓存按 run_id + t 隔离 ----
+    await O.openRun("A"); await O.gotoYear(3);
+    const aKey = O.S.years.get(O.ykey("A", 3));
+    await O.openRun("B"); await O.gotoYear(3);
+    const bKey = O.S.years.get(O.ykey("B", 3));
+    ok("T2a A 与 B 的同一年各存各的", aKey.agg.pop === 111111 && bKey.agg.pop === 222222,
+       `${aKey.agg.pop}/${bKey.agg.pop}`);
+    ok("T2b 界面显示的是 B 的数据", txt("#side-now").includes("222,222"));
+
+    // ---- T3 迟到的群体轨迹不得贴上来 ----
+    LAT["/api/runs/B/band/9007199254740993"] = 400;
+    O.selectBand("9007199254740993");            // 选中，轨迹慢
+    await new Promise((r) => setTimeout(r, 20));
+    O.selectBand("9007199254740993");            // 立刻取消选中
+    await new Promise((r) => setTimeout(r, 600));
+    ok("T3 取消选中后迟到的轨迹没有贴上来",
+       !txt("#side-sel").includes("轨迹来自运行"), txt("#side-sel").slice(0, 30));
+    delete LAT["/api/runs/B/band/9007199254740993"];
+
+    // ---- T4 新运行首次 meta 为空时自动补取 ----
+    OVERRIDE["meta:A"] = null;
+    await O.openRun("A");
+    const metaWasNull = O.S.meta === null;
+    OVERRIDE["meta:A"] = META;                   // 工作进程随后落盘
+    await O.refresh();
+    await new Promise((r) => setTimeout(r, 30));
+    ok("T4 meta 先空后补取", metaWasNull && !!O.S.meta && O.S.meta.cap.length === 64,
+       `先空=${metaWasNull} 后有=${!!O.S.meta}`);
+
+    // ---- T5 用户输入只能以文本出现 ----
+    O.renderRuns();
+    const table = document.getElementById("runtable");
+    ok("T5a 备注里的 HTML 没有变成元素",
+       table.querySelectorAll("img,script,iframe,svg").length === 0,
+       "元素数=" + table.querySelectorAll("img,script,iframe,svg").length);
+    ok("T5b 备注按字面文本显示", table.textContent.includes('<img src=x onerror='),
+       table.textContent.slice(0, 60));
+    ok("T5c 错误信息里的 script 也是字面文本", table.textContent.includes("<script>"));
+    ok("T5d 没有触发注入的事件", window.__pwned === undefined && window.__pwned2 === undefined);
+    const hasOnAttr = [...table.querySelectorAll("*")].some((n) =>
+      [...n.attributes].some((a) => /^on/i.test(a.name)));
+    ok("T5e 没有生成任何 on* 事件属性", !hasOnAttr);
+
+    // ---- T6 地图 / 详情 / 时间轴 / 标题始终同属一次运行 ----
+    await O.openRun("B"); await O.gotoYear(2);
+    ok("T6 四处一致", O.S.run.run_id === "B" && txt("#scrub-year") === "2" &&
+       txt("#side-year") === "2" && txt("#statusline").includes("运行B") &&
+       !!document.querySelector("#map .cell"));
+    // ---- T7 两次 openRun 交错：先发起的慢请求不得把界面带回旧运行 ----
+    LAT["/api/runs/A"] = 400; LAT["/api/runs/A/series"] = 400;
+    const pa = O.openRun("A");
+    await new Promise((r) => setTimeout(r, 20));
+    await O.openRun("B");
+    await pa;
+    await new Promise((r) => setTimeout(r, 60));
+    delete LAT["/api/runs/A"]; delete LAT["/api/runs/A/series"];
+    ok("T7a 交错打开后当前运行是 B", O.S.run.run_id === "B", "run=" + O.S.run.run_id);
+    ok("T7b 曲线数据也是 B 的", O.S.series.length > 0 && O.S.series[0].agg.pop === 222222,
+       "pop=" + (O.S.series[0] || {}).agg?.pop);
+    ok("T7c 标题栏与数据同属一次运行", txt("#statusline").includes("运行B") &&
+       txt("#side-now").includes("222,222"));
+  } catch (e) {
+    out.push("FAIL 自检脚本本身出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
+  }
+  const nf = out.filter((l) => l.startsWith("FAIL")).length;
+  out.push(`SUMMARY pass=${out.filter((l) => l.startsWith("PASS")).length} fail=${nf}`);
+  document.getElementById("result").textContent = out.join("\n");
+})();
+</script>
+</body></html>

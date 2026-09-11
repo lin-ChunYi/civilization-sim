@@ -208,6 +208,256 @@ with client:
     check("O11 预生成案例存在且被标记为 preset（不冒充实时任务）",
           len(pre) == 1 and pre[0]["status"] == "done", str([p["run_id"] for p in pre]))
 
+# ---------------------------------------------------------------- 并发与状态转换
+print("\nO13 任务槽与状态转换")
+import threading  # noqa: E402
+
+got = []
+barrier = threading.Barrier(2)
+
+
+def _claim(tag):
+    barrier.wait()
+    got.append(store.claim_slot(seed=1, years=5, sigma_m=0, move_mort_m=0, arm="memory",
+                                label=f"并发{tag}", kind="user", engine=adapter.engine_info()))
+
+
+with store.connect() as c:                      # 先清空任务槽
+    c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+ths = [threading.Thread(target=_claim, args=(i,)) for i in range(2)]
+[t.start() for t in ths]
+[t.join() for t in ths]
+won = [g for g in got if g]
+check("O13a 两个同时占槽的请求只有一个成功", len(won) == 1, f"结果={got}")
+slot = won[0] if won else None
+
+if slot:
+    fake_pid = os.getpid()
+    check("O13b 工作进程 queued->running 只能成功一次",
+          store.worker_begin(slot, fake_pid) and not store.worker_begin(slot, fake_pid))
+    store.set_pid(slot, fake_pid)
+    check("O13c 写 pid 不会把 running 打回 queued",
+          store.get_run(slot)["status"] == "running", store.get_run(slot)["status"])
+    store.set_status(slot, "interrupted")        # 模拟服务端判定中断
+    ok_done = store.worker_finish(slot, fake_pid, "done", years_done=5)
+    check("O13d 被判中断后，旧工作进程改不回 done",
+          (not ok_done) and store.get_run(slot)["status"] == "interrupted",
+          f"finish={ok_done} 状态={store.get_run(slot)['status']}")
+    check("O13e 被判中断后，进度写入也被拒绝",
+          not store.worker_progress(slot, fake_pid, 99))
+else:
+    uncov("O13b–e 状态围栏", "没有拿到任务槽，前提缺失")
+
+# 真的起一个“假装是工作进程”的活进程，验证重启恢复会先停掉它再标中断
+live_run = store.claim_slot(seed=2, years=5, sigma_m=0, move_mort_m=0, arm="memory",
+                            label="活进程", kind="user", engine=adapter.engine_info())
+if live_run is None:
+    with store.connect() as c:
+        c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+    live_run = store.claim_slot(seed=2, years=5, sigma_m=0, move_mort_m=0, arm="memory",
+                                label="活进程", kind="user", engine=adapter.engine_info())
+if live_run:
+    stand_in = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)", "observer.worker", live_run])
+    time.sleep(0.6)
+    store.set_pid(live_run, stand_in.pid)
+    store.worker_begin(live_run, stand_in.pid)
+    check("O14a 能认出这次运行的活工作进程",
+          store._is_our_worker(stand_in.pid, live_run))
+    n_rec = store.recover_interrupted()
+    time.sleep(0.3)
+    alive_after = store._is_our_worker(stand_in.pid, live_run)
+    check("O14b 重启恢复会先停掉旧进程再标中断",
+          (not alive_after) and store.get_run(live_run)["status"] == "interrupted",
+          f"仍活着={alive_after} 状态={store.get_run(live_run)['status']}")
+    check("O14c 旧进程即使漏网也改不回 done",
+          not store.worker_finish(live_run, stand_in.pid, "done", years_done=5))
+    if stand_in.poll() is None:
+        stand_in.kill()
+else:
+    uncov("O14 重启恢复停旧进程", "没拿到任务槽，前提缺失")
+
+# ---------------------------------------------------------------- 半条记录
+print("\nO15 只承认写完整的记录")
+probe = "partial-probe"
+store.run_dir(probe).mkdir(parents=True, exist_ok=True)
+full = [json.dumps({"t": i, "stock": [1], "bands": [], "cum": {}, "year": {},
+                    "agg": {"pop": i}, "integrity": {}, "events": []},
+                   separators=(",", ":")) for i in range(4)]
+fp = store.years_path(probe)
+cases = [("完整 4 条", "\n".join(full) + "\n", 4),
+         ("末尾半条", "\n".join(full) + "\n" + '{"t":4,"stock":[1],"ban', 4),
+         ("末尾缺字段", "\n".join(full) + "\n" + '{"t":4}\n', 4),
+         ("t 错位", "\n".join(full) + "\n" + full[0] + "\n", 4),
+         ("空文件", "", 0),
+         ("只有半条", '{"t":0,"sto', 0)]
+bad = []
+for name, text, want in cases:
+    fp.write_text(text, encoding="utf-8")
+    if store.year_count(probe) != want or len(store.read_series(probe)) != want:
+        bad.append(name)
+check("O15a 半条 / 缺字段 / 错位记录都不计入已完成年份", not bad, str(bad))
+fp.write_text("\n".join(full) + "\n" + '{"t":4,"stock":[1],"ban', encoding="utf-8")
+check("O15b 已完整保存的历史仍可读", store.read_year(probe, 3)["agg"]["pop"] == 3)
+check("O15c 半条那一年读不到（不是读到半个）", store.read_year(probe, 4) is None)
+
+# ---------------------------------------------------------------- 接口不被半条记录打爆
+print("\nO16 接口层：运行中读取、半条记录、并发启动")
+with store.connect() as c:
+    c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+client2 = TestClient(app)
+with client2:
+    # 并发启动：两个请求同时打
+    results = []
+    b2 = threading.Barrier(2)
+
+    def _post(i):
+        b2.wait()
+        r = client2.post("/api/runs", json={"seed": 7, "years": 300, "sigma_m": 0,
+                                            "move_mort_m": 0, "arm": "memory",
+                                            "label": f"并发启动{i}"})
+        results.append(r.status_code)
+
+    ts = [threading.Thread(target=_post, args=(i,)) for i in range(2)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    check("O16a 两个同时到达的启动请求只有一个成功",
+          sorted(results) == [200, 409], str(results))
+
+    live = store.active_run() or next(
+        (r for r in store.list_runs() if r["label"].startswith("并发启动")), None)
+    rid2 = live["run_id"] if live else None
+
+    # 运行中读取：边算边读，不能有 5xx；series 任何时候都要正常返回
+    calls, during, early404 = [], 0, 0
+    deadline = time.time() + 60
+    while rid2 and time.time() < deadline:
+        st_now = client2.get(f"/api/runs/{rid2}").json()
+        calls.append(("series", client2.get(f"/api/runs/{rid2}/series").status_code))
+        yc = client2.get(f"/api/runs/{rid2}/year/0").status_code
+        calls.append(("year0", yc))
+        if yc == 404 and st_now["years_recorded"] == 0:
+            early404 += 1          # 第 0 年还没写出来，404 是正确答案，不是错误
+        if st_now["status"] == "running":
+            during += 1
+        if st_now["status"] in ("done", "failed", "canceled", "interrupted"):
+            break
+        time.sleep(0.01)
+    server_err = [c for _, c in calls if c >= 500]
+    series_bad = [c for k, c in calls if k == "series" and c != 200]
+    year_bad = [c for k, c in calls if k == "year0" and c not in (200, 404)]
+    check("O16b 运行中读取没有 5xx，series 始终可用",
+          not server_err and not series_bad and not year_bad,
+          f"{len(calls)} 次请求；5xx={server_err} series异常={series_bad} year异常={year_bad}")
+    check("O16b2 第 0 年未写出前的 404 是如实回答，写出后必为 200",
+          client2.get(f"/api/runs/{rid2}/year/0").status_code == 200,
+          f"算完前出现 {early404} 次合理 404")
+    if during:
+        check("O16c 至少读到过一次“运行中”的状态", True, f"{during} 次")
+    else:
+        uncov("O16c 运行中读取", "这次运行太快，轮询没赶上 running 状态")
+
+    if rid2:
+        # 人为把尾巴截半，接口仍要正常工作
+        pth = store.years_path(rid2)
+        raw = pth.read_text(encoding="utf-8")
+        pth.write_text(raw + '{"t":9999,"stock":[1],"ban', encoding="utf-8")
+        full_years = raw.count("\n") - 1
+        s_code = client2.get(f"/api/runs/{rid2}/series").status_code
+        y_ok = client2.get(f"/api/runs/{rid2}/year/{full_years}").status_code
+        y_bad = client2.get(f"/api/runs/{rid2}/year/{full_years + 1}").status_code
+        listed = next(r for r in client2.get("/api/runs").json()["runs"]
+                      if r["run_id"] == rid2)["years_recorded"]
+        check("O16d 尾部半条不会让 series 报 500", s_code == 200, f"code={s_code}")
+        check("O16e 完整年份照读，半条那年 404",
+              y_ok == 200 and y_bad == 404, f"{y_ok}/{y_bad}")
+        check("O16f 列表里的已完成年数不含半条", listed == full_years,
+              f"{listed} vs {full_years}")
+    else:
+        uncov("O16d–f 半条记录的接口表现", "没有可用的运行")
+
+    # 备注原样保存（转义是显示层的事，服务端不篡改）
+    with store.connect() as c:
+        c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+    payload = '<img src=x onerror="alert(1)">'
+    r = client2.post("/api/runs", json={"seed": 3, "years": 1, "sigma_m": 0,
+                                        "move_mort_m": 0, "arm": "memory", "label": payload})
+    if r.status_code == 200:
+        rid3 = r.json()["run_id"]
+        for _ in range(200):
+            if store.get_run(rid3)["status"] in ("done", "failed", "interrupted", "canceled"):
+                break
+            time.sleep(0.05)
+        listed = next(x for x in client2.get("/api/runs").json()["runs"]
+                      if x["run_id"] == rid3)
+        check("O17 备注原样保存，不在服务端被改写", listed["label"] == payload,
+              listed["label"][:30])
+    else:
+        uncov("O17 备注原样保存", f"启动失败 {r.status_code}")
+
+# ---------------------------------------------------------------- 浏览器自检
+print("\nO18 前端回归（headless Chrome 驱动真实 app.js）")
+CHROME_CANDIDATES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    shutil.which("google-chrome") or "", shutil.which("chromium") or "",
+]
+chrome = next((c for c in CHROME_CANDIDATES if c and Path(c).exists()), None)
+if not chrome:
+    uncov("O18 前端回归自检", "本机没有找到 Chrome / Chromium，浏览器检查未执行")
+else:
+    import re as _re
+    import html as _html
+    from observer import make_poison_js
+
+    srv = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "observer.app:app",
+         "--host", "127.0.0.1", "--port", "8799", "--log-level", "warning"],
+        cwd=str(REPO), env={**os.environ, "OBSERVER_DATA_DIR": str(TEST_DATA)},
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _selftest(app_url):
+        out = subprocess.run(
+            [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
+             "--virtual-time-budget=25000", "--dump-dom",
+             f"http://127.0.0.1:8799/static/selftest.html?app={app_url}"],
+            capture_output=True, text=True, timeout=180).stdout
+        m = _re.search(r'<pre id="result"[^>]*>(.*?)</pre>', out, _re.S)
+        return _html.unescape(m.group(1)) if m else ""
+
+    try:
+        for _ in range(60):
+            try:
+                import urllib.request
+                urllib.request.urlopen("http://127.0.0.1:8799/api/health", timeout=2)
+                break
+            except Exception:  # noqa: BLE001
+                time.sleep(0.3)
+        healthy = _selftest("/static/app.js")
+        hp = healthy.count("PASS ")
+        hf = [ln for ln in healthy.splitlines() if ln.startswith("FAIL")]
+        check(f"O18a 前端自检全绿（{hp} 项）", hp > 0 and not hf, "; ".join(hf)[:120])
+        for ln in healthy.splitlines():
+            if ln.startswith(("PASS", "FAIL")):
+                print("      " + ln)
+
+        poison = make_poison_js.build()
+        bad_out = _selftest("/static/_poison_selftest.js")
+        bf = [ln for ln in bad_out.splitlines() if ln.startswith("FAIL")]
+        race = [ln for ln in bf if ln.startswith(("FAIL T1f", "FAIL T7"))]
+        xss = [ln for ln in bf if ln.startswith("FAIL T5")]
+        check("O18b 把修复去掉后，串运行的检查确实会红", len(race) >= 2,
+              f"{len(race)} 条：" + "; ".join(x.split(" :: ")[0] for x in race))
+        check("O18c 把转义去掉后，注入检查确实会红", len(xss) >= 3,
+              f"{len(xss)} 条：" + "; ".join(x.split(" :: ")[0] for x in xss))
+        poison.unlink(missing_ok=True)
+    finally:
+        srv.terminate()
+        try:
+            srv.wait(timeout=10)
+        except Exception:  # noqa: BLE001
+            srv.kill()
+
 # ---------------------------------------------------------------- 冻结目录
 print("\nO12 冻结基线未被改动")
 for rev, d in (("20da486", "exp01"), ("c5a1f18", "exp02"), ("6b6af4f", "exp03")):

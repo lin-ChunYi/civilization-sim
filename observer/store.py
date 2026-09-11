@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sqlite3
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -74,12 +76,26 @@ def meta_path(run_id: str) -> Path:
 
 # ---------------------------------------------------------------- 写
 
-def create_run(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: str,
+def claim_slot(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: str,
                label: str = "", kind: str = "user", engine: Dict[str, Any],
-               repo_commit: str = "") -> str:
+               repo_commit: str = "") -> Optional[str]:
+    """**原子**地占用唯一的任务槽并建记录。
+
+    “检查空闲 + 占槽 + 建记录”必须在同一个事务里，否则两个同时到达的请求会双双通过检查。
+    用 SQLite 的 BEGIN IMMEDIATE 拿写锁：两个并发事务里只有一个能先提交，
+    后一个再看到的就是“已有任务在跑”。单实例够用，不需要任务平台。
+    """
     run_id = uuid.uuid4().hex[:12]
-    run_dir(run_id).mkdir(parents=True, exist_ok=True)
-    with connect() as conn:
+    conn = sqlite3.connect(config.DB_PATH, timeout=20.0, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("BEGIN IMMEDIATE")
+        busy = conn.execute("SELECT run_id FROM runs WHERE status IN (?,?) LIMIT 1",
+                            _STATUS_ACTIVE).fetchone()
+        if busy:
+            conn.execute("ROLLBACK")
+            return None
         conn.execute(
             "INSERT INTO runs (run_id,label,kind,status,created_at,seed,years,sigma_m,"
             "move_mort_m,arm,engine_sha256,engine_path,baseline_commit,repo_commit) "
@@ -87,7 +103,29 @@ def create_run(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: st
             (run_id, label, kind, time.time(), seed, years, sigma_m, move_mort_m, arm,
              engine["engine_sha256"], engine["engine_path"], engine["baseline_commit"],
              repo_commit))
+        conn.execute("COMMIT")
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+    run_dir(run_id).mkdir(parents=True, exist_ok=True)
     return run_id
+
+
+def set_pid(run_id: str, pid: int) -> None:
+    """只写 pid，**不碰 status** —— 否则会把工作进程已经推进到的 running/done 打回 queued。"""
+    with connect() as conn:
+        conn.execute("UPDATE runs SET pid=? WHERE run_id=?", (pid, run_id))
+
+
+def drop_run_row(run_id: str) -> None:
+    """占槽后启动失败时把槽还回去。"""
+    with connect() as conn:
+        conn.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
 
 
 def set_status(run_id: str, status: str, **fields) -> None:
@@ -100,6 +138,44 @@ def set_status(run_id: str, status: str, **fields) -> None:
 def update_progress(run_id: str, years_done: int) -> None:
     with connect() as conn:
         conn.execute("UPDATE runs SET years_done=? WHERE run_id=?", (years_done, run_id))
+
+
+# ---- 工作进程专用：所有写入都带围栏条件，被判为中断/取消后就再也改不回去 ----
+
+def worker_begin(run_id: str, pid: int) -> bool:
+    """queued -> running。只有当这条记录仍是 queued 且 pid 是自己时才成立。"""
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE runs SET status='running', started_at=?, pid=? "
+            "WHERE run_id=? AND status='queued' AND (pid IS NULL OR pid=?)",
+            (time.time(), pid, run_id, pid))
+        return cur.rowcount == 1
+
+
+def worker_state(run_id: str, pid: int) -> Optional[sqlite3.Row]:
+    """工作进程每个 tick 查一次：状态、pid、取消标志。返回 None 表示这条记录没了。"""
+    with connect() as conn:
+        return conn.execute(
+            "SELECT status, pid, cancel_requested FROM runs WHERE run_id=?",
+            (run_id,)).fetchone()
+
+
+def worker_progress(run_id: str, pid: int, years_done: int) -> bool:
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE runs SET years_done=? WHERE run_id=? AND status='running' AND pid=?",
+            (years_done, run_id, pid))
+        return cur.rowcount == 1
+
+
+def worker_finish(run_id: str, pid: int, status: str, **fields) -> bool:
+    """running -> done/failed/canceled。**不能**把已经被判定为 interrupted 的记录改回去。"""
+    cols = ", ".join(f"{k}=?" for k in fields)
+    sql = ("UPDATE runs SET status=?" + (", " + cols if cols else "") +
+           " WHERE run_id=? AND status='running' AND pid=?")
+    with connect() as conn:
+        cur = conn.execute(sql, (status, *fields.values(), run_id, pid))
+        return cur.rowcount == 1
 
 
 def request_cancel(run_id: str) -> None:
@@ -169,9 +245,21 @@ def read_meta(run_id: str) -> Optional[Dict[str, Any]]:
 
 _CACHE: Dict[str, Any] = {}
 
+# 一条“完整记录”必须有的字段。缺一个就不算写完，不计入已完成年份。
+REQUIRED_YEAR_KEYS = frozenset(("t", "stock", "bands", "cum", "year", "agg",
+                                "integrity", "events"))
+
 
 def _lines(run_id: str) -> List[str]:
-    """逐年记录的进程内缓存，按 (mtime, size) 失效。回放只读文件，不触发任何计算。"""
+    """逐年记录的进程内缓存。回放只读文件，不触发任何计算。
+
+    **只承认写完整的行**：末尾那条半成品（进程正在写，或异常退出留下的）一律不计入
+    已完成年份，也不会让 series / year 接口炸掉。两条判据都要满足：
+      1. 这一行有换行符结尾 —— 按 "\n" 切开后丢掉最后一段即可：
+         文件以换行结束时最后一段是空串，没结束时最后一段正是那条半成品；
+      2. 这一行能被 json 解析，t 等于它的行号，且该有的字段一个不缺。
+         任一条不满足就在此截断 —— 下游（series / year / 前端）因此可以放心假定记录是完整的。
+    """
     p = years_path(run_id)
     if not p.exists():
         return []
@@ -180,9 +268,23 @@ def _lines(run_id: str) -> List[str]:
     hit = _CACHE.get(run_id)
     if hit and hit[0] == key:
         return hit[1]
-    lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    _CACHE[run_id] = (key, lines)
-    return lines
+    raw = p.read_text(encoding="utf-8", errors="replace")
+    out: List[str] = []
+    for ln in raw.split("\n")[:-1]:
+        ln = ln.rstrip("\r")
+        if not ln:
+            break
+        try:
+            rec = json.loads(ln)
+        except ValueError:
+            break
+        if not isinstance(rec, dict) or rec.get("t") != len(out):
+            break
+        if not REQUIRED_YEAR_KEYS <= rec.keys():
+            break
+        out.append(ln)
+    _CACHE[run_id] = (key, out)
+    return out
 
 
 def year_count(run_id: str) -> int:
@@ -212,18 +314,64 @@ def read_series(run_id: str) -> List[Dict[str, Any]]:
     return out
 
 
+def _is_our_worker(pid: Optional[int], run_id: str) -> bool:
+    """pid 还活着，而且确实是这次运行的工作进程（避免 pid 复用误伤别的程序）。"""
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except OSError:
+        return False
+    try:
+        out = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:  # noqa: BLE001
+        return False
+    return "observer.worker" in out and run_id in out
+
+
+def stop_worker(pid: int, run_id: str, grace: float = 3.0) -> bool:
+    """先 SIGTERM，等一会儿再 SIGKILL。必须在标记中断**之前**做完，
+    否则会出现“记录标成 interrupted，旧进程还在写、还能把状态改回 done”。"""
+    try:
+        os.kill(int(pid), signal.SIGTERM)
+    except OSError:
+        return False
+    deadline = time.time() + grace
+    while time.time() < deadline:
+        if not _is_our_worker(pid, run_id):
+            return True
+        time.sleep(0.1)
+    try:
+        os.kill(int(pid), signal.SIGKILL)
+    except OSError:
+        pass
+    time.sleep(0.2)
+    return True
+
+
 def recover_interrupted() -> int:
-    """服务启动时调用：没跑完的任务标为中断，不假装能跨进程续跑。"""
+    """服务启动时调用。
+
+    顺序是固定的：**先停掉可能还活着的旧工作进程，再把记录标成中断**。
+    工作进程那边所有写入都带 status='running' AND pid=? 的围栏，所以一旦标成 interrupted，
+    即使有漏网的进程也改不回 done。已经算出来的年份仍然可以回放。
+    """
     init_db()
     with connect() as conn:
-        rows = conn.execute("SELECT run_id FROM runs WHERE status IN (?,?)",
-                            _STATUS_ACTIVE).fetchall()
-        for r in rows:
-            done = len(_lines(r["run_id"]))
+        rows = [dict(r) for r in conn.execute(
+            "SELECT run_id, pid FROM runs WHERE status IN (?,?)", _STATUS_ACTIVE).fetchall()]
+    for r in rows:
+        killed = False
+        if _is_our_worker(r["pid"], r["run_id"]):
+            killed = stop_worker(int(r["pid"]), r["run_id"])
+        done = len(_lines(r["run_id"]))
+        note = ("服务重启时该任务尚未完成" + ("，旧工作进程已被停止" if killed else "") +
+                "。本版不做跨进程续跑；已完整保存的年份仍可回放，继续推进请新建运行。")
+        with connect() as conn:
             conn.execute(
-                "UPDATE runs SET status='interrupted', years_done=?, finished_at=?, "
-                "error=? WHERE run_id=?",
-                (max(done - 1, 0), time.time(),
-                 "服务重启或进程退出时该任务尚未完成。本版不做跨进程续跑，"
-                 "已计算的年份仍可回放，继续推进请新建运行。", r["run_id"]))
+                "UPDATE runs SET status='interrupted', years_done=?, finished_at=?, error=? "
+                "WHERE run_id=? AND status IN (?,?)",
+                (max(done - 1, 0), time.time(), note, r["run_id"], *_STATUS_ACTIVE))
+        _CACHE.pop(r["run_id"], None)
     return len(rows)

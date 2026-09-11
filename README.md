@@ -116,7 +116,8 @@ python3 -m uvicorn observer.app:app --host 127.0.0.1 --port 8765
 # 打开 http://127.0.0.1:8765
 ```
 
-验收：`python3 observer/run_tests.py` → **30 通过 / 0 失败 / 0 未覆盖**（含“开记录/不开记录逐年状态哈希相同”）。
+验收：`python3 observer/run_tests.py` → **52 通过 / 0 失败 / 0 未覆盖**（含“开记录/不开记录逐年状态哈希相同”、
+任务槽原子性与状态围栏、半条记录只截断不报错，以及 20 项由 headless Chrome 驱动真实前端的回归）。
 浏览器验收已实际执行（截图在仓库里）；**线上部署未执行**，只准备了配置（`render.yaml`、`observer/deploy/Dockerfile`）。
 
 ## EXP-04 — 方案待批准，未实现
