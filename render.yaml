@@ -1,0 +1,34 @@
+# Render 蓝图（Blueprint）—— OBS-01 文明观察台的单服务部署。
+# 蓝图文件必须叫 render.yaml 且放在仓库根目录，这是 Render 的要求，不是本项目的偏好。
+# 依据 https://render.com/docs/blueprint-spec 与 https://render.com/docs/disks（2026-09-11 核对）。
+#
+# 重要事实，不要绕过：
+#   * 持久盘（disk）**只有付费实例才有**。免费实例的文件系统是临时的：重启或重新部署后，
+#     自己发起的运行记录会消失，只剩仓库里带的预生成案例。
+#   * 挂了盘的服务**不能横向扩容**，而且重新部署时是先停后起（会短暂不可用）。
+#     本项目正好只需要单实例（同时只跑一个模拟任务），所以这个限制不影响使用。
+#   * 构建阶段访问不到持久盘，所以不要在 buildCommand 里往数据目录写东西。
+services:
+  - name: civilization-observer
+    type: web
+    runtime: python
+    plan: starter                     # 免费实例没有持久盘；要保留运行记录就得用付费实例
+    buildCommand: pip install -r observer/requirements.txt
+    startCommand: python -m uvicorn observer.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit         # GitHub 推送后自动重新部署代码
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.9"
+      - key: OBSERVER_DATA_DIR
+        value: /var/data              # 必须指向下面挂载的持久盘
+      - key: OBSERVER_TOKEN
+        sync: false                   # 访问令牌在 Render 控制台里填，**不写进仓库**
+      - key: OBSERVER_MAX_YEARS
+        value: "300"
+      - key: OBSERVER_MAX_RUNS
+        value: "50"
+    disk:
+      name: observer-data
+      mountPath: /var/data
+      sizeGB: 1

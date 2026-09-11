@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文明观察台 OBS-01</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">文明观察台<span class="sub">OBS-01 · 只读观察层</span></div>
+  <div class="statusline" id="statusline">正在连接后台…</div>
+  <div class="tokbox">
+    <input id="token" type="password" placeholder="访问令牌（若已设置）" autocomplete="off">
+    <button id="tokbtn" class="btn small">保存</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="world" class="on">世界地图</button>
+  <button data-tab="metrics">指标与曲线</button>
+  <button data-tab="events">群体与事件</button>
+  <button data-tab="runs">运行记录</button>
+  <button data-tab="progress">项目进度</button>
+</nav>
+
+<main>
+<!-- ========================= 世界地图 ========================= -->
+<section id="tab-world">
+  <div class="worldgrid">
+    <div class="mapwrap panel">
+      <div class="maphead">
+        <div class="viewsw">
+          <button id="v-truth" class="btn small on">世界真实资源</button>
+          <button id="v-mem" class="btn small">选中群体的记忆</button>
+        </div>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="mapbox"><svg id="map" viewBox="0 0 660 580" role="img" aria-label="世界地图"></svg></div>
+      <div class="maphint" id="maphint">点击格子看它的资源与占用；点击群体看详情。同格多个群体分开摆放，互不遮挡。</div>
+    </div>
+
+    <aside class="side panel" id="side">
+      <div class="emptystate" id="side-empty">还没有选中任何运行。</div>
+      <div id="side-body" hidden>
+        <h3>第 <span id="side-year">0</span> 年 · 当年值</h3>
+        <div class="kv" id="side-now"></div>
+        <details id="side-cum-wrap"><summary>累计值（开局至今）</summary><div class="kv" id="side-cum"></div></details>
+        <details id="side-int-wrap"><summary>账本完整性</summary><div class="kv" id="side-int"></div></details>
+        <h3 id="side-sel-h" hidden>选中群体</h3>
+        <div id="side-sel"></div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="timeline panel" id="timeline">
+    <div class="tlhead">
+      <span class="pill" id="tl-calc">已计算到：—</span>
+      <span class="pill strong" id="tl-play">正在回放：—</span>
+      <span class="muted" id="tl-note">回放只读取已保存的记录，不会重新计算世界。</span>
+    </div>
+    <div class="tlctl">
+      <button id="b-home" class="btn">⏮ 回到开局</button>
+      <button id="b-prev" class="btn">◀ 单步</button>
+      <button id="b-play" class="btn primary">▶ 播放</button>
+      <button id="b-next" class="btn">单步 ▶</button>
+      <label class="spd">速度
+        <select id="speed">
+          <option value="0.5">0.5×</option><option value="1" selected>1×</option>
+          <option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
+        </select>
+      </label>
+      <input id="scrub" type="range" min="0" max="0" value="0" step="1">
+      <span class="yearbox">第 <b id="scrub-year">0</b> 年</span>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= 指标与曲线 ========================= -->
+<section id="tab-metrics" hidden>
+  <div class="panel">
+    <h3>历史曲线（整条运行；竖线是当前回放年份）</h3>
+    <div id="charts" class="charts"></div>
+  </div>
+  <div class="panel">
+    <h3>逐年表（当年值与累计值分列）</h3>
+    <div class="tablewrap"><table id="yeartable"></table></div>
+  </div>
+</section>
+
+<!-- ========================= 群体与事件 ========================= -->
+<section id="tab-events" hidden>
+  <div class="panel">
+    <h3>第 <span id="ev-year">0</span> 年的事件</h3>
+    <div id="events"></div>
+  </div>
+  <div class="panel">
+    <h3>当年在世群体</h3>
+    <div class="tablewrap"><table id="bandtable"></table></div>
+  </div>
+</section>
+
+<!-- ========================= 运行记录 ========================= -->
+<section id="tab-runs" hidden>
+  <div class="panel">
+    <h3>发起一次新的模拟</h3>
+    <p class="muted">参数名与含义与模型一致（`exp03/verify3.py`）。这些是<b>未标定的模型参数</b>，
+       不是对现实的预测。改参数意味着新建一次运行，已有运行不会被改写。</p>
+    <div class="form" id="form">
+      <label>种子 seed<input id="f-seed" type="number" value="0" min="0" step="1"></label>
+      <label>年数 years<input id="f-years" type="number" value="120" min="1" step="1"></label>
+      <label>SIGMA_M 资源再生年际波动（‰）<input id="f-sigma" type="number" value="400" min="0" max="1000" step="1"></label>
+      <label>MOVE_MORT_M 迁移死亡强度（‰）<input id="f-mort" type="number" value="50" min="0" max="1000" step="1"></label>
+      <label>信息条件（对照臂）<select id="f-arm"></select></label>
+      <label>备注（可空）<input id="f-label" type="text" maxlength="60" placeholder="例如：对照 MORT=50"></label>
+      <button id="b-start" class="btn primary">开始模拟</button>
+    </div>
+    <div id="formnote" class="note"></div>
+    <div id="armnote" class="muted"></div>
+  </div>
+  <div class="panel">
+    <h3>运行记录</h3>
+    <div class="tablewrap"><table id="runtable"></table></div>
+  </div>
+</section>
+
+<!-- ========================= 项目进度 ========================= -->
+<section id="tab-progress" hidden>
+  <div class="panel">
+    <h3>项目进度</h3>
+    <div id="ms-note" class="note"></div>
+    <div id="milestones"></div>
+  </div>
+</section>
+</main>
+
+<footer id="footer"></footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -57,6 +57,7 @@ docs/
 exp01/                     EXP-01 参考实现与实测结果（冻结，只读）
 exp02/                     EXP-02 引擎、测试、扫描输出（冻结，只读）
 exp03/                     EXP-03 引擎、测试、112 次扫描输出（冻结，只读）
+observer/                  OBS-01 文明观察台（只读观察层 + 网页 + 后台）
 probes/                    对冻结基线的只读探针（不属于任何实验的实现）
 research/
   README.md                研究材料导航、证据分级、数据陷阱
@@ -96,6 +97,27 @@ research/
 独立复核发现并已修的两个缺陷：D11 的集成断言原本恒为真（用"只改 `step` 内实际强度、保留单元测试"的注入证明），现改为端到端精确核对并固化该注入为回归；`pop_start` 原本不进任何校验（+1 后 `full_digest` 不变而人口账误差变 −1），现纳入运行身份。
 
 D8b 的两组未覆盖（`seed=777` 的 A 区 300 年没有分裂可抑制）**如实保留**，不为消除它改机制。
+
+## OBS-01 — 文明观察台（已实现待审）
+
+一个中文网页，把上面这些实验变成**能看见的东西**：真实的 64 格地图、逐年回放、指标曲线、
+群体详情与可核实事件、项目进度。可以在页面上选参数发起一次模拟、看真实计算进度、回放已生成的历史。
+
+固定网页 + Python 后台（FastAPI）+ 独立数据存储（SQLite + 每次运行一个 `years.jsonl`）。
+模拟在独立子进程里跑，不阻塞页面；回放只读已保存的记录，**不重算世界、不改写历史**。
+**它不是新的世界机制**：不扩地图、不接 LLM、不加交易/战争/国家/宗教、不改人口与迁移公式，
+三个冻结目录逐字节未动（有测试盯着）。
+
+本地启动与口径说明：[`observer/README.md`](observer/README.md)　界面截图：[`observer/docs/screenshots/`](observer/docs/screenshots/)
+
+```bash
+python3 -m pip install -r observer/requirements.txt      # 首次
+python3 -m uvicorn observer.app:app --host 127.0.0.1 --port 8765
+# 打开 http://127.0.0.1:8765
+```
+
+验收：`python3 observer/run_tests.py` → **30 通过 / 0 失败 / 0 未覆盖**（含“开记录/不开记录逐年状态哈希相同”）。
+浏览器验收已实际执行（截图在仓库里）；**线上部署未执行**，只准备了配置（`render.yaml`、`observer/deploy/Dockerfile`）。
 
 ## EXP-04 — 方案待批准，未实现
 
