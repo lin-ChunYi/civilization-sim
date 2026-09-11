@@ -510,6 +510,75 @@ with TestClient(app) as c4:
 store.write_meta(rm_, {"cell_ids": [0, 1], "cap": [1, 2]})
 check("O21d 重写之后又能正常读回", (store.read_meta(rm_) or {}).get("cap") == [1, 2])
 
+# ---------------------------------------------------------------- 探测未知 ≠ 死亡
+print("\nO23 进程探测：查不到不等于死了；回收前要比对状态与 pid")
+with store.connect() as c:
+    c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+
+alive_proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+r_unknown = store.claim_slot(seed=21, years=5, sigma_m=0, move_mort_m=0, arm="memory",
+                             label="探测未知", kind="user", engine=adapter.engine_info())
+store.set_pid(r_unknown, alive_proc.pid)
+store.worker_begin(r_unknown, alive_proc.pid)
+
+real_run = store.subprocess.run
+
+
+def _ps_timeout(*a, **kw):
+    if a and isinstance(a[0], list) and a[0][:1] == ["ps"]:
+        raise subprocess.TimeoutExpired(cmd="ps", timeout=5)
+    return real_run(*a, **kw)
+
+
+store.subprocess.run = _ps_timeout
+try:
+    probe = store.probe_worker(alive_proc.pid, r_unknown)
+    check("O23a ps 超时 -> 探测结果是未知，不是死亡",
+          probe == store.WORKER_UNKNOWN, f"probe={probe}")
+    store.reap_stale()
+    check("O23b 探测未知时不回收任务槽",
+          store.get_run(r_unknown)["status"] == "running",
+          store.get_run(r_unknown)["status"])
+finally:
+    store.subprocess.run = real_run
+
+check("O23c ps 恢复后，pid 被别的进程占着 -> 判为 gone（pid 复用不误认）",
+      store.probe_worker(alive_proc.pid, r_unknown) == store.WORKER_GONE)
+store.reap_stale()
+check("O23d 确认 gone 之后才回收",
+      store.get_run(r_unknown)["status"] == "interrupted",
+      store.get_run(r_unknown)["status"])
+alive_proc.kill()
+
+# 检查与写入之间，工作进程刚刚启动：这一轮不能把它误停
+with store.connect() as c:
+    c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+r_cas = store.claim_slot(seed=22, years=5, sigma_m=0, move_mort_m=0, arm="memory",
+                         label="回收竞态", kind="user", engine=adapter.engine_info())
+store.force_status(r_cas, "queued", pid=None,
+                   created_at=time.time() - config.QUEUE_GRACE_SEC - 5)
+real_probe = store.probe_worker
+NEW_PID = 4242424
+
+
+def _probe_then_start(pid, run_id):
+    res = real_probe(pid, run_id)
+    if run_id == r_cas:                      # 模拟：探测刚做完，工作进程就起来了
+        store.force_status(run_id, "running", pid=NEW_PID)
+    return res
+
+
+store.probe_worker = _probe_then_start
+try:
+    store.reap_stale()
+finally:
+    store.probe_worker = real_probe
+row = store.get_run(r_cas)
+check("O23e 检查后工作进程才启动 -> 本轮不回收（状态与 pid 比对拦住了）",
+      row["status"] == "running" and row["pid"] == NEW_PID,
+      f"{row['status']} pid={row['pid']}")
+store.force_status(r_cas, "interrupted")
+
 # ---------------------------------------------------------------- 写请求限流
 print("\nO22 写请求限流仍然有效")
 saved_rate = config.WRITE_RATE_LIMIT

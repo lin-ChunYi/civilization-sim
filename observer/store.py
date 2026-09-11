@@ -142,9 +142,16 @@ def drop_run_row(run_id: str) -> None:
         conn.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
 
 
+_UNSET = object()
+
+
 def transition(run_id: str, new_status: str, *, allow_from: Optional[List[str]] = None,
-               **fields) -> bool:
+               expect_pid: Any = _UNSET, **fields) -> bool:
     """按状态转换表改状态。来源状态不合法就什么都不写，返回 False。
+
+    `expect_pid` 给回收路径用：把“检查时看到的 pid”一起写进 WHERE，
+    如果这中间工作进程刚启动并改写了 pid（或状态），这次写入就落空 ——
+    宁可这一轮不回收，也不能误停一个刚起来的任务。
 
     生产路径一律走这里；`force_status()` 只给测试用。
     """
@@ -155,8 +162,12 @@ def transition(run_id: str, new_status: str, *, allow_from: Optional[List[str]] 
     holes = ",".join("?" for _ in srcs)
     sql = ("UPDATE runs SET status=?" + (", " + cols if cols else "") +
            f" WHERE run_id=? AND status IN ({holes})")
+    args = [new_status, *fields.values(), run_id, *srcs]
+    if expect_pid is not _UNSET:
+        sql += " AND pid IS ?"                  # IS 能正确匹配 NULL
+        args.append(expect_pid)
     with connect() as conn:
-        cur = conn.execute(sql, (new_status, *fields.values(), run_id, *srcs))
+        cur = conn.execute(sql, args)
         return cur.rowcount == 1
 
 
@@ -361,20 +372,45 @@ def read_series(run_id: str) -> List[Dict[str, Any]]:
     return out
 
 
-def _is_our_worker(pid: Optional[int], run_id: str) -> bool:
-    """pid 还活着，而且确实是这次运行的工作进程（避免 pid 复用误伤别的程序）。"""
+# 工作进程探测的三种结果。**“查不到”不等于“死了”**：
+# ps 超时、权限不足、系统调用出错都属于未知；未知一律不回收，宁可让槽多占一会儿。
+WORKER_ALIVE, WORKER_GONE, WORKER_UNKNOWN = "alive", "gone", "unknown"
+
+
+def probe_worker(pid: Optional[int], run_id: str) -> str:
+    """判断 pid 是不是这次运行还活着的工作进程。返回 alive / gone / unknown。"""
     if not pid:
-        return False
+        return WORKER_GONE                      # 从来没登记过 pid，谈不上有进程
     try:
         os.kill(int(pid), 0)
-    except OSError:
-        return False
+    except ProcessLookupError:
+        return WORKER_GONE                      # 确认不存在
+    except PermissionError:
+        return WORKER_UNKNOWN                   # 进程在，但不归我们管：不确认，也不回收
+    except (OSError, ValueError, TypeError):
+        return WORKER_UNKNOWN
     try:
-        out = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
-                             capture_output=True, text=True, timeout=5).stdout
-    except Exception:  # noqa: BLE001
-        return False
-    return "observer.worker" in out and run_id in out
+        r = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                           capture_output=True, text=True, timeout=5)
+    except Exception:                           # noqa: BLE001  超时 / ps 不可用 / 被限制
+        return WORKER_UNKNOWN
+    if r.returncode != 0:                       # ps 说没这个进程，与 kill(0) 矛盾，再确认一次
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            return WORKER_GONE
+        except Exception:                       # noqa: BLE001
+            return WORKER_UNKNOWN
+        return WORKER_UNKNOWN
+    out = r.stdout or ""
+    if "observer.worker" in out and run_id in out:
+        return WORKER_ALIVE
+    return WORKER_GONE                          # pid 被别的进程复用了
+
+
+def _is_our_worker(pid: Optional[int], run_id: str) -> bool:
+    """只有“确认活着”才算数。未知既不算活也不算死，调用方必须自己区分。"""
+    return probe_worker(pid, run_id) == WORKER_ALIVE
 
 
 def stop_worker(pid: int, run_id: str, grace: float = 3.0) -> bool:
@@ -418,8 +454,11 @@ def reap_stale() -> List[Dict[str, Any]]:
     now = time.time()
     for r in rows:
         rid, pid, status = r["run_id"], r["pid"], r["status"]
-        if _is_our_worker(pid, rid):
+        probe = probe_worker(pid, rid)
+        if probe == WORKER_ALIVE:
             continue                                   # 真在跑，不动
+        if probe == WORKER_UNKNOWN:
+            continue                                   # 查不到 ≠ 死了：这一轮不回收
         if status == "queued":
             waited = now - (r["created_at"] or now)
             if pid is None and waited < config.QUEUE_GRACE_SEC:
@@ -431,8 +470,10 @@ def reap_stale() -> List[Dict[str, Any]]:
         done = len(_lines(rid))
         note = (f"任务槽回收：{why}。本版不做跨进程续跑；"
                 f"已完整保存的 {max(done - 1, 0)} 年仍可回放，继续推进请新建运行。")
-        if transition(rid, "interrupted", years_done=max(done - 1, 0),
-                      finished_at=now, error=note):
+        # 写入时再比对一次状态与 pid：检查之后如果工作进程刚启动（pid 变了 / 进了 running），
+        # 这次 UPDATE 就匹配不到行，本轮不回收，下一轮再看。
+        if transition(rid, "interrupted", allow_from=[status], expect_pid=pid,
+                      years_done=max(done - 1, 0), finished_at=now, error=note):
             _CACHE.pop(rid, None)
             reaped.append({"run_id": rid, "from": status, "why": why})
     return reaped
@@ -450,11 +491,13 @@ def recover_interrupted() -> int:
         rows = [dict(r) for r in conn.execute(
             "SELECT run_id, pid FROM runs WHERE status IN (?,?)", _STATUS_ACTIVE).fetchall()]
     for r in rows:
-        killed = False
-        if _is_our_worker(r["pid"], r["run_id"]):
-            killed = stop_worker(int(r["pid"]), r["run_id"])
+        probe = probe_worker(r["pid"], r["run_id"])
+        killed = stop_worker(int(r["pid"]), r["run_id"]) if probe == WORKER_ALIVE else False
         done = len(_lines(r["run_id"]))
-        note = ("服务重启时该任务尚未完成" + ("，旧工作进程已被停止" if killed else "") +
+        tail = ("，旧工作进程已被停止" if killed else
+                ("，且无法确认旧工作进程的状态（写入围栏仍然生效，它改不回 done）"
+                 if probe == WORKER_UNKNOWN else ""))
+        note = ("服务重启时该任务尚未完成" + tail +
                 "。本版不做跨进程续跑；已完整保存的年份仍可回放，继续推进请新建运行。")
         transition(r["run_id"], "interrupted", years_done=max(done - 1, 0),
                    finished_at=time.time(), error=note)
