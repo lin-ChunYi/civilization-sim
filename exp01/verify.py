@@ -70,7 +70,8 @@ def make_world(seed: int, poison: str = ""):
     st = {'tick': 0, 'seed': seed, 'poison': poison,
           'stock': {}, 'cap': {}, 'regen': {}, 'bands': {},
           'inflow': 0, 'out_eat': 0, 'out_spoil': 0, 'out_move': 0, 'out_lost': 0,
-          'log': [], 'mig_total': 0, 'mig_regret': 0, 'next_ctr': 0, 'stale_sum': 0}
+          'log': [], 'mig_total': 0, 'mig_regret': 0, 'next_ctr': 0, 'stale_sum': 0,
+          'prop_total': 0, 'prop_conflict': 0}
     for i in cells():
         if not passable(i):
             st['cap'][i] = 0; st['regen'][i] = 0; st['stock'][i] = 0; continue
@@ -96,23 +97,43 @@ def lerp_m(x_m, x0, x1, y0, y1):
     if x_m >= x1: return y1
     return y0 + (y1 - y0) * (x_m - x0) // (x1 - x0)
 
+BAND_FIELDS = ('cell', 'size', 'store', 'bacc', 'dacc')
+
+def _band_blob(bid, d) -> bytes:
+    """一个群体的完整可演化状态。凡是会影响后续演化的字段都必须在这里，
+    包括 mem / memt —— 少写一个字段，确定性检验就会漏掉整整一类 bug。"""
+    parts = [str(bid)] + [str(d[f]) for f in BAND_FIELDS]
+    parts.append('mem{' + ','.join(f"{c}={d['mem'][c]}" for c in sorted(d['mem'])) + '}')
+    parts.append('memt{' + ','.join(f"{c}={d['memt'][c]}" for c in sorted(d['memt'])) + '}')
+    return (':'.join(parts) + ';').encode()
+
+LEDGER_FIELDS = ('inflow', 'out_eat', 'out_spoil', 'out_move', 'out_lost',
+                 'mig_total', 'mig_regret', 'stale_sum', 'next_ctr',
+                 'prop_total', 'prop_conflict')
+
 def state_hash(st) -> str:
+    """全状态哈希：tick + 每格 stock/cap/regen + 每个群体的完整状态 + 全部账本计数。"""
     h = hashlib.blake2b(digest_size=16)
-    h.update(str(st['tick']).encode())
-    for i in sorted(st['stock']): h.update(f"{i}:{st['stock'][i]};".encode())
-    for b in sorted(st['bands']):
-        d = st['bands'][b]
-        h.update(f"{b}:{d['cell']}:{d['size']}:{d['store']}:{d['bacc']}:{d['dacc']};".encode())
+    h.update(f"tick={st['tick']};".encode())
+    for i in sorted(st['stock']):
+        h.update(f"{i}:{st['stock'][i]}:{st['cap'][i]}:{st['regen'][i]};".encode())
+    for bid in sorted(st['bands']):
+        h.update(_band_blob(bid, st['bands'][bid]))
+    for f in LEDGER_FIELDS:
+        h.update(f"{f}={st[f]};".encode())
     return h.hexdigest()
 
 def region_hash(st, reg) -> str:
+    """区块哈希：只含该区块的格与群体的完整状态。
+    不含全局账本计数（它们跨区块累加，天然会被另一区块的干预改变）。"""
     h = hashlib.blake2b(digest_size=16)
     for i in sorted(st['stock']):
-        if region(i) == reg: h.update(f"{i}:{st['stock'][i]};".encode())
-    for b in sorted(st['bands']):
-        d = st['bands'][b]
+        if region(i) == reg:
+            h.update(f"{i}:{st['stock'][i]}:{st['cap'][i]}:{st['regen'][i]};".encode())
+    for bid in sorted(st['bands']):
+        d = st['bands'][bid]
         if region(d['cell']) == reg:
-            h.update(f"{b}:{d['cell']}:{d['size']}:{d['store']};".encode())
+            h.update(_band_blob(bid, d))
     return h.hexdigest()
 
 def step(st, suppress_split_in=None):
@@ -221,30 +242,49 @@ def step(st, suppress_split_in=None):
         b['mem'][best] = st['stock'][best]; b['memt'][best] = t
         st['mig_total'] += 1
         if not truth_better: st['mig_regret'] += 1
-    # --- 相位 7 split / extinct ---
-    for bid in list(order):
-        b = st['bands'].get(bid)
-        if not b: continue
-        if b['size'] == 0:
-            st['out_lost'] += b['store']; del st['bands'][bid]
-            st['log'].append((t, 'extinct', bid)); continue
-        if b['size'] >= SPLIT_SIZE:
-            if suppress_split_in and region(b['cell']) == suppress_split_in:
-                continue
-            free = [j for j in neighbors(b['cell'])
-                    if all(o['cell'] != j for o in st['bands'].values())]
-            if not free: continue
-            j = free[rng(seed, S_SPLIT, t, bid, 0) % len(free)]
-            half = b['size'] // 2; hs = b['store'] // 2
-            if 'counter' in P:
-                st['next_ctr'] += 1; nid = 0xB000000 + st['next_ctr']   # 全局自增
-            else:
-                nid = eid_of(bid, t, 0)
-            if nid in st['bands']: continue
-            b['size'] -= half; b['store'] -= hs
-            st['bands'][nid] = {'cell': j, 'size': half, 'store': hs,
-                                'bacc': 0, 'dacc': 0, 'mem': {j: st['stock'][j]}, 'memt': {j: t}}
-            st['log'].append((t, 'split', bid, nid))
+    # --- 相位 7a extinct：同时移除，先于任何分裂 ---
+    for bid in [x for x in order if x in st['bands'] and st['bands'][x]['size'] == 0]:
+        st['out_lost'] += st['bands'][bid]['store']
+        del st['bands'][bid]
+        st['log'].append((t, 'extinct', bid))
+
+    # --- 相位 7b propose：所有群体基于同一份占用快照独立提出申请 ---
+    occupied = {b['cell'] for b in st['bands'].values()}
+    proposals = []                      # [(目标格, 申请者)]
+    for bid in [x for x in order if x in st['bands']]:
+        b = st['bands'][bid]
+        if b['size'] < SPLIT_SIZE: continue
+        if suppress_split_in and region(b['cell']) == suppress_split_in: continue
+        free = [j for j in neighbors(b['cell']) if j not in occupied]
+        if not free: continue
+        proposals.append((free[rng(seed, S_SPLIT, t, bid, 0) % len(free)], bid))
+
+    st['prop_total'] += len(proposals)
+    st['prop_conflict'] += len(proposals) - len({j for j, _ in proposals})
+    # --- 相位 7c resolve：同一空位的冲突按 band_id 升序裁决，落败者本 tick 不分裂 ---
+    if 'seqsplit' in P:                 # 注入：回到顺序解决（先到先得）
+        winners, occ2 = [], set(occupied)
+        for j, bid in proposals:
+            if j in occ2: continue
+            occ2.add(j); winners.append((j, bid))
+    else:
+        by_target = {}
+        for j, bid in proposals: by_target.setdefault(j, []).append(bid)
+        winners = sorted((j, min(bids)) for j, bids in by_target.items())
+
+    # --- 相位 7d commit：一次性提交 ---
+    for j, bid in winners:
+        b = st['bands'][bid]
+        half = b['size'] // 2; hs = b['store'] // 2
+        if 'counter' in P:
+            st['next_ctr'] += 1; nid = 0xB000000 + st['next_ctr']   # 全局自增
+        else:
+            nid = eid_of(bid, t, 0)
+        if nid in st['bands']: continue
+        b['size'] -= half; b['store'] -= hs
+        st['bands'][nid] = {'cell': j, 'size': half, 'store': hs,
+                            'bacc': 0, 'dacc': 0, 'mem': {j: st['stock'][j]}, 'memt': {j: t}}
+        st['log'].append((t, 'split', bid, nid))
     st['tick'] += 1
 
 def conservation_error(st) -> int:
@@ -267,3 +307,49 @@ def resume(snap, years, suppress=None):
     for _ in range(years):
         step(st, suppress_split_in=suppress)
     return st
+
+
+# ---------- 定向场景：构造一次空位冲突 ----------
+# 长跑（7 种子 × 300 年）里分裂申请 175 次、撞车 0 次，冲突解决路径从不被执行。
+# 所以它必须由一个构造出来的场景来覆盖，否则 §7c 是一段没被任何测试碰过的代码。
+def make_conflict_world(seed: int = 0):
+    """造一个局面：两个够大的群体 P、Q 各自唯一的空邻格都是 X。
+
+    返回 (st, X, pid, qid)。P 与 Q 的其余邻格用小群体占满（size 远低于
+    SPLIT_SIZE，不会自己提出申请），因此两者本 tick 必然同时申请 X。
+    """
+    st = make_world(seed)
+    st['bands'].clear()
+    # 找一个 A 区的格 X，它至少有两个可通行邻居
+    cand = [i for i in cells() if passable(i) and region(i) == 'A'
+            and len(neighbors(i)) >= 2]
+    X = sorted(cand)[0]
+    P, Q = sorted(neighbors(X))[:2]
+
+    def add(cell, size, tag):
+        bid = eid_of(0xC047, 0, tag)
+        st['bands'][bid] = {'cell': cell, 'size': size,
+                            'store': size * NEED_PC,          # 一年口粮，吃得饱
+                            'bacc': 0, 'dacc': 0,
+                            'mem': {cell: st['stock'][cell]}, 'memt': {cell: 0}}
+        return bid
+
+    pid = add(P, 60, 1)
+    qid = add(Q, 60, 2)
+    # 占满 P、Q 的其余邻格，使它们唯一的空位是 X
+    tag = 10
+    for host in (P, Q):
+        for j in neighbors(host):
+            if j == X: continue
+            if any(b['cell'] == j for b in st['bands'].values()): continue
+            add(j, 5, tag); tag += 1
+    st['start_store'] = sum(b['store'] for b in st['bands'].values())
+    return st, X, pid, qid
+
+
+def who_took(st, X):
+    """X 格上的群体 id；没有则 None。"""
+    for bid in sorted(st['bands']):
+        if st['bands'][bid]['cell'] == X:
+            return bid
+    return None
