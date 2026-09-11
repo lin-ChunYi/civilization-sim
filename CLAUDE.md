@@ -16,6 +16,8 @@
 1c. [`docs/EXP-03-SPEC.md`](docs/EXP-03-SPEC.md) — EXP-03 规格与实测结果（迁移死亡代价实验，已冻结）。
 1d. [`docs/EXP-04-SPEC.md`](docs/EXP-04-SPEC.md) — EXP-04 规格与实测结果（同格信息交换）。方案原件留在 `docs/EXP-04-PROPOSAL.md`。
 1e. [`observer/README.md`](observer/README.md) — OBS-01 文明观察台：怎么本地启动、页面上有什么、口径与限制。
+1f. [`docs/OBS-01-API-CONTRACT.md`](docs/OBS-01-API-CONTRACT.md) — 观察台接口约定（后台 ↔ UI 分支），**改接口前先改它**。
+1g. [`docs/TODO-BACKLOG.md`](docs/TODO-BACKLOG.md) — 非阻塞待办登记。
 2. [`docs/EXP-01-CONFLICTS.md`](docs/EXP-01-CONFLICTS.md) — 旧文档哪些条款被取代、哪些冲突被推迟、七处过强结论的修正。
 3. [`docs/CONSTITUTION.md`](docs/CONSTITUTION.md) — 项目宪法。原则仍是最高约束，但若干表述已修正（文件内有"此处修正"标注）。
 4. [`docs/MANDATE.md`](docs/MANDATE.md) — 用户原始纲领存档，不修改。
