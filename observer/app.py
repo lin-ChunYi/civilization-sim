@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field, StrictInt, StrictStr
 from . import adapter, config, milestones, presets, store
 
 app = FastAPI(title="文明观察台 OBS-01", docs_url=None, redoc_url=None)
-WEB_DIR = config.OBSERVER_DIR / "web"
+# observer/web/ 归 UI 分支（Grok）所有；后台只读它，不往里写任何文件。
+WEB_DIR = config.WEB_DIR
 
 
 def repo_commit() -> str:
@@ -98,6 +99,7 @@ def health():
 @app.get("/api/config", dependencies=[Depends(require_read)])
 def get_config():
     return {
+        "api_version": config.API_VERSION,       # 见 docs/OBS-01-API-CONTRACT.md
         "token_required": bool(config.TOKEN),
         "limits": {"min_years": config.MIN_YEARS, "max_years": config.MAX_YEARS,
                    "max_runs": config.MAX_RUNS, "max_data_mb": config.MAX_DATA_MB,
@@ -123,6 +125,7 @@ def get_map():
 
 @app.get("/api/runs", dependencies=[Depends(require_read)])
 def get_runs():
+    store.reap_stale()          # 顺手回收没人在算却占着槽的记录，列表才是真实状态
     runs = store.list_runs()
     for r in runs:
         r["years_recorded"] = max(store.year_count(r["run_id"]) - 1, 0)
@@ -228,6 +231,9 @@ def _validate(body: NewRun) -> None:
 @app.post("/api/runs", dependencies=[Depends(require_write)])
 def post_run(body: NewRun):
     _validate(body)
+    reaped = store.reap_stale()   # 先回收死记录，再占槽：死进程不该把槽永久占死
+    if reaped:
+        print(f"[observer] 回收了 {len(reaped)} 个无人执行的任务槽：{reaped}")
     if store.run_count() >= config.MAX_RUNS:
         raise HTTPException(409, f"运行条数已达上限 {config.MAX_RUNS}，请先删除旧运行。")
     if store.data_size_mb() >= config.MAX_DATA_MB:
@@ -262,6 +268,10 @@ def cancel_run(run_id: str):
     if run["status"] not in ("queued", "running"):
         raise HTTPException(409, f"该运行状态为 {run['status']}，无需取消")
     store.request_cancel(run_id)
+    if not store._is_our_worker(run["pid"], run_id):
+        # 进程已经不在了，取消请求没人会读到：直接按“回收”处理，别让槽卡住
+        store.reap_stale()
+        return {"ok": True, "note": "该运行的工作进程已不在，任务槽已回收并标记为中断。"}
     return {"ok": True, "note": "已请求取消，工作进程会在当前这一年算完后停下。"}
 
 
@@ -294,3 +304,7 @@ def not_found(request: Request, exc):  # noqa: ANN001
 
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+
+# 后台自己的浏览器回归页面。与 /static 分开挂载，所以不需要往 UI 分支的目录里放东西。
+if config.SELFTEST_DIR.is_dir():
+    app.mount("/selftest", StaticFiles(directory=str(config.SELFTEST_DIR)), name="selftest")

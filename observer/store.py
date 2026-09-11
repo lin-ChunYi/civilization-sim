@@ -46,6 +46,20 @@ CREATE TABLE IF NOT EXISTS runs (
 
 _STATUS_ACTIVE = ("queued", "running")
 
+# 合法的状态转换。**终态（done/failed/canceled/interrupted）不再变**——
+# 这条是围栏的地基：一旦判定结束，任何迟到的写入都改不回去。
+TRANSITIONS = {
+    "queued": {"running", "canceled", "interrupted", "failed"},
+    "running": {"done", "failed", "canceled", "interrupted"},
+    "done": set(), "failed": set(), "canceled": set(), "interrupted": set(),
+}
+TERMINAL = {"done", "failed", "canceled", "interrupted"}
+
+
+def sources_for(new_status: str) -> List[str]:
+    """能合法转到 new_status 的来源状态。"""
+    return sorted(src for src, dsts in TRANSITIONS.items() if new_status in dsts)
+
 
 def connect() -> sqlite3.Connection:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -128,7 +142,26 @@ def drop_run_row(run_id: str) -> None:
         conn.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
 
 
-def set_status(run_id: str, status: str, **fields) -> None:
+def transition(run_id: str, new_status: str, *, allow_from: Optional[List[str]] = None,
+               **fields) -> bool:
+    """按状态转换表改状态。来源状态不合法就什么都不写，返回 False。
+
+    生产路径一律走这里；`force_status()` 只给测试用。
+    """
+    srcs = list(allow_from) if allow_from else sources_for(new_status)
+    if not srcs:
+        return False
+    cols = ", ".join(f"{k}=?" for k in fields)
+    holes = ",".join("?" for _ in srcs)
+    sql = ("UPDATE runs SET status=?" + (", " + cols if cols else "") +
+           f" WHERE run_id=? AND status IN ({holes})")
+    with connect() as conn:
+        cur = conn.execute(sql, (new_status, *fields.values(), run_id, *srcs))
+        return cur.rowcount == 1
+
+
+def force_status(run_id: str, status: str, **fields) -> None:
+    """不检查转换表的写入。**只用于测试构造前提**，生产代码不要调用。"""
     cols = ", ".join(f"{k}=?" for k in fields)
     sql = "UPDATE runs SET status=?" + (", " + cols if cols else "") + " WHERE run_id=?"
     with connect() as conn:
@@ -191,7 +224,15 @@ def cancel_requested(run_id: str) -> bool:
 
 
 def write_meta(run_id: str, meta: Dict[str, Any]) -> None:
-    meta_path(run_id).write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    """先写临时文件再 os.replace —— 读到的要么是上一版，要么是完整的新版，
+    不会出现“半个 meta.json 把接口打成 500”。"""
+    dst = meta_path(run_id)
+    tmp = dst.with_suffix(".json.tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(meta, fh, ensure_ascii=False)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, dst)
 
 
 def append_year(fh, record: Dict[str, Any]) -> None:
@@ -237,10 +278,16 @@ def data_size_mb() -> float:
 
 
 def read_meta(run_id: str) -> Optional[Dict[str, Any]]:
+    """读不到或读到残缺的一律返回 None（接口给出 meta: null，前端自行补取）。
+    绝不让一个写坏的文件把整条运行的接口打掉。"""
     p = meta_path(run_id)
     if not p.exists():
         return None
-    return json.loads(p.read_text(encoding="utf-8"))
+    try:
+        meta = json.loads(p.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+    return meta if isinstance(meta, dict) else None
 
 
 _CACHE: Dict[str, Any] = {}
@@ -350,6 +397,47 @@ def stop_worker(pid: int, run_id: str, grace: float = 3.0) -> bool:
     return True
 
 
+def reap_stale() -> List[Dict[str, Any]]:
+    """回收“占着任务槽但其实已经没人在算”的记录。
+
+    服务**运行期间**也会发生：工作进程被 kill、启动失败、或者根本没起来。
+    以前这种记录会一直停在 queued/running，把唯一的任务槽永久占死，
+    只能重启服务才能再跑一次。判据只有两条，都不猜：
+
+      * running：pid 不是这次运行的活工作进程 -> 回收；
+      * queued ：pid 已经不在了，或者根本没写过 pid 且排队超过 QUEUE_GRACE_SEC 秒 -> 回收。
+
+    活着的进程一律不动。回收即 interrupted（终态），已算出的年份仍可回放。
+    """
+    init_db()
+    with connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT run_id, pid, status, created_at FROM runs WHERE status IN (?,?)",
+            _STATUS_ACTIVE).fetchall()]
+    reaped = []
+    now = time.time()
+    for r in rows:
+        rid, pid, status = r["run_id"], r["pid"], r["status"]
+        if _is_our_worker(pid, rid):
+            continue                                   # 真在跑，不动
+        if status == "queued":
+            waited = now - (r["created_at"] or now)
+            if pid is None and waited < config.QUEUE_GRACE_SEC:
+                continue                               # 刚建的记录，给工作进程一点启动时间
+            why = ("工作进程已不在" if pid is not None
+                   else f"排队超过 {config.QUEUE_GRACE_SEC:.0f} 秒仍没有工作进程接手")
+        else:
+            why = "工作进程已不在（被结束或异常退出）"
+        done = len(_lines(rid))
+        note = (f"任务槽回收：{why}。本版不做跨进程续跑；"
+                f"已完整保存的 {max(done - 1, 0)} 年仍可回放，继续推进请新建运行。")
+        if transition(rid, "interrupted", years_done=max(done - 1, 0),
+                      finished_at=now, error=note):
+            _CACHE.pop(rid, None)
+            reaped.append({"run_id": rid, "from": status, "why": why})
+    return reaped
+
+
 def recover_interrupted() -> int:
     """服务启动时调用。
 
@@ -368,10 +456,7 @@ def recover_interrupted() -> int:
         done = len(_lines(r["run_id"]))
         note = ("服务重启时该任务尚未完成" + ("，旧工作进程已被停止" if killed else "") +
                 "。本版不做跨进程续跑；已完整保存的年份仍可回放，继续推进请新建运行。")
-        with connect() as conn:
-            conn.execute(
-                "UPDATE runs SET status='interrupted', years_done=?, finished_at=?, error=? "
-                "WHERE run_id=? AND status IN (?,?)",
-                (max(done - 1, 0), time.time(), note, r["run_id"], *_STATUS_ACTIVE))
+        transition(r["run_id"], "interrupted", years_done=max(done - 1, 0),
+                   finished_at=time.time(), error=note)
         _CACHE.pop(r["run_id"], None)
     return len(rows)

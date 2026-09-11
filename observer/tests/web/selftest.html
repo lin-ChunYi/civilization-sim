@@ -9,7 +9,12 @@
 /* 前端回归自检：用受控的 fetch 桩驱动真正的 app.js，检查
    （1）迟到的响应不得覆盖当前选择；（2）年份缓存按 run 隔离；
    （3）meta 为空时自动补取；（4）用户输入只能以文本出现。
-   由 observer/run_tests.py 用 headless Chrome --dump-dom 跑，解析 #result。 */
+   由 observer/run_tests.py 用 headless Chrome --dump-dom 跑，解析 #result。
+
+   本页挂在 /selftest/，被测的前端仍然从 /static/ 读 —— observer/web/ 归 UI 分支所有，
+   后台不往那里写任何文件。页面依赖的前端契约见 docs/OBS-01-API-CONTRACT.md 第 3 节：
+   若 window.__obs 不存在（UI 改版后没挂钩子），本页会如实报告“无法驱动”，
+   由 run_tests.py 记为未覆盖，而不是假装通过。 */
 window.__OBS_MANUAL_BOOT__ = true;          // 阻止 app.js 自己 boot
 (function () {                               // 包进 IIFE：不能污染全局词法作用域，
 const realFetch = window.fetch.bind(window);
@@ -124,6 +129,11 @@ window.__T = { LAT, OVERRIDE, META, XSS_LABEL, XSS_ERR, realFetch };
     await loadScript(APP);
 
     const O = window.__obs;
+    if (!O || typeof O.boot !== "function") {      // UI 改版后钩子没了：如实报告，不算通过
+      document.getElementById("result").textContent =
+        "UNDRIVABLE 前端没有暴露 window.__obs 测试钩子，自检无法驱动（见 docs/OBS-01-API-CONTRACT.md 第 3 节）";
+      return;
+    }
     await O.boot();
     ok("T0 自检页能驱动真实 app.js 启动", !!O.S.cfg && !!O.S.map);
 

@@ -14,4 +14,4 @@ __pycache__/
 # 预生成案例在 observer/preset/ 里跟着版本库走，这里只放本机跑出来的东西。
 observer/data/
 observer/data_test/
-observer/web/_poison_selftest.js
+observer/tests/web/_poison_app.js

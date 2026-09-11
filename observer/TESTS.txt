@@ -17,7 +17,7 @@ O2 指标与账本自洽（逐年）
   O3 实体 id 以字符串下发                                PASS   6 个群体
 
 O4 接口与持久化
-  O4a 合法参数可以启动运行                                 PASS   {'run_id': '5bef5c34b2fa', 'status': 'queued'}
+  O4a 合法参数可以启动运行                                 PASS   {'run_id': '2f153dbf8120', 'status': 'queued'}
   O4b 子进程算完并落盘                                   PASS   状态=done
   O5 任选三个年份与独立重跑的快照/账本完全一致                       PASS   年份 [0, 30, 60] 全对
   O5b 服务端记录的 full_digest == 直接跑模型的结果             PASS   778398d1aa6c62e54c2cc187
@@ -27,7 +27,7 @@ O4 接口与持久化
   O7a 非法参数被服务端拒绝                                 PASS   [400, 400, 400, 400, 400, 422, 422]
   O7b 越界年份返回 404                                 PASS
   O7c 不存在的运行返回 404                               PASS
-  O8 已有任务在跑时拒绝重复启动                               PASS   {'detail': '已有任务在跑（5bef5c34b2fa，60/60 年）。本版同时只执行一个模拟任务，请等它结束
+  O8 有活着的任务在跑时拒绝重复启动                             PASS   {'detail': '已有任务在跑（2f153dbf8120，60/60 年）。本版同时只执行一个模拟任务，请等它结束
   O9 重启后未完成任务被标为中断（不假装续跑）                        PASS   1 个 → interrupted
   O9b 中断的运行仍可回放已算出的年份                            PASS
   O10a 设了令牌后，写操作无令牌被拒                            PASS
@@ -36,7 +36,7 @@ O4 接口与持久化
   O11 预生成案例存在且被标记为 preset（不冒充实时任务）               PASS   ['preset-s4242-sig400-mort50']
 
 O13 任务槽与状态转换
-  O13a 两个同时占槽的请求只有一个成功                           PASS   结果=['cb0d3d1cbf71', None]
+  O13a 两个同时占槽的请求只有一个成功                           PASS   结果=['802890f1d927', None]
   O13b 工作进程 queued->running 只能成功一次               PASS
   O13c 写 pid 不会把 running 打回 queued               PASS   running
   O13d 被判中断后，旧工作进程改不回 done                       PASS   finish=False 状态=interrupted
@@ -51,7 +51,7 @@ O15 只承认写完整的记录
   O15c 半条那一年读不到（不是读到半个）                          PASS
 
 O16 接口层：运行中读取、半条记录、并发启动
-  O16a 两个同时到达的启动请求只有一个成功                         PASS   [409, 200]
+  O16a 两个同时到达的启动请求只有一个成功                         PASS   [200, 409]
   O16b 运行中读取没有 5xx，series 始终可用                   PASS   16 次请求；5xx=[] series异常=[] year异常=[]
   O16b2 第 0 年未写出前的 404 是如实回答，写出后必为 200           PASS   算完前出现 2 次合理 404
   O16c 至少读到过一次“运行中”的状态                           PASS   5 次
@@ -59,6 +59,34 @@ O16 接口层：运行中读取、半条记录、并发启动
   O16e 完整年份照读，半条那年 404                           PASS   200/404
   O16f 列表里的已完成年数不含半条                             PASS   300 vs 300
   O17 备注原样保存，不在服务端被改写                            PASS   <img src=x onerror="alert(1)">
+
+O19 任务槽回收（进程没了就不该继续占着槽）
+  O19a running 但进程已不在 -> 回收为中断                   PASS   running -> interrupted
+  O19b 回收后任务槽真的空了                                PASS
+  O19c 刚建的 queued 在宽限期内不被回收                      PASS   queued
+  O19d 超过宽限期仍无进程接手 -> 回收                         PASS   interrupted
+  O19e 活着的工作进程不会被误回收                             PASS   running
+  O19f 进程被杀之后才回收                                 PASS   interrupted
+  O19g0 前提：槽确实被一条死记录占着                           PASS
+[observer] 回收了 1 个无人执行的任务槽：[{'run_id': 'a1cc23e4a7d0', 'from': 'running', 'why': '工作进程已不在（被结束或异常退出）'}]
+  O19g 接口层：死记录被回收后新运行能启动                         PASS   200 {'run_id': '245e69e32014', 'status': 'queued'}
+  O19h 新运行正常跑完                                   PASS   done
+
+O20 状态转换表：终态不可逆
+  O20a 终态不能回到 queued / running / failed          PASS   {'done -> queued': False, 'done -> running': False, 'done -> failed': False}
+  O20b 终态记录的状态没有被改动                              PASS
+  O20c queued -> running 合法                      PASS
+  O20d running -> done 合法                        PASS
+  O20e done 之后再 running 不合法                      PASS
+
+O21 meta.json：原子写 + 容错读
+  O21a 写完没有留下临时文件                                PASS   []
+  O21b 半个 meta.json 读成 None，不抛异常                 PASS
+  O21c 半个 meta.json 不会把接口打成 500                  PASS   200
+  O21d 重写之后又能正常读回                                PASS
+
+O22 写请求限流仍然有效
+  O22 超过每分钟写请求上限后返回 429                          PASS   [429, 429, 429, 429, 429]
 
 O18 前端回归（headless Chrome 驱动真实 app.js）
   O18a 前端自检全绿（20 项）                              PASS
@@ -91,6 +119,6 @@ O12 冻结基线未被改动
   O12 exp03/ 与基线 6b6af4f 逐字节相同                   PASS
 
 ================================================================================================
-  通过 52 / 失败 0 / 未覆盖 0（共 52 项）
+  通过 71 / 失败 0 / 未覆盖 0（共 71 项）
   注：未覆盖项**不计入通过**。浏览器与线上部署的验收不在本脚本内，见 README 的验收记录。
 ================================================================================================

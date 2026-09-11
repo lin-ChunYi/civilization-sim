@@ -18,6 +18,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 TEST_DATA = REPO / "observer" / "data_test"
 os.environ["OBSERVER_DATA_DIR"] = str(TEST_DATA)          # 子进程也会读到
+# 测试自己要发几十个写请求，先把限流放开；限流本身由 O22 单独测。
+os.environ.setdefault("OBSERVER_WRITE_RATE", "500")
 shutil.rmtree(TEST_DATA, ignore_errors=True)
 
 from observer import adapter, config, presets, store  # noqa: E402
@@ -177,10 +179,18 @@ with client:
           client.get(f"/api/runs/{run_id}/year/99999").status_code == 404)
     check("O7c 不存在的运行返回 404", client.get("/api/runs/nope/year/0").status_code == 404)
 
-    # 单并发
-    store.set_status(run_id, "running")
+    # 单并发：占槽的必须是**真的还活着**的工作进程。
+    # （槽被死记录占着时，现在会被 reap_stale 回收——那是 O19 的事，不是 409。）
+    holder = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)", "observer.worker", run_id])
+    time.sleep(0.6)
+    store.set_pid(run_id, holder.pid)
+    store.force_status(run_id, "running")
     dup = client.post("/api/runs", json={"seed": 1, "years": 5})
-    check("O8 已有任务在跑时拒绝重复启动", dup.status_code == 409, str(dup.json())[:60])
+    check("O8 有活着的任务在跑时拒绝重复启动", dup.status_code == 409, str(dup.json())[:60])
+    holder.kill()
+    time.sleep(0.4)
+    store.force_status(run_id, "running", pid=holder.pid)
 
     # 重启恢复
     n = store.recover_interrupted()
@@ -238,7 +248,7 @@ if slot:
     store.set_pid(slot, fake_pid)
     check("O13c 写 pid 不会把 running 打回 queued",
           store.get_run(slot)["status"] == "running", store.get_run(slot)["status"])
-    store.set_status(slot, "interrupted")        # 模拟服务端判定中断
+    store.force_status(slot, "interrupted")      # 模拟服务端判定中断
     ok_done = store.worker_finish(slot, fake_pid, "done", years_done=5)
     check("O13d 被判中断后，旧工作进程改不回 done",
           (not ok_done) and store.get_run(slot)["status"] == "interrupted",
@@ -395,6 +405,125 @@ with client2:
     else:
         uncov("O17 备注原样保存", f"启动失败 {r.status_code}")
 
+# ---------------------------------------------------------------- 任务槽回收
+print("\nO19 任务槽回收（进程没了就不该继续占着槽）")
+with store.connect() as c:
+    c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+
+DEAD_PID = 999999
+r1 = store.claim_slot(seed=11, years=5, sigma_m=0, move_mort_m=0, arm="memory",
+                      label="死进程", kind="user", engine=adapter.engine_info())
+store.set_pid(r1, DEAD_PID)
+store.worker_begin(r1, DEAD_PID)
+before = store.get_run(r1)["status"]
+reaped = store.reap_stale()
+check("O19a running 但进程已不在 -> 回收为中断",
+      before == "running" and store.get_run(r1)["status"] == "interrupted",
+      f"{before} -> {store.get_run(r1)['status']}")
+check("O19b 回收后任务槽真的空了", store.active_run() is None)
+
+r2 = store.claim_slot(seed=12, years=5, sigma_m=0, move_mort_m=0, arm="memory",
+                      label="刚排队", kind="user", engine=adapter.engine_info())
+store.reap_stale()
+check("O19c 刚建的 queued 在宽限期内不被回收",
+      store.get_run(r2)["status"] == "queued", store.get_run(r2)["status"])
+with store.connect() as c:                       # 把创建时间推回去，模拟“进程始终没起来”
+    c.execute("UPDATE runs SET created_at=? WHERE run_id=?",
+              (time.time() - config.QUEUE_GRACE_SEC - 5, r2))
+store.reap_stale()
+check("O19d 超过宽限期仍无进程接手 -> 回收",
+      store.get_run(r2)["status"] == "interrupted", store.get_run(r2)["status"])
+
+r3 = store.claim_slot(seed=13, years=5, sigma_m=0, move_mort_m=0, arm="memory",
+                      label="活进程占槽", kind="user", engine=adapter.engine_info())
+stand_in2 = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(60)", "observer.worker", r3])
+time.sleep(0.6)
+store.set_pid(r3, stand_in2.pid)
+store.worker_begin(r3, stand_in2.pid)
+store.reap_stale()
+check("O19e 活着的工作进程不会被误回收",
+      store.get_run(r3)["status"] == "running", store.get_run(r3)["status"])
+stand_in2.kill()
+time.sleep(0.4)
+store.reap_stale()
+check("O19f 进程被杀之后才回收",
+      store.get_run(r3)["status"] == "interrupted", store.get_run(r3)["status"])
+
+client3 = TestClient(app)
+with client3:
+    # 注意顺序：先让服务启动（启动恢复在这时已经跑完），**之后**再造一条“死进程占槽”的记录。
+    # 否则这条记录会被启动恢复顺手清掉，测的就不是运行期的任务槽回收了。
+    with store.connect() as c:
+        c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+    r4 = store.claim_slot(seed=14, years=5, sigma_m=0, move_mort_m=0, arm="memory",
+                          label="接口层回收", kind="user", engine=adapter.engine_info())
+    store.set_pid(r4, DEAD_PID)
+    store.worker_begin(r4, DEAD_PID)
+    check("O19g0 前提：槽确实被一条死记录占着",
+          (store.active_run() or {}).get("run_id") == r4)
+    resp = client3.post("/api/runs", json={"seed": 15, "years": 3})
+    check("O19g 接口层：死记录被回收后新运行能启动", resp.status_code == 200,
+          f"{resp.status_code} {str(resp.json())[:60]}")
+    if resp.status_code == 200:
+        nrid = resp.json()["run_id"]
+        for _ in range(200):
+            if store.get_run(nrid)["status"] in ("done", "failed", "canceled", "interrupted"):
+                break
+            time.sleep(0.05)
+        check("O19h 新运行正常跑完", store.get_run(nrid)["status"] == "done",
+              store.get_run(nrid)["status"])
+
+# ---------------------------------------------------------------- 状态转换表
+print("\nO20 状态转换表：终态不可逆")
+rt = store.claim_slot(seed=16, years=3, sigma_m=0, move_mort_m=0, arm="memory",
+                      label="转换表", kind="user", engine=adapter.engine_info())
+store.force_status(rt, "done")
+bad_moves = {
+    "done -> queued": store.transition(rt, "queued"),
+    "done -> running": store.transition(rt, "running"),
+    "done -> failed": store.transition(rt, "failed"),
+}
+check("O20a 终态不能回到 queued / running / failed",
+      not any(bad_moves.values()), str(bad_moves))
+check("O20b 终态记录的状态没有被改动", store.get_run(rt)["status"] == "done")
+store.force_status(rt, "queued")
+check("O20c queued -> running 合法", store.transition(rt, "running"))
+check("O20d running -> done 合法", store.transition(rt, "done", years_done=3))
+check("O20e done 之后再 running 不合法", not store.transition(rt, "running"))
+store.force_status(rt, "done")
+
+# ---------------------------------------------------------------- meta 原子性
+print("\nO21 meta.json：原子写 + 容错读")
+rm_ = store.claim_slot(seed=17, years=2, sigma_m=0, move_mort_m=0, arm="memory",
+                       label="meta", kind="user", engine=adapter.engine_info())
+store.force_status(rm_, "done")
+store.write_meta(rm_, {"cell_ids": [0, 1], "cap": [1, 2]})
+leftovers = list(store.run_dir(rm_).glob("*.tmp"))
+check("O21a 写完没有留下临时文件", not leftovers, str(leftovers))
+store.meta_path(rm_).write_text('{"cell_ids":[0,1],"cap":[73000', encoding="utf-8")
+check("O21b 半个 meta.json 读成 None，不抛异常", store.read_meta(rm_) is None)
+with TestClient(app) as c4:
+    rr = c4.get(f"/api/runs/{rm_}")
+    check("O21c 半个 meta.json 不会把接口打成 500",
+          rr.status_code == 200 and rr.json()["meta"] is None, str(rr.status_code))
+store.write_meta(rm_, {"cell_ids": [0, 1], "cap": [1, 2]})
+check("O21d 重写之后又能正常读回", (store.read_meta(rm_) or {}).get("cap") == [1, 2])
+
+# ---------------------------------------------------------------- 写请求限流
+print("\nO22 写请求限流仍然有效")
+saved_rate = config.WRITE_RATE_LIMIT
+config.WRITE_RATE_LIMIT = 2
+try:
+    with TestClient(app) as c5:
+        codes = [c5.post("/api/runs", json={"seed": 1, "years": 1}).status_code
+                 for _ in range(5)]
+    check("O22 超过每分钟写请求上限后返回 429", 429 in codes, str(codes))
+finally:
+    config.WRITE_RATE_LIMIT = saved_rate
+    from observer import app as _appmod
+    _appmod._hits.clear()
+
 # ---------------------------------------------------------------- 浏览器自检
 print("\nO18 前端回归（headless Chrome 驱动真实 app.js）")
 CHROME_CANDIDATES = [
@@ -420,7 +549,7 @@ else:
         out = subprocess.run(
             [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
              "--virtual-time-budget=25000", "--dump-dom",
-             f"http://127.0.0.1:8799/static/selftest.html?app={app_url}"],
+             f"http://127.0.0.1:8799/selftest/selftest.html?app={app_url}"],
             capture_output=True, text=True, timeout=180).stdout
         m = _re.search(r'<pre id="result"[^>]*>(.*?)</pre>', out, _re.S)
         return _html.unescape(m.group(1)) if m else ""
@@ -434,23 +563,28 @@ else:
             except Exception:  # noqa: BLE001
                 time.sleep(0.3)
         healthy = _selftest("/static/app.js")
-        hp = healthy.count("PASS ")
-        hf = [ln for ln in healthy.splitlines() if ln.startswith("FAIL")]
-        check(f"O18a 前端自检全绿（{hp} 项）", hp > 0 and not hf, "; ".join(hf)[:120])
-        for ln in healthy.splitlines():
-            if ln.startswith(("PASS", "FAIL")):
-                print("      " + ln)
+        if "UNDRIVABLE" in healthy or not healthy.strip():
+            uncov("O18 前端回归自检",
+                  "前端没有暴露 window.__obs 测试钩子（UI 分支改版后需按契约第 3 节重新挂上），"
+                  "浏览器回归本轮未执行")
+        else:
+            hp = healthy.count("PASS ")
+            hf = [ln for ln in healthy.splitlines() if ln.startswith("FAIL")]
+            check(f"O18a 前端自检全绿（{hp} 项）", hp > 0 and not hf, "; ".join(hf)[:120])
+            for ln in healthy.splitlines():
+                if ln.startswith(("PASS", "FAIL")):
+                    print("      " + ln)
 
-        poison = make_poison_js.build()
-        bad_out = _selftest("/static/_poison_selftest.js")
-        bf = [ln for ln in bad_out.splitlines() if ln.startswith("FAIL")]
-        race = [ln for ln in bf if ln.startswith(("FAIL T1f", "FAIL T7"))]
-        xss = [ln for ln in bf if ln.startswith("FAIL T5")]
-        check("O18b 把修复去掉后，串运行的检查确实会红", len(race) >= 2,
-              f"{len(race)} 条：" + "; ".join(x.split(" :: ")[0] for x in race))
-        check("O18c 把转义去掉后，注入检查确实会红", len(xss) >= 3,
-              f"{len(xss)} 条：" + "; ".join(x.split(" :: ")[0] for x in xss))
-        poison.unlink(missing_ok=True)
+            poison = make_poison_js.build()
+            bad_out = _selftest("/selftest/_poison_app.js")
+            bf = [ln for ln in bad_out.splitlines() if ln.startswith("FAIL")]
+            race = [ln for ln in bf if ln.startswith(("FAIL T1f", "FAIL T7"))]
+            xss = [ln for ln in bf if ln.startswith("FAIL T5")]
+            check("O18b 把修复去掉后，串运行的检查确实会红", len(race) >= 2,
+                  f"{len(race)} 条：" + "; ".join(x.split(" :: ")[0] for x in race))
+            check("O18c 把转义去掉后，注入检查确实会红", len(xss) >= 3,
+                  f"{len(xss)} 条：" + "; ".join(x.split(" :: ")[0] for x in xss))
+            poison.unlink(missing_ok=True)
     finally:
         srv.terminate()
         try:

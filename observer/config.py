@@ -10,6 +10,13 @@ DATA_DIR = Path(os.environ.get("OBSERVER_DATA_DIR", OBSERVER_DIR / "data")).reso
 DB_PATH = DATA_DIR / "observer.db"
 RUNS_DIR = DATA_DIR / "runs"
 
+# 网页目录。**observer/web/ 由 UI 分支（Grok）负责，后台不写入这里。**
+# 测试需要挂别的目录时用 OBSERVER_WEB_DIR 覆盖，不要往 web/ 里丢临时文件。
+WEB_DIR = Path(os.environ.get("OBSERVER_WEB_DIR", OBSERVER_DIR / "web")).resolve()
+# 后台自己的浏览器回归用页面，挂在 /selftest，与前端目录彻底分开。
+SELFTEST_DIR = Path(os.environ.get("OBSERVER_SELFTEST_DIR",
+                                   OBSERVER_DIR / "tests" / "web")).resolve()
+
 # 模拟引擎：已冻结的 EXP-03 基线，只读加载，绝不修改。
 ENGINE_PATH = REPO_ROOT / "exp03" / "verify3.py"
 ENGINE_BASELINE_COMMIT = "6b6af4f"
@@ -21,6 +28,11 @@ MAX_RUNS = int(os.environ.get("OBSERVER_MAX_RUNS", "50"))          # 可保存�
 MAX_DATA_MB = int(os.environ.get("OBSERVER_MAX_DATA_MB", "512"))   # 数据目录总量上限
 MAX_SEED = 2**31 - 1
 WRITE_RATE_LIMIT = int(os.environ.get("OBSERVER_WRITE_RATE", "12"))  # 每 IP 每分钟写请求数
+# 占了槽却迟迟没有工作进程接手：超过这个秒数就判定进程没起来，回收任务槽。
+QUEUE_GRACE_SEC = float(os.environ.get("OBSERVER_QUEUE_GRACE", "20"))
+
+# API 契约版本。新增字段递增小版本；删改字段必须先改契约文档再动代码。
+API_VERSION = "obs-1.1"
 
 # --- 访问保护 ---
 # 设了 OBSERVER_TOKEN：所有 /api 请求都要带令牌（服务端校验，前端不硬编码）。

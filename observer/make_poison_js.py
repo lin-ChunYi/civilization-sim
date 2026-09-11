@@ -3,16 +3,20 @@
   1. 年份缓存退回“只按 t 作键”，并去掉所有“迟到响应”的守卫；
   2. 转义函数退化成恒等。
 
-只在测试时生成到 observer/web/_poison_selftest.js，跑完即删，不进版本库。
+**只读** observer/web/app.js（那是 UI 分支的文件），产物写到 observer/tests/web/_poison_app.js，
+跑完即删，不进版本库。后台绝不往 observer/web/ 里写东西。
 """
 import re
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent / "web" / "app.js"
-DST = Path(__file__).resolve().parent / "web" / "_poison_selftest.js"
+from . import config
+
+SRC = config.WEB_DIR / "app.js"
+DST = config.SELFTEST_DIR / "_poison_app.js"
 
 
 def build() -> Path:
+    DST.parent.mkdir(parents=True, exist_ok=True)
     s = SRC.read_text(encoding="utf-8")
     s = s.replace("const stale = (myEpoch, myRun) =>\n"
                   "  S.epoch !== myEpoch || !S.run || S.run.run_id !== myRun;",
