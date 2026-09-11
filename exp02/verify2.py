@@ -80,6 +80,12 @@ def neighbors(i: int) -> List[int]:
 
 def make_world(seed: int, poison: str = "", sigma_m: int = 0):
     split_poisons(poison)          # 未登记的注入标志立刻报错，不许静默通过
+    # 先查类型再查范围。顺序不能反：浮点的 sigma_m 会让 stock 整个变成 float，
+    # 而守恒误差会是 0.0（浮点相等），守恒检验抓不到它——类型检查不能用守恒检验代替。
+    # bool 是 int 的子类，必须单独排除，否则 True 会被静默当成 sigma_m=1。
+    if isinstance(sigma_m, bool) or not isinstance(sigma_m, int):
+        raise TypeError(f"SIGMA_M 必须是严格整数（不接受 bool），"
+                        f"收到 {sigma_m!r} ({type(sigma_m).__name__})")
     if not (SIGMA_M_MIN <= sigma_m <= SIGMA_M_MAX):
         raise ValueError(f"SIGMA_M={sigma_m} 越界，合法范围 [{SIGMA_M_MIN}, {SIGMA_M_MAX}]")
     st = {'tick': 0, 'seed': seed, 'poison': poison, 'sigma_m': sigma_m,

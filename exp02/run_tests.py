@@ -81,17 +81,25 @@ mark('C5 群体遍历顺序无关', ok5)
 mark('C6 资源格遍历顺序无关', ok6)
 
 # ---------------------------------------------------------------- C7
-hdr("C7 退化恒等：SIGMA_M=0 必须逐位复现冻结基线（用基线自己的哈希函数判定）")
+hdr("C7 退化恒等：SIGMA_M=0 必须【逐步】复现冻结基线（用基线自己的哈希函数判定）")
+print(f"  每个种子逐 tick 比较，共 {Y} 步；一旦出现第一处不同即记录该 tick 并停。")
 ok = True; ids_differ = True
 for sd in SEEDS:
-    bst, _ = base.run(sd, Y)
-    est, _ = v.run(sd, Y, sigma_m=0)
-    same_state = base.state_hash(bst) == base.state_hash(est)
+    bst = base.make_world(sd)
+    est = v.make_world(sd, sigma_m=0)
+    first_bad = 0 if base.state_hash(bst) != base.state_hash(est) else None
+    steps = 0
+    while first_bad is None and steps < Y:
+        base.step(bst); v.step(est); steps += 1
+        if base.state_hash(bst) != base.state_hash(est):
+            first_bad = steps
     diff_id = base.run_id(bst) != v.run_id(est)
-    print(f"  seed={sd:<6} 基线口径状态 {'逐位相同' if same_state else '不同'} | "
+    good = (first_bad is None)
+    print(f"  seed={sd:<6} 逐步比较 {steps}/{Y} 步 "
+          f"{'全部相同' if good else f'在 tick={first_bad} 处首次不同'} | "
           f"run_id {'不同（正确）' if diff_id else '相同 <<< 身份没区分开'}")
-    ok &= same_state; ids_differ &= diff_id
-mark('C7 SIGMA_M=0 退化恒等 + 身份分开记录', ok and ids_differ)
+    ok &= good; ids_differ &= diff_id
+mark('C7 SIGMA_M=0 逐步退化恒等 + 身份分开记录', ok and ids_differ)
 
 # ---------------------------------------------------------------- C8
 hdr("C8 区块隔离（保留；不强求它发现未被触发的错误）")
@@ -149,6 +157,40 @@ for sd in SEEDS[:3]:
     print(f"  seed={sd:<6} 健康版 正序vs逆序 {'同一映射✓' if healthy_ok else '映射不同✗'}"
           f" | climseq 错配 {nmis}/{len(pf)} 个 (tick,cell) {'✓' if nmis>0 else '✗'}")
 mark('C10 波动按坐标寻址（climseq 触发错配）', all(sub.values()))
+
+# ---------------------------------------------------------------- C11
+hdr("C11 sigma_m 参数校验：先查严格整数类型（排除 bool），再查 0–1000 范围")
+sub = {}
+bad_types = [100.0, 100.5, 0.0, 1000.0, True, False, '100', None, 1 + 0j, [100]]
+for b in bad_types:
+    try:
+        v.make_world(0, sigma_m=b); got = '被接受'
+    except TypeError:  got = 'TypeError'
+    except ValueError: got = 'ValueError'
+    except Exception as e: got = type(e).__name__
+    sub[f'type {b!r}'] = (got == 'TypeError')
+    print(f"  非法类型 {b!r:<8} -> {got}{'' if got=='TypeError' else '  <<< 应为 TypeError'}")
+for b in (-1, 1001, -100, 100000, 10**9):
+    try:
+        v.make_world(0, sigma_m=b); got = '被接受'
+    except TypeError:  got = 'TypeError'
+    except ValueError: got = 'ValueError'
+    sub[f'range {b}'] = (got == 'ValueError')
+    print(f"  越界值 {b:<9} -> {got}{'' if got=='ValueError' else '  <<< 应为 ValueError'}")
+for g in (0, 1, 999, 1000):
+    try:
+        st = v.make_world(0, sigma_m=g)
+        for _ in range(3): v.step(st)
+        all_int = (all(isinstance(x, int) for x in st['stock'].values()) and
+                   all(isinstance(b['store'], int) and isinstance(b['size'], int)
+                       for b in st['bands'].values()) and
+                   isinstance(v.conservation_error(st), int))
+        sub[f'legal {g}'] = all_int
+        print(f"  合法边界 {g:<9} -> 接受，跑 3 tick 后状态全为整数 {'✓' if all_int else '✗ <<< 有非整数进入状态'}")
+    except Exception as e:
+        sub[f'legal {g}'] = False
+        print(f"  合法边界 {g:<9} -> 被拒绝 {type(e).__name__} <<< 不应拒绝")
+mark('C11 sigma_m 类型与范围校验', all(sub.values()))
 
 # ---------------------------------------------------------------- 汇总
 hdr("汇总（只列必过项；现象类指标在 run_scan.py，不在这里判定通过与否）")
