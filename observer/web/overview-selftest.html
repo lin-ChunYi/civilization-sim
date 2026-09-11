@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>OBS-01 世界概览 · 前端自检</title>
+<style>body{font:13px/1.5 monospace;background:#111;color:#ddd;padding:12px}#result{white-space:pre-wrap}</style>
+</head>
+<body>
+<pre id="result">running…</pre>
+<script>
+window.__OBS_MANUAL_BOOT__ = true;
+</script>
+<script src="/static/app.js"></script>
+<script>
+(function () {
+  const L = window.OverviewLogic;
+  const out = [];
+  const ok = (name, cond, detail) => out.push((cond ? "PASS" : "FAIL") + " " + name + (detail ? " :: " + detail : ""));
+  try {
+    ok("L0 OverviewLogic 已暴露", !!L && typeof L.parseStrictInt === "function");
+
+    const p1 = L.parseStrictInt("120", { name: "年数", min: 1, max: 300 });
+    ok("L1 整数 120 通过", p1.ok && p1.value === 120, JSON.stringify(p1));
+    const p2 = L.parseStrictInt("1.5", { name: "年数" });
+    ok("L2 小数 1.5 被拒绝（不悄悄取整）", !p2.ok && /整数/.test(p2.error), p2.error);
+    const p3 = L.parseStrictInt("", { name: "种子" });
+    ok("L3 空值被拒绝", !p3.ok);
+    const p4 = L.parseStrictInt("1e2", { name: "种子" });
+    ok("L4 科学计数法被拒绝", !p4.ok);
+    const p5 = L.parseStrictInt("08", { name: "种子" });
+    ok("L5 08 仍是整数 8", p5.ok && p5.value === 8);
+    const p6 = L.parseStrictInt("true", { name: "SIGMA_M" });
+    ok("L6 true 被拒绝", !p6.ok);
+
+    ok("L7 第 0 年显示开局", L.yearViewLabel(0) === "开局");
+    ok("L8 第 48 年显示模拟年", L.yearViewLabel(48) === "第 48 个模拟年");
+
+    const d0 = L.formatDelta(120, 120, "人");
+    ok("L9 与开局相同不伪造同比", d0.dir === 0 && d0.text === "与开局相同");
+    const d1 = L.formatDelta(255, 120, "人");
+    ok("L10 人口增加写出较开局 +N", d1.dir === 1 && d1.text.indexOf("+135") >= 0, d1.text);
+
+    const ev = L.eventTypeCounts([
+      { type: "migrate" }, { type: "migrate" }, { type: "split" }
+    ]);
+    ok("L11 事件计数不把人数混进去", ev.total === 3 && ev.migrate === 2 && ev.split === 1 && ev.extinct === 0);
+
+    const series = [
+      { t: 0, events: 0 }, { t: 1, events: 0 }, { t: 2, events: 1 },
+      { t: 3, events: 2 }, { t: 4, events: 0 }
+    ];
+    const c2 = L.cumulativeRecordedEvents(series, 2);
+    ok("L12 累计事件只到回放年", c2.complete && c2.count === 1, JSON.stringify(c2));
+    const c4 = L.cumulativeRecordedEvents(series, 4);
+    ok("L13 t=4 累计 3 条", c4.complete && c4.count === 3, JSON.stringify(c4));
+    const hole = L.cumulativeRecordedEvents(series.slice(0, 3), 4);
+    ok("L14 缺年时不宣称最终总数", !hole.complete && hole.missing > 0, JSON.stringify(hole));
+
+    const years = new Map();
+    years.set("R|0", { events: [] });
+    years.set("R|1", { events: [{ type: "migrate", text: "迁", band: "a" }] });
+    years.set("R|2", { events: [{ type: "split", text: "裂", band: "b" }] });
+    const flat = L.flattenEvents((id, t) => years.get(id + "|" + t), "R", 3);
+    ok("L15 缺年第 3 年被标出", flat.missing.join() === "3" && flat.items.length === 2);
+    ok("L16 扁平化事件带年份", flat.items[0].t === 1 && flat.items[1].t === 2);
+
+    const memU = L.memCaption(null, 10);
+    ok("L17 无记忆 = 未知", memU.kind === "unknown");
+    const memN = L.memCaption([100, null], 10);
+    ok("L18 无时间戳不补日期", memN.kind === "known-untimed" && memN.text === "时间未记录");
+    const mem0 = L.memCaption([100, 0], 10);
+    ok("L19 时间戳 0 是开局年不是缺失", mem0.kind === "stale" && mem0.text.indexOf("第 0 年") >= 0);
+    const memF = L.memCaption([100, 10], 10);
+    ok("L20 当年已知", memF.kind === "fresh");
+
+    const s0 = L.buildYearSummary({
+      t: 0, year: { births_cum: 0, deaths_demo_cum: 0, mig_deaths_cum: 0 },
+      agg: { pop: 120, bands: 6 }, events: [], ledgerMig: 0
+    });
+    ok("L21 开局摘要含开局且无同比", s0.sentences.some((x) => /开局/.test(x)) &&
+      s0.sentences.some((x) => /没有上一年度/.test(x)));
+    ok("L22 开局无事件仍说明没有记录到事件", s0.sentences.some((x) => /没有记录到/.test(x)));
+
+    const s1 = L.buildYearSummary({
+      t: 48, year: { births_cum: 6, deaths_demo_cum: 14, mig_deaths_cum: 2 },
+      agg: { pop: 176, bands: 7 },
+      events: [{ type: "migrate" }, { type: "migrate" }],
+      ledgerMig: 2
+    });
+    const blob = s1.sentences.join("");
+    ok("L23 摘要用账本增量而不是净变化", /出生 6 人/.test(blob) && /原规则死亡/.test(blob) && /迁移死亡 2 人/.test(blob));
+    ok("L24 不把死亡解释成病死或战争", !/病死|战争|自然死亡/.test(blob));
+    ok("L25 记录到 2 次迁移", /记录到 2 次迁移/.test(blob));
+
+    const s2 = L.buildYearSummary({
+      t: 10, year: { births_cum: 957, deaths_demo_cum: 0, mig_deaths_cum: 0 },
+      agg: { pop: 200, bands: 6 }, events: [], ledgerMig: 3
+    });
+    const b2 = s2.sentences.join("");
+    ok("L26 出生 957 不等于 957 条事件", /出生 957/.test(b2) && /没有记录到迁移/.test(b2));
+    ok("L27 账本迁移次数与事件条数不一致时分开说", /账本统计本年迁移 3 次/.test(b2) && /已记录的迁移事件 0 条/.test(b2));
+
+    ok("L28 契约钩子仍在", !!(window.__obs && window.__obs.ykey && window.__obs.esc && window.__obs.boot));
+    ok("L29 ykey 按 run+year 隔离", window.__obs.ykey("A", 3) !== window.__obs.ykey("B", 3));
+    ok("L30 esc 把标签变成文本", window.__obs.esc("<img src=x>") === "&lt;img src=x&gt;");
+  } catch (e) {
+    out.push("FAIL 自检脚本本身出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
+  }
+  const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
+  out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
+  document.getElementById("result").textContent = out.join("\n");
+})();
+</script>
+</body></html>

@@ -1,5 +1,6 @@
-/* 文明观察台 OBS-01 —— 前端。
-   原则：回放只读已保存的记录；一切数字都来自后台的原始整数账，前端只做单位换算与显示。 */
+/* 文明观察台 OBS-01 —— 前端（世界概览改版）。
+   原则：回放只读已保存的记录；一切数字都来自后台的原始整数账。
+   不调用 LLM，不补编动机或因果。 */
 "use strict";
 
 const S = {
@@ -7,24 +8,132 @@ const S = {
   cfg: null, map: null, run: null, meta: null, series: [], years: new Map(),
   runs: [], t: 0, playing: false, speed: 1, view: "truth", selBand: null, selCell: null,
   timer: null, band: null,
-  /* 防止异步请求串运行：每次切换运行 / 年份 / 群体都推进一个令牌，
-     迟到的响应发现令牌已变或运行已换，就只写缓存、不碰界面。 */
   epoch: 0,
+  evScope: "year", evFilter: "all",
 };
-/* 年份缓存按 run_id + t 隔离，换了运行绝不会读到上一条运行的同一年 */
 const ykey = (runId, t) => `${runId}|${t}`;
 const bump = () => ++S.epoch;
 const stale = (myEpoch, myRun) =>
   S.epoch !== myEpoch || !S.run || S.run.run_id !== myRun;
 const $ = (id) => document.getElementById(id);
-/* 用户可控的文本（运行备注、后台错误信息等）一律转义后再拼进 innerHTML。
-   能用 textContent 的地方直接用 textContent。 */
+
 function esc(x) {
   return String(x === null || x === undefined ? "" : x)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
-/* 允许用地址栏定位：#tab=metrics&run=<id>&t=60&b=<band id>，便于分享与自动化检查 */
+
+/* ---------------- 展示层纯函数（也给自检用） ---------------- */
+const OverviewLogic = {
+  parseStrictInt(raw, opts) {
+    const o = opts || {};
+    const s = String(raw == null ? "" : raw).trim();
+    if (!/^-?\d+$/.test(s)) {
+      return { ok: false, error: (o.name || "这项") + "必须是整数，不能是小数、空值或科学计数法。" };
+    }
+    const n = Number(s);
+    if (!Number.isSafeInteger(n)) {
+      return { ok: false, error: (o.name || "这项") + "超出整数范围。" };
+    }
+    if (o.min != null && n < o.min) {
+      return { ok: false, error: (o.name || "这项") + "不能小于 " + o.min + "。" };
+    }
+    if (o.max != null && n > o.max) {
+      return { ok: false, error: (o.name || "这项") + "不能大于 " + o.max + "。" };
+    }
+    return { ok: true, value: n };
+  },
+  yearViewLabel(t) {
+    return t === 0 ? "开局" : "第 " + t + " 个模拟年";
+  },
+  formatDelta(now, start, unit) {
+    if (now == null || start == null) return { text: "开局读数未加载", dir: 0 };
+    const u = unit ? " " + unit : "";
+    if (now === start) return { text: "与开局相同", dir: 0 };
+    const d = now - start;
+    return { text: (d > 0 ? "较开局 +" : "较开局 ") + d + u, dir: Math.sign(d) };
+  },
+  eventTypeCounts(events) {
+    const out = { migrate: 0, split: 0, extinct: 0, other: 0, total: 0 };
+    (events || []).forEach((e) => {
+      if (e && out[e.type] != null) out[e.type] += 1;
+      else out.other += 1;
+      out.total += 1;
+    });
+    return out;
+  },
+  cumulativeRecordedEvents(series, t) {
+    const byT = new Map();
+    (series || []).forEach((r) => {
+      if (r && typeof r.t === "number") byT.set(r.t, r);
+    });
+    let count = 0, missing = 0;
+    for (let i = 0; i <= t; i++) {
+      const r = byT.get(i);
+      if (!r || typeof r.events !== "number") missing += 1;
+      else count += r.events;
+    }
+    return {
+      count, missing, expected: t + 1, have: t + 1 - missing,
+      complete: missing === 0,
+    };
+  },
+  flattenEvents(getYear, runId, tEnd) {
+    const items = [];
+    const missing = [];
+    for (let t = 0; t <= tEnd; t++) {
+      const rec = getYear(runId, t);
+      if (!rec) { missing.push(t); continue; }
+      (rec.events || []).forEach((e, i) => {
+        items.push(Object.assign({}, e, { t: t, _i: i }));
+      });
+    }
+    return { items, missing };
+  },
+  memCaption(entry, t) {
+    if (!entry) return { kind: "unknown", text: "未知" };
+    const ts = entry[1];
+    if (ts === null || ts === undefined) {
+      return { kind: "known-untimed", text: "时间未记录" };
+    }
+    if (ts === t) return { kind: "fresh", text: "当年已知" };
+    return { kind: "stale", text: "第 " + ts + " 年的记录" };
+  },
+  buildYearSummary(input) {
+    const t = input.t, year = input.year || {}, agg = input.agg || {};
+    const ev = OverviewLogic.eventTypeCounts(input.events);
+    const births = year.births_cum, demo = year.deaths_demo_cum, md = year.mig_deaths_cum;
+    const sentences = [];
+    if (t === 0) {
+      sentences.push("这是开局。当前共有 " + (agg.bands == null ? "—" : agg.bands) +
+        " 个群体、" + (agg.pop == null ? "—" : agg.pop) + " 人。");
+      sentences.push("第 0 年没有上一年度，不显示同比变化。");
+      if (ev.total === 0) sentences.push("本年没有记录到迁移、分裂或群体消失事件。");
+      else {
+        sentences.push("记录到 " + ev.migrate + " 次迁移、" + ev.split +
+          " 次群体分裂、" + ev.extinct + " 次群体消失。");
+      }
+      return { sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md };
+    }
+    sentences.push("本年出生 " + births + " 人，非迁移死亡（模型的原规则死亡） " +
+      demo + " 人，迁移死亡 " + md + " 人。");
+    if (ev.total === 0) {
+      sentences.push("本年没有记录到迁移、分裂或群体消失事件。");
+    } else {
+      sentences.push("记录到 " + ev.migrate + " 次迁移、" + ev.split +
+        " 次群体分裂、" + ev.extinct + " 次群体消失。");
+    }
+    sentences.push("当前共有 " + agg.bands + " 个群体、" + agg.pop + " 人。");
+    if (input.ledgerMig != null && input.ledgerMig !== ev.migrate) {
+      sentences.push("模型账本统计本年迁移 " + input.ledgerMig +
+        " 次，已记录的迁移事件 " + ev.migrate +
+        " 条；人数与事件条数不能混加，也不强行对齐。");
+    }
+    return { sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md };
+  },
+};
+window.OverviewLogic = OverviewLogic;
+
 function hashParams() {
   const out = {};
   (location.hash || "").replace(/^#/, "").split("&").forEach((kv) => {
@@ -36,22 +145,24 @@ function hashParams() {
 function setHash(patch) {
   const h = Object.assign(hashParams(), patch);
   Object.keys(h).forEach((k) => { if (h[k] === "" || h[k] === null) delete h[k]; });
-  const str = Object.entries(h).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+  const str = Object.entries(h).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
   history.replaceState(null, "", "#" + str);
 }
 const NEED = () => (S.cfg ? S.cfg.engine.constants.NEED_PC : 730000);
 
-/* ---------------- 工具 ---------------- */
 const nf = (x) => (x === null || x === undefined ? "—" : Number(x).toLocaleString("zh-CN"));
-function py(kcal, digits = 1) {           // kcal -> 人年口粮
+function py(kcal, digits) {
+  if (digits == null) digits = 1;
   if (kcal === null || kcal === undefined) return "—";
   return (kcal / NEED()).toFixed(digits);
 }
 function kcalCell(kcal) {
+  if (kcal === null || kcal === undefined) return `<span class="na">未记录</span>`;
   return `${py(kcal)} <small>人年口粮 / ${nf(kcal)} kcal</small>`;
 }
-function pct(num, den, digits = 3) {      // 分母为 0 一律“不适用”，不伪造 0%
-  if (!den) return `<span class="muted">不适用（分母为 0）</span>`;
+function pct(num, den, digits) {
+  if (digits == null) digits = 3;
+  if (!den) return `<span class="na">不适用（分母为 0）</span>`;
   return (num / den * 100).toFixed(digits) + "%";
 }
 function tsfmt(v) {
@@ -65,24 +176,27 @@ const STATUS_TEXT = {
   failed: ["失败", "s-bad"], interrupted: ["中断", "s-bad"], canceled: ["已取消", "s-off"],
 };
 function statusBadge(st) {
-  const [txt, cls] = STATUS_TEXT[st] || [st, "s-off"];
-  return `<span class="badge ${cls}">${txt}</span>`;
+  const pair = STATUS_TEXT[st] || [st, "s-off"];
+  return `<span class="badge ${pair[1]}">${esc(pair[0])}</span>`;
+}
+function recNow() {
+  return S.run ? S.years.get(ykey(S.run.run_id, S.t)) : null;
 }
 
 /* ---------------- API ---------------- */
-async function api(path, opts = {}) {
-  const h = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+async function api(path, opts) {
+  const h = Object.assign({ "Content-Type": "application/json" }, (opts && opts.headers) || {});
   if (S.token) h["X-Observer-Token"] = S.token;
-  const r = await fetch(path, Object.assign({}, opts, { headers: h }));
+  const r = await fetch(path, Object.assign({}, opts || {}, { headers: h }));
   if (!r.ok) {
-    let detail = `HTTP ${r.status}`;
+    let detail = "HTTP " + r.status;
     try { detail = (await r.json()).detail || detail; } catch (e) { /* 忽略 */ }
     const err = new Error(detail); err.status = r.status; throw err;
   }
   return r.json();
 }
 
-/* ---------------- 顶部状态条 ---------------- */
+/* ---------------- 顶部状态条（契约：必须含运行名） ---------------- */
 function renderStatus() {
   const box = $("statusline");
   if (!S.cfg) { box.textContent = "正在连接后台…"; return; }
@@ -90,20 +204,121 @@ function renderStatus() {
   if (S.run) {
     parts.push(`<b>当前运行</b> ${esc(S.run.label || S.run.run_id)} ${statusBadge(S.run.status)}` +
       (S.run.kind === "preset" ? ` <span class="badge s-off">预生成案例</span>` : ""));
-    parts.push(`<b>参数</b> seed=${S.run.seed} · years=${S.run.years} · SIGMA_M=${S.run.sigma_m}‰ ·
-                MOVE_MORT_M=${S.run.move_mort_m}‰ · ${S.cfg.arms[S.run.arm].label}`);
-    parts.push(`<b>计算进度</b> ${S.run.years_recorded ?? S.run.years_done}/${S.run.years} 年`);
-    parts.push(`<b>回放</b> 第 ${S.t} 年`);
+    parts.push(`<b>回放</b> ${esc(OverviewLogic.yearViewLabel(S.t))}`);
+    parts.push(`<b>已计算</b> ${S.run.years_recorded ?? S.run.years_done}/${S.run.years} 年`);
   } else {
     parts.push("尚未选择运行");
   }
-  parts.push(`<b>模型</b> ${S.cfg.engine.engine_path} @ ${S.cfg.engine.baseline_commit}
-              · sha256 ${S.cfg.engine.engine_sha256.slice(0, 12)}`);
   box.innerHTML = parts.join(" ");
 }
 
+/* ---------------- 六项概览 + 人话摘要 ---------------- */
+function startAgg() {
+  const r = (S.series || []).find((x) => x.t === 0);
+  return r ? r.agg : null;
+}
+function renderOverview() {
+  if (!$("ov-year-value")) return;
+  const rec = recNow();
+  $("ov-year-value").textContent = OverviewLogic.yearViewLabel(S.t);
+  $("ov-year-sub").textContent = S.t === 0
+    ? "开局 · 这是回放位置，不是后台算到哪"
+    : "正在回放这一年，不是后台计算进度";
+  $("ov-year").classList.add("viewing");
+
+  if (!S.run) {
+    ["ov-calc-value", "ov-pop-value", "ov-bands-value", "ov-ev-cum-value", "ov-ev-now-value"]
+      .forEach((id) => { $(id).textContent = "—"; });
+    $("year-summary").textContent = "还没有选中运行。到「运行记录」发起或打开一次模拟。";
+    return;
+  }
+  const recorded = S.run.years_recorded ?? 0;
+  $("ov-calc-value").textContent = recorded + " / " + S.run.years + " 年";
+  $("ov-calc-sub").innerHTML = statusBadge(S.run.status) +
+    (S.run.kind === "preset" ? " · 预生成案例" : "") +
+    " · 后台已经算到第 " + recorded + " 年";
+
+  if (!rec) {
+    $("ov-pop-value").textContent = "…";
+    $("ov-pop-sub").textContent = "正在读取第 " + S.t + " 年";
+    $("ov-bands-value").textContent = "…";
+    $("ov-bands-sub").textContent = "跟随回放年份";
+    $("ov-ev-now-value").textContent = "…";
+    $("ov-ev-now-sub").textContent = "本年事件清单尚未加载";
+    $("year-summary").textContent = "正在读取第 " + S.t + " 年的记录…";
+  } else {
+    const st = startAgg();
+    $("ov-pop-value").textContent = nf(rec.agg.pop) + " 人";
+    if (S.t === 0) {
+      $("ov-pop-sub").textContent = "开局（无同比）";
+      $("ov-pop-sub").className = "ov-s";
+    } else {
+      const d = OverviewLogic.formatDelta(rec.agg.pop, st ? st.pop : null, "人");
+      $("ov-pop-sub").textContent = d.text;
+      $("ov-pop-sub").className = "ov-s " + (d.dir > 0 ? "up" : d.dir < 0 ? "down" : "");
+    }
+    $("ov-bands-value").textContent = nf(rec.agg.bands) + " 个";
+    if (S.t === 0) {
+      $("ov-bands-sub").textContent = "开局（无同比）";
+      $("ov-bands-sub").className = "ov-s";
+    } else {
+      const d = OverviewLogic.formatDelta(rec.agg.bands, st ? st.bands : null, "个");
+      $("ov-bands-sub").textContent = d.text;
+      $("ov-bands-sub").className = "ov-s " + (d.dir > 0 ? "up" : d.dir < 0 ? "down" : "");
+    }
+    $("ov-ev-now-value").textContent = rec.events.length + " 条";
+    $("ov-ev-now-sub").textContent = "来自已记录事件清单，不是出生人数";
+    const sum = OverviewLogic.buildYearSummary({
+      t: S.t, year: rec.year, agg: rec.agg, events: rec.events,
+      ledgerMig: rec.year ? rec.year.mig_total : null,
+    });
+    $("year-summary").textContent = sum.sentences.join("");
+  }
+
+  const cum = OverviewLogic.cumulativeRecordedEvents(S.series, S.t);
+  if (!S.series.length) {
+    $("ov-ev-cum-value").textContent = "…";
+    $("ov-ev-cum-sub").textContent = "曲线数据尚未加载，不把空值当成 0 条";
+  } else if (!cum.complete) {
+    $("ov-ev-cum-value").textContent = nf(cum.count) + " 条";
+    $("ov-ev-cum-sub").textContent = "只统计已加载的 " + cum.have + "/" + cum.expected +
+      " 年，不是最终总数";
+  } else {
+    $("ov-ev-cum-value").textContent = nf(cum.count) + " 条";
+    $("ov-ev-cum-sub").textContent = "截至" + OverviewLogic.yearViewLabel(S.t) + " · 已记录事件";
+  }
+}
+
+function renderTech() {
+  const box = $("tech-body");
+  if (!box) return;
+  if (!S.run || !S.cfg) { box.textContent = "打开一次运行后显示。"; return; }
+  const rec = recNow();
+  const arm = S.cfg.arms[S.run.arm];
+  const rows = [
+    ["模型", S.cfg.engine.engine_path + " @ " + S.cfg.engine.baseline_commit],
+    ["引擎 sha256", (S.cfg.engine.engine_sha256 || "").slice(0, 16) + "…"],
+    ["参数指纹", S.cfg.engine.params_fingerprint],
+    ["种子 / 年数", S.run.seed + " / " + S.run.years],
+    ["SIGMA_M", S.run.sigma_m + "‰"],
+    ["MOVE_MORT_M", S.run.move_mort_m + "‰"],
+    ["信息条件", arm ? arm.label : S.run.arm],
+    ["model_run_id", S.run.model_run_id || "（尚未写入）"],
+    ["full_digest", S.run.full_digest || "（尚未写入）"],
+  ];
+  if (rec) {
+    rows.push(["状态哈希", rec.integrity.state_hash]);
+    rows.push(["能量守恒误差", String(rec.integrity.conservation_error)]);
+    rows.push(["人口恒等误差", String(rec.integrity.population_identity_error)]);
+    rows.push(["累计吃掉", py(rec.cum.out_eat) + " 人年口粮"]);
+    rows.push(["累计腐损", py(rec.cum.out_spoil) + " 人年口粮"]);
+  }
+  box.innerHTML = `<div class="kv">${rows.map(([k, v]) =>
+    `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join("")}</div>`;
+}
+
 /* ---------------- 地图 ---------------- */
-const R = 36, SQ3 = Math.sqrt(3);
+const R = 30, SQ3 = Math.sqrt(3);
 function hexPath(cx, cy) {
   let d = "";
   for (let k = 0; k < 6; k++) {
@@ -113,20 +328,23 @@ function hexPath(cx, cy) {
   return d + "Z";
 }
 function cellCenter(c) {
-  const x = 40 + (c.col + (c.row % 2 === 0 ? 0.5 : 0)) * SQ3 * R + SQ3 * R / 2;
-  const y = 40 + c.row * 1.5 * R + R;
+  const x = 28 + (c.col + (c.row % 2 === 0 ? 0.5 : 0)) * SQ3 * R + SQ3 * R / 2;
+  const y = 26 + c.row * 1.5 * R + R;
   return [x, y];
 }
-function ramp(f) {                      // 0..1 -> 浅到深的绿
+function ramp(f) {
   f = Math.max(0, Math.min(1, f));
   const a = [246, 249, 244], b = [30, 94, 60];
-  return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * f)).join(",")})`;
+  return "rgb(" + a.map((v, i) => Math.round(v + (b[i] - v) * f)).join(",") + ")";
 }
 function renderMap() {
   const svg = $("map");
   if (!S.map || !S.run) { svg.innerHTML = ""; return; }
-  const rec = S.years.get(ykey(S.run.run_id, S.t));
-  if (!rec) { svg.innerHTML = `<text x="20" y="40" fill="#6b7280">正在读取第 ${S.t} 年…</text>`; return; }
+  const rec = recNow();
+  if (!rec) {
+    svg.innerHTML = `<text x="20" y="40" fill="#6b7280">正在读取第 ${S.t} 年…</text>`;
+    return;
+  }
   const cap = S.meta ? S.meta.cap : null;
   const memBand = S.view === "mem" && S.selBand
     ? rec.bands.find((b) => b.id === S.selBand) : null;
@@ -139,63 +357,78 @@ function renderMap() {
   rec.bands.forEach((b) => { (byCell[b.cell] = byCell[b.cell] || []).push(b); });
 
   S.map.cells.forEach((c, idx) => {
-    const [cx, cy] = cellCenter(c);
-    let fill = "url(#hatch)", label = "", sub = "";
+    const xy = cellCenter(c), cx = xy[0], cy = xy[1];
+    let fill = "url(#hatch)", food = "", sub = "", title = "第 " + c.i + " 号格";
     if (c.passable) {
       const capv = cap ? cap[idx] : 0;
       if (memBand) {
         const e = memBand.mem[String(c.i)];
-        if (!e) { fill = "#eceae6"; label = "未知"; }
-        else {
+        const capn = OverviewLogic.memCaption(e, S.t);
+        if (capn.kind === "unknown") {
+          fill = "#eceae6"; food = "未知"; sub = "";
+          title += " · 该群体未知";
+        } else {
           fill = ramp(capv ? e[0] / capv : 0);
-          const age = S.t - (e[1] === null ? 0 : e[1]);
-          label = py(e[0], 0);
-          sub = age > 0 ? `${age} 年前` : "当年";
+          food = py(e[0], 0);
+          sub = capn.text;
+          title += " · 记得食物 " + py(e[0], 1) + " 人年口粮 · " + capn.text;
         }
       } else {
         fill = ramp(capv ? rec.stock[idx] / capv : 0);
-        label = py(rec.stock[idx], 0);
-        sub = capv ? Math.round(rec.stock[idx] / capv * 100) + "% 容量" : "";
+        food = py(rec.stock[idx], 0);
+        sub = "";
+        title += " · 食物 " + py(rec.stock[idx], 1) + " 人年口粮";
+        if (capv) title += " · 容量 " + Math.round(rec.stock[idx] / capv * 100) + "%（次要）";
+        title += " · 格子编号 " + c.i;
       }
+    } else {
+      title += " · 不可通行";
     }
     const selected = S.selCell === c.i;
     out += `<path d="${hexPath(cx, cy)}" fill="${fill}" stroke="${selected ? "#1f2937" : "#cfd2cd"}"
-        stroke-width="${selected ? 2.6 : 1}" data-cell="${c.i}" class="cell"/>`;
+        stroke-width="${selected ? 2.6 : 1}" data-cell="${c.i}" class="cell">
+        <title>${esc(title)}</title></path>`;
     if (c.passable) {
-      const dark = fill.startsWith("rgb") &&
-        (parseInt(fill.slice(4).split(",")[1]) < 150);
+      const dark = fill.startsWith("rgb") && (parseInt(fill.slice(4).split(",")[1], 10) < 150);
       const ink = dark ? "#eef5ef" : "#4b534e";
-      out += `<text x="${cx}" y="${cy - 19}" text-anchor="middle" font-size="9.5"
-          fill="${ink}" opacity="0.85" pointer-events="none">${c.i}</text>`;
-      out += `<text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="10.5"
-          fill="${ink}" pointer-events="none">${label}</text>`;
-      if (sub) out += `<text x="${cx}" y="${cy + 24}" text-anchor="middle" font-size="8"
-          fill="${ink}" opacity="0.8" pointer-events="none">${sub}</text>`;
+      if (memBand) {
+        out += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="10"
+            fill="${ink}" pointer-events="none">${esc(food)}</text>`;
+        if (sub) out += `<text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="8"
+            fill="${ink}" opacity="0.9" pointer-events="none">${esc(sub)}</text>`;
+      } else {
+        out += `<text x="${cx}" y="${cy + 6}" text-anchor="middle" font-size="8"
+            fill="${ink}" opacity="0.85" pointer-events="none">食物</text>`;
+        out += `<text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="11"
+            fill="${ink}" pointer-events="none">${esc(food)}</text>`;
+      }
     }
   });
 
-  // 群体：同格多个时排成一行分开摆放，互不遮挡，也不压住格子的数值标签
   S.map.cells.forEach((c) => {
     const list = byCell[c.i]; if (!list) return;
-    const [cx, cy] = cellCenter(c);
+    const xy = cellCenter(c), cx = xy[0], cy = xy[1];
     const n = list.length;
-    const rCap = (56 - 2 * (n - 1)) / (2 * n);      // 一行放得下的最大半径
+    const rCap = (48 - 2 * (n - 1)) / (2 * n);
     const rads = list.map((b) =>
-      Math.min(rCap, Math.max(5, 4.2 + Math.sqrt(Math.max(b.size, 1)) * 1.4)));
+      Math.min(rCap, Math.max(6, 4.2 + Math.sqrt(Math.max(b.size, 1)) * 1.35)));
     const total = rads.reduce((a, r) => a + 2 * r, 0) + (n - 1) * 2;
     let x0 = cx - total / 2;
     list.forEach((b, k) => {
       const rad = rads[k];
-      const x = x0 + rad, y = cy - 7;
+      const x = x0 + rad, y = cy - 10;
       x0 += 2 * rad + 2;
       const on = S.selBand === b.id;
       out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad.toFixed(1)}"
           fill="${on ? "#b45309" : "#8a5a2b"}" fill-opacity="0.93"
           stroke="${on ? "#fff8e8" : "#fdfaf4"}" stroke-width="${on ? 2.4 : 1.5}"
-          data-band="${b.id}" class="band" style="cursor:pointer"><title>${b.name} · ${b.size} 人</title></circle>`;
-      if (rad >= 7.5) {
-        out += `<text x="${x.toFixed(1)}" y="${(y + 3.4).toFixed(1)}" text-anchor="middle"
-            font-size="${rad >= 10 ? 10 : 8.5}" fill="#fff" pointer-events="none">${b.size}</text>`;
+          data-band="${b.id}" class="band" style="cursor:pointer">
+          <title>${esc(b.name)} · ${b.size}人</title></circle>`;
+      const label = b.size + "人";
+      const fs = rad >= 11 ? 9 : 7.5;
+      if (rad >= 7) {
+        out += `<text x="${x.toFixed(1)}" y="${(y + 3.2).toFixed(1)}" text-anchor="middle"
+            font-size="${fs}" fill="#fff" pointer-events="none">${label}</text>`;
       }
     });
   });
@@ -203,25 +436,24 @@ function renderMap() {
   svg.querySelectorAll(".band").forEach((n) =>
     n.addEventListener("click", (e) => { e.stopPropagation(); selectBand(n.dataset.band); }));
   svg.querySelectorAll(".cell").forEach((n) =>
-    n.addEventListener("click", () => { S.selCell = +n.dataset.cell; renderMap(); renderSide(); }));
+    n.addEventListener("click", () => { S.selCell = +n.dataset.cell; S.selBand = null; renderMap(); renderSide(); }));
 
-  $("legend").innerHTML = memBand
-    ? `记忆视图（${memBand.name}）：<span class="bar"></span> 记得的存量少 → 多 ·
-       <span style="background:#eceae6;padding:1px 6px;border-radius:3px">未知</span> ·
-       灰斜纹 = 不可通行`
-    : `真实资源：<span class="bar"></span> 存量少 → 多 · 灰斜纹 = 不可通行 ·
-       棕色圆点 = 群体（数字为人口）`;
-  $("maphint").innerHTML = memBand
-    ? `记忆视图只替换<b>资源读数</b>；群体位置画的仍是世界真实位置，不代表该群体知道别人在哪。
-       格内第二行是记忆的年龄（按模型的 <code>memt</code> 时间戳算）。
-       <b>注意模型的既有口径</b>：群体自己所在格的存量每年都会刷新，但时间戳只在侦察或迁入时更新，
-       所以本格可能显示成“若干年前”。观察台如实显示，不替模型修正。`
-    : `点击格子看它的资源与占用；点击群体看详情。同格多个群体分开摆放，互不遮挡。`;
+  if ($("legend")) {
+    $("legend").innerHTML = memBand
+      ? `记忆视图（${esc(memBand.name)}）：<span class="bar"></span> 记得的食物少 → 多 ·
+         <span class="chip">未知</span> · 灰斜纹 = 不可通行`
+      : `真实资源：<span class="bar"></span> 食物少 → 多 · 灰斜纹 = 不可通行`;
+  }
+  if ($("maphint")) {
+    $("maphint").textContent = memBand
+      ? "记忆视图只替换资源读数；群体位置仍是世界真实位置。没有时间戳的格子显示「时间未记录」，不补日期。群体自己所在格的存量每年会刷新，但时间戳只在侦察或迁入时更新——观察台如实显示，不替模型修正。"
+      : "点击格子看食物与占用；点击圆点看群体。同格多个群体排成一行，可分别选择。格子编号在悬停说明里。";
+  }
 }
 
 /* ---------------- 侧栏 ---------------- */
 function renderSide() {
-  const rec = S.run ? S.years.get(ykey(S.run.run_id, S.t)) : null;
+  const rec = recNow();
   $("side-empty").hidden = !!rec;
   $("side-body").hidden = !rec;
   if (!rec) return;
@@ -230,15 +462,15 @@ function renderSide() {
   const rows = [
     ["总人口", `${nf(agg.pop)} <small>人</small>`],
     ["群体数", `${nf(agg.bands)} <small>个</small>`],
-    ["野外资源存量", kcalCell(agg.stock_total)],
+    ["野外食物", kcalCell(agg.stock_total)],
     ["群体储粮", kcalCell(agg.store_total)],
     ["当年出生", `${nf(y.births_cum)} <small>人</small>`],
     ["当年原规则死亡", `${nf(y.deaths_demo_cum)} <small>人</small>`],
     ["当年迁移死亡", `${nf(y.mig_deaths_cum)} <small>人</small>`],
-    ["当年迁移次数", `${nf(y.mig_total)} <small>次</small>`],
+    ["当年迁移（账本）", `${nf(y.mig_total)} <small>次</small>`],
     ["当年缺粮 / 需求", pct(y.deficit_cum, y.need_cum)],
-    ["当年迁移误判率", y.mig_total ? pct(y.mig_regret, y.mig_total, 1) :
-      `<span class="muted">不适用（当年迁移 0 次）</span>`],
+    ["当年迁移误判率", y.mig_total ? pct(y.mig_regret, y.mig_total, 1)
+      : `<span class="na">不适用（当年迁移 0 次）</span>`],
   ];
   $("side-now").innerHTML = rows.map(([k, v]) =>
     `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
@@ -246,7 +478,7 @@ function renderSide() {
     ["累计出生", `${nf(cum.births_cum)} <small>人</small>`],
     ["累计原规则死亡", `${nf(cum.deaths_demo_cum)} <small>人</small>`],
     ["累计迁移死亡", `${nf(cum.mig_deaths_cum)} <small>人</small>`],
-    ["累计迁移次数", `${nf(cum.mig_total)} <small>次</small>`],
+    ["累计迁移（账本）", `${nf(cum.mig_total)} <small>次</small>`],
     ["累计缺粮 / 需求", pct(cum.deficit_cum, cum.need_cum)],
     ["累计人年", `${nf(cum.personyear_cum)} <small>人年</small>`],
     ["累计吃掉", kcalCell(cum.out_eat)],
@@ -258,23 +490,26 @@ function renderSide() {
   $("side-int").innerHTML =
     `<div class="k">能量守恒误差</div><div class="v">${ok(rec.integrity.conservation_error)}</div>
      <div class="k">人口恒等误差</div><div class="v">${ok(rec.integrity.population_identity_error)}</div>
-     <div class="k">状态哈希</div><div class="v"><small>${rec.integrity.state_hash.slice(0, 16)}…</small></div>`;
+     <div class="k">状态哈希</div><div class="v"><small>${esc(rec.integrity.state_hash.slice(0, 16))}…</small></div>`;
 
   const selWrap = $("side-sel"), h = $("side-sel-h");
   if (S.selCell !== null && S.selBand === null) {
     const c = S.map.cells[S.selCell];
     const here = rec.bands.filter((b) => b.cell === S.selCell);
-    h.hidden = false; h.textContent = `第 ${S.selCell} 号格`;
+    h.hidden = false; h.textContent = "选中格子";
+    const capv = S.meta ? S.meta.cap[S.selCell] : null;
+    const pctCap = capv ? Math.round(rec.stock[S.selCell] / capv * 100) + "%" : "容量未记录";
     selWrap.innerHTML = `<div class="kv">
-      <div class="k">位置</div><div class="v">第 ${c.row} 行 第 ${c.col} 列 · 区块 ${c.region}</div>
+      <div class="k">位置</div><div class="v">第 ${c.row} 行 第 ${c.col} 列 · 区块 ${esc(c.region)}</div>
+      <div class="k">格子编号</div><div class="v">${c.i} <small>（次要）</small></div>
       <div class="k">可通行</div><div class="v">${c.passable ? "是" : "否（屏障列）"}</div>
-      <div class="k">当年存量</div><div class="v">${kcalCell(rec.stock[S.selCell])}</div>
-      <div class="k">容量上限</div><div class="v">${S.meta ? kcalCell(S.meta.cap[S.selCell]) : "—"}</div>
-      <div class="k">年再生基准</div><div class="v">${S.meta ? kcalCell(S.meta.regen[S.selCell]) : "—"}</div>
-      <div class="k">邻格</div><div class="v">${c.neighbors.join("、") || "无"}</div>
+      <div class="k">食物</div><div class="v">${kcalCell(rec.stock[S.selCell])}</div>
+      <div class="k">容量（次要）</div><div class="v">${S.meta ? kcalCell(capv) + " · " + pctCap : "未记录"}</div>
+      <div class="k">年再生基准</div><div class="v">${S.meta ? kcalCell(S.meta.regen[S.selCell]) : "未记录"}</div>
       </div>
-      <div class="muted" style="margin-top:6px">格上群体：${here.length
-        ? here.map((b) => `<span class="link" data-b="${b.id}">${b.name}(${b.size}人)</span>`).join("、")
+      <p class="muted">格子上的食物是野外存量，不能据此说某个群体一定能活多少年。</p>
+      <div>格上群体：${here.length
+        ? here.map((b) => `<span class="link" data-b="${esc(b.id)}">${esc(b.name)}（${b.size}人）</span>`).join("　")
         : "无"}</div>`;
     selWrap.querySelectorAll("[data-b]").forEach((n) =>
       n.addEventListener("click", () => selectBand(n.dataset.b)));
@@ -282,41 +517,46 @@ function renderSide() {
   }
   if (!S.selBand) { h.hidden = true; selWrap.innerHTML = ""; return; }
   const b = rec.bands.find((x) => x.id === S.selBand);
-  h.hidden = false; h.textContent = "选中群体";
+  h.hidden = false;
   if (!b) {
-    selWrap.innerHTML = `<div class="note">该群体在第 ${S.t} 年不在世。
-      ${S.band && S.band.extinct_at !== null ? `它在第 ${S.band.extinct_at} 年人口归零后被移除。` : ""}</div>`;
+    h.textContent = "历史群体";
+    selWrap.innerHTML = `<div class="gone-note">该群体在第 ${S.t} 年不在世，不把它画在地图上。
+      下面是已保存的历史记录，不是当前地图上的位置。</div>
+      <div id="bandmore" class="muted" style="margin-top:8px">正在读取历史记录…</div>`;
+    loadBand(S.selBand);
     return;
   }
+  h.textContent = "选中群体";
   const known = Object.keys(b.mem).length;
   selWrap.innerHTML = `<div class="kv">
-    <div class="k">名称</div><div class="v">${b.name}</div>
-    <div class="k">实体 id</div><div class="v"><small>${b.id}</small></div>
+    <div class="k">名称</div><div class="v">${esc(b.name)}</div>
     <div class="k">人口</div><div class="v">${nf(b.size)} <small>人</small></div>
     <div class="k">储粮</div><div class="v">${kcalCell(b.store)}</div>
-    <div class="k">位置</div><div class="v">第 ${b.cell} 号格（区块 ${S.map.cells[b.cell].region}）</div>
+    <div class="k">所在位置</div><div class="v">第 ${b.cell} 号格（区块 ${esc(S.map.cells[b.cell].region)}）</div>
     <div class="k">记忆条目</div><div class="v">${known} <small>格</small></div>
-    <div class="k">迁移死亡累加器</div><div class="v">${b.macc} <small>/1000</small></div>
+    <div class="k">实体 id</div><div class="v"><small>${esc(b.id)}</small></div>
   </div>
   <div id="bandmore" class="muted" style="margin-top:8px">正在读取轨迹…</div>`;
   loadBand(b.id);
 }
 
 async function loadBand(id) {
+  if (!S.run) return;
   const myRun = S.run.run_id, myEpoch = S.epoch, myBand = id;
   try {
     const d = await api(`/api/runs/${myRun}/band/${id}`);
-    if (stale(myEpoch, myRun) || S.selBand !== myBand) return;   // 迟到的轨迹不许贴上来
+    if (stale(myEpoch, myRun) || S.selBand !== myBand) return;
     S.band = d;
     const box = $("bandmore"); if (!box) return;
-    const traj = d.trajectory.map(([t, c]) => `第${t}年→${c}号格`).join("，");
-    box.innerHTML = `<div><b>来源</b>：${d.origin}</div>
-      <div><b>存续</b>：第 ${d.first_seen} 年 至 第 ${d.last_seen} 年
-        ${d.extinct_at !== null ? `（第 ${d.extinct_at} 年被移除）` : ""}</div>
+    const traj = d.trajectory.map((p) => `第${p[0]}年→${p[1]}号格`).join("，");
+    const gone = d.extinct_at !== null
+      ? `（第 ${d.extinct_at} 年被移除，当年不在地图上）` : "";
+    box.innerHTML = `<div><b>来源</b>：${esc(d.origin)}</div>
+      <div><b>存续</b>：第 ${d.first_seen} 年 至 第 ${d.last_seen} 年 ${gone}</div>
       <div><b>分裂出</b>：${d.children.length
-        ? d.children.map(([t, c]) => `第${t}年 ${c.slice(0, 8)}…`).join("，") : "无记录"}</div>
-      <div><b>迁移轨迹</b>：${traj}</div>
-      <div style="margin-top:4px">${d.source}</div>`;
+        ? d.children.map((p) => `第${p[0]}年 ${esc(String(p[1]).slice(0, 8))}…`).join("，") : "无记录"}</div>
+      <div><b>迁移轨迹</b>：${esc(traj)}</div>
+      <div style="margin-top:4px">${esc(d.source)}</div>`;
   } catch (e) {
     if (stale(myEpoch, myRun) || S.selBand !== myBand) return;
     const box = $("bandmore");
@@ -324,10 +564,12 @@ async function loadBand(id) {
   }
 }
 
-function selectBand(id) {
-  bump();                      // 切群体也推进令牌：上一个群体的轨迹响应作废
+function selectBand(id, opts) {
+  opts = opts || {};
+  bump();
   S.band = null;
-  S.selBand = (S.selBand === id ? null : id);
+  if (!opts.force && S.selBand === id) S.selBand = null;
+  else S.selBand = id || null;
   setHash({ b: S.selBand || "" });
   S.selCell = null;
   if (!S.selBand && S.view === "mem") setView("truth");
@@ -344,14 +586,23 @@ function setView(v) {
 
 /* ---------------- 时间轴 ---------------- */
 function maxT() { return Math.max(0, (S.run ? (S.run.years_recorded ?? 0) : 0)); }
-async function gotoYear(t, opts = {}) {
+function syncYearWidgets(t) {
+  $("scrub").value = t;
+  $("scrub-year").textContent = t;
+  if ($("ev-year")) $("ev-year").textContent = t;
+  $("tl-play").textContent = "正在回放：" + OverviewLogic.yearViewLabel(t);
+  if (S.run) {
+    $("tl-calc").textContent = "已计算到：第 " + maxT() + " 年 / 目标 " + S.run.years + " 年";
+  }
+}
+async function gotoYear(t, opts) {
+  opts = opts || {};
   if (!S.run) return;
   const myRun = S.run.run_id;
   const myEpoch = bump();
   t = Math.max(0, Math.min(t, maxT()));
   S.t = t;
-  $("scrub").value = t; $("scrub-year").textContent = t; $("ev-year").textContent = t;
-  $("tl-play").textContent = `正在回放：第 ${t} 年`;
+  syncYearWidgets(t);
   if (!S.years.has(ykey(myRun, t))) {
     let rec;
     try { rec = await api(`/api/runs/${myRun}/year/${t}`); }
@@ -359,13 +610,14 @@ async function gotoYear(t, opts = {}) {
       if (!stale(myEpoch, myRun)) flash("读取第 " + t + " 年失败：" + e.message, true);
       return;
     }
-    S.years.set(ykey(myRun, t), rec);     // 缓存照写（数据本身没错），但界面要看令牌
-    if (stale(myEpoch, myRun)) return;    // 已经切到别的运行/年份：迟到的响应不得覆盖
+    S.years.set(ykey(myRun, t), rec);
+    if (stale(myEpoch, myRun)) return;
   }
   if (stale(myEpoch, myRun)) return;
-  renderMap(); renderSide(); renderStatus(); renderEvents();
+  renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents(); renderTech();
   setHash({ t: String(t) });
   if (!opts.quiet) renderCharts();
+  if (S.evScope === "until") prefetchYears(myRun, t);
 }
 function tick() {
   if (!S.playing) return;
@@ -390,22 +642,58 @@ function setPlaying(v) {
   if (v) tick();
 }
 
-/* ---------------- 曲线与逐年表 ---------------- */
+async function prefetchYears(runId, tEnd) {
+  const missing = [];
+  for (let t = 0; t <= tEnd; t++) {
+    if (!S.years.has(ykey(runId, t))) missing.push(t);
+  }
+  const BATCH = 10;
+  for (let i = 0; i < missing.length; i += BATCH) {
+    if (!S.run || S.run.run_id !== runId) return;
+    const slice = missing.slice(i, i + BATCH);
+    await Promise.all(slice.map(async (t) => {
+      if (S.years.has(ykey(runId, t))) return;
+      try {
+        const rec = await api(`/api/runs/${runId}/year/${t}`);
+        S.years.set(ykey(runId, t), rec);
+      } catch (e) { /* 保留缺口，界面会标明未加载范围 */ }
+    }));
+    if (S.run && S.run.run_id === runId) { renderOverview(); renderEvents(); }
+  }
+}
+
+/* ---------------- 曲线 ---------------- */
 function lineChart(title, series, key, color, conv) {
   const w = 320, h = 120, pad = 26;
   if (!series.length) return "";
-  const vals = series.map(key);
-  const mx = Math.max(...vals, 1), mn = Math.min(...vals, 0);
+  const vals = [];
+  series.forEach((r, i) => {
+    const v = key(r);
+    if (v === null || v === undefined || Number.isNaN(v)) return;
+    vals.push(v);
+  });
+  if (!vals.length) {
+    return `<div class="chart"><h4>${esc(title)}</h4>
+      <p class="muted">没有可画的点（分母为 0 或数据缺失，不画成 0%）</p></div>`;
+  }
+  const mx = Math.max.apply(null, vals.concat([1]));
+  const mn = Math.min.apply(null, vals.concat([0]));
   const X = (i) => pad + i * (w - pad - 6) / Math.max(series.length - 1, 1);
   const Y = (v) => h - 18 - (v - mn) / Math.max(mx - mn, 1) * (h - 30);
-  const d = vals.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + "," + Y(v).toFixed(1)).join("");
+  let d = "", drawing = false;
+  series.forEach((r, i) => {
+    const v = key(r);
+    if (v === null || v === undefined || Number.isNaN(v)) { drawing = false; return; }
+    d += (drawing ? "L" : "M") + X(i).toFixed(1) + "," + Y(v).toFixed(1);
+    drawing = true;
+  });
   const cx = X(Math.min(S.t, series.length - 1));
-  return `<div class="chart"><h4>${title}</h4>
+  return `<div class="chart"><h4>${esc(title)}</h4>
     <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto">
       <path d="${d}" fill="none" stroke="${color}" stroke-width="1.8"/>
       <line x1="${cx}" y1="8" x2="${cx}" y2="${h - 18}" stroke="#b45309" stroke-dasharray="3 3"/>
-      <text x="2" y="14" font-size="9" fill="#6b7280">${conv(mx)}</text>
-      <text x="2" y="${h - 20}" font-size="9" fill="#6b7280">${conv(mn)}</text>
+      <text x="2" y="14" font-size="9" fill="#6b7280">${esc(String(conv(mx)))}</text>
+      <text x="2" y="${h - 20}" font-size="9" fill="#6b7280">${esc(String(conv(mn)))}</text>
       <text x="${pad}" y="${h - 4}" font-size="9" fill="#6b7280">0</text>
       <text x="${w - 20}" y="${h - 4}" font-size="9" fill="#6b7280">${series.length - 1}</text>
     </svg></div>`;
@@ -416,17 +704,17 @@ function renderCharts() {
   $("charts").innerHTML =
     lineChart("总人口（人）", s, (r) => r.agg.pop, "#2f6f4f", (v) => nf(Math.round(v))) +
     lineChart("群体数（个）", s, (r) => r.agg.bands, "#2c4a8a", (v) => nf(Math.round(v))) +
-    lineChart("野外资源存量（人年口粮）", s, (r) => r.agg.stock_total, "#7a6f2b", (v) => py(v, 0)) +
+    lineChart("野外食物（人年口粮）", s, (r) => r.agg.stock_total, "#7a6f2b", (v) => py(v, 0)) +
     lineChart("群体储粮（人年口粮）", s, (r) => r.agg.store_total, "#8a5a2b", (v) => py(v, 0)) +
-    lineChart("当年迁移次数（次）", s, (r) => r.year.mig_total, "#59748a", (v) => nf(v)) +
+    lineChart("当年迁移次数（账本，次）", s, (r) => r.year.mig_total, "#59748a", (v) => nf(v)) +
     lineChart("当年迁移死亡（人）", s, (r) => r.year.mig_deaths_cum, "#a12b2b", (v) => nf(v)) +
-    lineChart("当年缺粮/需求（‰）", s, (r) => r.year.need_cum ?
-      Math.round(r.year.deficit_cum / r.year.need_cum * 1000) : 0, "#b4531f", (v) => v + "‰");
-  const head = `<tr><th>年</th><th>总人口</th><th>群体数</th><th>野外存量(人年)</th><th>储粮(人年)</th>
-    <th>当年出生</th><th>当年原死亡</th><th>当年迁移死亡</th><th>当年迁移</th><th>当年缺粮/需求</th>
+    lineChart("当年缺粮/需求（‰）", s, (r) => r.year.need_cum
+      ? Math.round(r.year.deficit_cum / r.year.need_cum * 1000) : null, "#b4531f", (v) => v + "‰");
+  const head = `<tr><th>年</th><th>总人口</th><th>群体数</th><th>野外食物(人年)</th><th>储粮(人年)</th>
+    <th>当年出生</th><th>当年原死亡</th><th>当年迁移死亡</th><th>当年迁移(账本)</th><th>当年缺粮/需求</th>
     <th>累计出生</th><th>累计原死亡</th><th>累计迁移死亡</th><th>守恒误差</th></tr>`;
   const rows = s.map((r) => `<tr class="${r.t === S.t ? "on" : ""}" data-t="${r.t}">
-    <td class="clickable">${r.t}</td><td>${nf(r.agg.pop)}</td><td>${nf(r.agg.bands)}</td>
+    <td class="clickable">${r.t === 0 ? "开局" : r.t}</td><td>${nf(r.agg.pop)}</td><td>${nf(r.agg.bands)}</td>
     <td>${py(r.agg.stock_total, 0)}</td><td>${py(r.agg.store_total, 0)}</td>
     <td>${nf(r.year.births_cum)}</td><td>${nf(r.year.deaths_demo_cum)}</td>
     <td>${nf(r.year.mig_deaths_cum)}</td><td>${nf(r.year.mig_total)}</td>
@@ -439,24 +727,108 @@ function renderCharts() {
 }
 
 /* ---------------- 事件 ---------------- */
+function TYPE_LABEL(t) {
+  return ({ migrate: "迁移", split: "分裂", extinct: "群体消失" })[t] || t;
+}
 function renderEvents() {
-  const rec = S.run ? S.years.get(ykey(S.run.run_id, S.t)) : null;
-  if (!rec) { $("events").innerHTML = `<div class="emptystate">没有数据</div>`; return; }
-  $("events").innerHTML = rec.events.length
-    ? rec.events.map((e) => `<div class="ev ${e.type}">
-        <div>${e.text}</div>
-        <div class="src">来源：${e.source}${e.unrecorded ? "　·　未记录：" + e.unrecorded : ""}</div>
-      </div>`).join("")
-    : `<div class="emptystate">第 ${S.t} 年没有可核实的事件（无分裂、无迁移、无群体消失）。</div>`;
-  const head = `<tr><th>群体</th><th>人口</th><th>储粮(人年)</th><th>所在格</th><th>区块</th>
-                <th>记忆格数</th><th>迁移累加器</th></tr>`;
-  $("bandtable").innerHTML = head + rec.bands.map((b) => `<tr data-b="${b.id}"
-      class="${S.selBand === b.id ? "on" : ""}"><td class="clickable">${b.name}</td>
-      <td>${nf(b.size)}</td><td>${py(b.store)}</td><td>${b.cell}</td>
-      <td>${S.map.cells[b.cell].region}</td><td>${Object.keys(b.mem).length}</td>
-      <td>${b.macc}</td></tr>`).join("");
-  $("bandtable").querySelectorAll("tr[data-b]").forEach((n) =>
-    n.addEventListener("click", () => { selectBand(n.dataset.b); showTab("world"); }));
+  const box = $("events");
+  if (!box) return;
+  const rec = recNow();
+  document.querySelectorAll("#ev-scope button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.scope === S.evScope));
+  document.querySelectorAll("#ev-filter button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.type === S.evFilter));
+
+  let items = [];
+  let loadNote = "";
+  if (!S.run) {
+    box.innerHTML = `<div class="emptystate">没有数据</div>`;
+    if ($("ev-load-note")) $("ev-load-note").textContent = "";
+    if ($("ev-ledger-note")) $("ev-ledger-note").textContent = "";
+    return;
+  }
+  if (S.evScope === "year") {
+    if (!rec) {
+      box.innerHTML = `<div class="emptystate">正在读取第 ${S.t} 年…</div>`;
+      if ($("ev-load-note")) $("ev-load-note").textContent = "本年事件清单尚未加载。";
+      return;
+    }
+    items = (rec.events || []).map((e, i) => Object.assign({}, e, { t: S.t, _i: i }));
+  } else {
+    const flat = OverviewLogic.flattenEvents(
+      (runId, t) => S.years.get(ykey(runId, t)), S.run.run_id, S.t);
+    items = flat.items;
+    if (flat.missing.length) {
+      const a = flat.missing[0], b = flat.missing[flat.missing.length - 1];
+      loadNote = "截至当前年份的清单尚未加载完整（缺 " + flat.missing.length +
+        " 年，约第 " + a + "–" + b + " 年）。下面只列出已加载年份，不是最终总数。";
+      prefetchYears(S.run.run_id, S.t);
+    } else {
+      loadNote = "已加载开局至" + OverviewLogic.yearViewLabel(S.t) + "的全部事件清单。";
+    }
+  }
+  if ($("ev-load-note")) $("ev-load-note").textContent = loadNote;
+
+  const filtered = S.evFilter === "all" ? items : items.filter((e) => e.type === S.evFilter);
+  if (!filtered.length) {
+    box.innerHTML = `<div class="emptystate">${S.evScope === "year"
+      ? (S.t === 0 ? "开局" : "第 " + S.t + " 年") + "没有可核实的" +
+        (S.evFilter === "all" ? "迁移、分裂或群体消失" : TYPE_LABEL(S.evFilter)) + "事件。"
+      : "已加载范围内没有符合筛选的事件。"}</div>`;
+  } else {
+    box.innerHTML = filtered.map((e) => `<div class="ev ${esc(e.type)}" data-t="${e.t}"
+        data-band="${esc(e.band || "")}" data-to="${e.to != null ? e.to : ""}"
+        data-from="${e.from != null ? e.from : ""}">
+        <div><span class="when">${e.t === 0 ? "开局" : "第 " + e.t + " 年"}</span>
+          ${esc(TYPE_LABEL(e.type))} · ${esc(e.text)}
+          ${e.band ? " · " + esc(e.band.slice(0, 8)) + "…" : ""}</div>
+        <div class="src">来源：${esc(e.source || "未标注")}${e.unrecorded
+          ? "　·　未记录：" + esc(e.unrecorded) : ""}</div>
+      </div>`).join("");
+    box.querySelectorAll(".ev").forEach((n) => n.addEventListener("click", () => {
+      jumpToEvent({
+        t: +n.dataset.t,
+        band: n.dataset.band || null,
+        to: n.dataset.to === "" ? null : +n.dataset.to,
+        from: n.dataset.from === "" ? null : +n.dataset.from,
+      });
+    }));
+  }
+
+  if (rec && $("ev-ledger-note")) {
+    const listed = OverviewLogic.eventTypeCounts(rec.events).migrate;
+    const ledger = rec.year.mig_total;
+    if (S.evScope === "year" && ledger !== listed) {
+      $("ev-ledger-note").textContent = "模型账本本年迁移 " + ledger +
+        " 次；本页可恢复的迁移事件 " + listed + " 条。口径不同，不强行对齐。";
+    } else if (S.evScope === "year") {
+      $("ev-ledger-note").textContent = "本年账本迁移次数与已记录迁移事件条数一致（" + ledger + "）。出生人数不是事件条数。";
+    } else {
+      $("ev-ledger-note").textContent = "累计事件只统计当前回放年份及以前。出生人数不等于事件条数。";
+    }
+  }
+
+  if (rec) {
+    const head = `<tr><th>群体</th><th>人口</th><th>储粮(人年)</th><th>所在格</th><th>区块</th>
+                  <th>记忆格数</th></tr>`;
+    $("bandtable").innerHTML = head + rec.bands.map((b) => `<tr data-b="${esc(b.id)}"
+        class="${S.selBand === b.id ? "on" : ""}"><td class="clickable">${esc(b.name)}</td>
+        <td>${nf(b.size)}人</td><td>${py(b.store)}</td><td>${b.cell}</td>
+        <td>${esc(S.map.cells[b.cell].region)}</td><td>${Object.keys(b.mem).length}</td></tr>`).join("");
+    $("bandtable").querySelectorAll("tr[data-b]").forEach((n) =>
+      n.addEventListener("click", () => { selectBand(n.dataset.b, { force: true }); showTab("world"); }));
+  }
+}
+
+function jumpToEvent(ev) {
+  setPlaying(false);
+  showTab("world");
+  gotoYear(ev.t).then(() => {
+    if (ev.to != null) S.selCell = ev.to;
+    else if (ev.from != null) S.selCell = ev.from;
+    if (ev.band) selectBand(ev.band, { force: true });
+    else { renderMap(); renderSide(); }
+  });
 }
 
 /* ---------------- 运行记录 ---------------- */
@@ -472,21 +844,21 @@ function renderRuns() {
     <td>${r.years_recorded}/${r.years}</td><td>${tsfmt(r.created_at)}</td>
     <td><small>${esc((r.engine_sha256 || "").slice(0, 8))} @ ${esc(r.baseline_commit || "—")}</small></td>
     <td>${["queued", "running"].includes(r.status)
-      ? `<span class="link" data-cancel="${r.run_id}">取消</span>`
-      : (r.kind === "preset" ? "" : `<span class="link" data-del="${r.run_id}">删除</span>`)}
+      ? `<span class="link" data-cancel="${esc(r.run_id)}">取消</span>`
+      : (r.kind === "preset" ? "" : `<span class="link" data-del="${esc(r.run_id)}">删除</span>`)}
       ${r.error ? `<div class="err"><small>${esc(r.error)}</small></div>` : ""}</td></tr>`).join("");
   $("runtable").querySelectorAll("[data-open]").forEach((n) =>
     n.addEventListener("click", () => openRun(n.dataset.open)));
   $("runtable").querySelectorAll("[data-cancel]").forEach((n) =>
     n.addEventListener("click", async () => {
       try { await api(`/api/runs/${n.dataset.cancel}/cancel`, { method: "POST" }); flash("已请求取消"); }
-      catch (e) { flash("取消失败：" + e.message); } refresh();
+      catch (e) { flash("取消失败：" + e.message, true); } refresh();
     }));
   $("runtable").querySelectorAll("[data-del]").forEach((n) =>
     n.addEventListener("click", async () => {
       if (!confirm("删除这次运行的全部记录？")) return;
       try { await api(`/api/runs/${n.dataset.del}`, { method: "DELETE" }); }
-      catch (e) { flash("删除失败：" + e.message); } refresh();
+      catch (e) { flash("删除失败：" + e.message, true); } refresh();
     }));
 }
 
@@ -496,7 +868,7 @@ async function openRun(id) {
   let run, ser;
   try {
     run = await api(`/api/runs/${id}`);
-    if (S.epoch !== myEpoch) return;              // 期间又切了运行：这次结果作废
+    if (S.epoch !== myEpoch) return;
     ser = await api(`/api/runs/${id}/series`);
     if (S.epoch !== myEpoch) return;
   } catch (e) {
@@ -504,21 +876,23 @@ async function openRun(id) {
     return;
   }
   S.run = run;
-  S.meta = run.meta || null;        // 新运行可能还没落 meta.json，refresh() 会自动补取
+  S.meta = run.meta || null;
   S.years.clear(); S.selBand = null; S.selCell = null; S.band = null;
   S.series = ser.series;
-  S.view = "truth"; $("v-truth").classList.add("on"); $("v-mem").classList.remove("on");
+  S.view = "truth";
+  if ($("v-truth")) $("v-truth").classList.add("on");
+  if ($("v-mem")) $("v-mem").classList.remove("on");
   $("scrub").max = maxT();
-  $("tl-calc").textContent = `已计算到：第 ${maxT()} 年 / 目标 ${S.run.years} 年`;
   setHash({ run: id, b: "", view: "" });
   await gotoYear(0);
-  renderRuns(); renderCharts(); renderStatus();
+  renderRuns(); renderCharts(); renderStatus(); renderOverview();
+  prefetchYears(id, maxT());
 }
 
 /* ---------------- 里程碑 ---------------- */
 async function renderMilestones() {
   const d = await api("/api/milestones");
-  const bold = (x) => esc(x).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");   // 先转义，再认粗体
+  const bold = (x) => esc(x).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
   const cls = { "已验收": "s-done", "已实现待审": "s-run", "进行中": "s-run", "待批准": "s-wait", "未开始": "s-off" };
   $("ms-note").textContent = d.note;
   $("milestones").innerHTML = d.items.map((m) => `<div class="ms">
@@ -526,26 +900,38 @@ async function renderMilestones() {
     <div>${bold(m.note)}</div>
     <div class="meta">更新：${esc(m.updated)}　·　提交：${esc(m.commit)}　·　来源：${esc(m.sources.join("、"))}</div>
   </div>`).join("") + `<div class="muted">仓库 HEAD：${esc(d.repo_commit || "未知")}　·　
-    状态只有这五种：${d.statuses.join(" / ")}，不给总体百分比。</div>`;
+    状态只有这五种：${d.statuses.join(" / ")}，不给总体百分比。模拟年数不是项目开发进度。</div>`;
 }
 
 /* ---------------- 杂项 ---------------- */
 function flash(msg, bad) {
   const n = $("formnote");
-  n.textContent = String(msg);          // 纯文本：后台回显的内容里可能带用户输入
-  n.classList.toggle("err", !!bad);
-  n.scrollIntoView({ block: "nearest" });
-  setTimeout(() => { if (n.textContent === String(msg)) n.textContent = ""; }, 6000);
+  const t = $("toast");
+  if (n) {
+    n.textContent = String(msg);
+    n.classList.toggle("err", !!bad);
+  }
+  if (t) {
+    t.hidden = false;
+    t.textContent = String(msg);
+    t.classList.toggle("err", !!bad);
+    setTimeout(() => { if (t.textContent === String(msg)) t.hidden = true; }, 5000);
+  }
+  if (n) setTimeout(() => { if (n.textContent === String(msg)) n.textContent = ""; }, 6000);
 }
 function showTab(name) {
+  if (name === "events") {
+    name = "world";
+    setTimeout(() => { const p = $("event-panel"); if (p) p.scrollIntoView({ block: "start" }); }, 0);
+  }
   ["world", "metrics", "events", "runs", "progress"].forEach((t) => {
-    $("tab-" + t).hidden = t !== name;
+    const el = $("tab-" + t); if (el) el.hidden = t !== name;
   });
   document.querySelectorAll("#tabs button").forEach((b) =>
     b.classList.toggle("on", b.dataset.tab === name));
   setHash({ tab: name });
   if (name === "metrics") renderCharts();
-  if (name === "progress") renderMilestones().catch((e) => flash(e.message));
+  if (name === "progress") renderMilestones().catch((e) => flash(e.message, true));
 }
 
 async function refresh() {
@@ -562,17 +948,17 @@ async function refresh() {
         $("tl-calc").textContent = `已计算到：第 ${maxT()} 年 / 目标 ${S.run.years} 年`;
         if (grew) {
           const d2 = await api(`/api/runs/${myRun}/series`);
-          if (stale(myEpoch, myRun)) return;      // 已切走：不要把别人的曲线画上去
-          S.series = d2.series; renderCharts();
+          if (stale(myEpoch, myRun)) return;
+          S.series = d2.series; renderCharts(); renderOverview();
         }
-        if (!S.meta) {                            // 新运行首次读取 meta 为空 -> 自动补取
+        if (!S.meta) {
           const d3 = await api(`/api/runs/${myRun}`);
           if (stale(myEpoch, myRun)) return;
           if (d3.meta) { S.meta = d3.meta; renderMap(); renderSide(); }
         }
       }
     }
-    renderRuns(); renderStatus();
+    renderRuns(); renderStatus(); renderOverview();
   } catch (e) {
     $("statusline").innerHTML = `<span class="err">后台读取失败：${esc(e.message)}</span>`;
   }
@@ -596,6 +982,14 @@ async function boot() {
   $("speed").addEventListener("change", (e) => { S.speed = +e.target.value; });
   $("scrub").addEventListener("input", (e) => { setPlaying(false); gotoYear(+e.target.value); });
   $("b-start").addEventListener("click", startRun);
+  $("ev-scope").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-scope]"); if (!b) return;
+    S.evScope = b.dataset.scope; renderEvents();
+  });
+  $("ev-filter").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-type]"); if (!b) return;
+    S.evFilter = b.dataset.type; renderEvents();
+  });
 
   try {
     S.cfg = await api("/api/config");
@@ -607,14 +1001,11 @@ async function boot() {
   }
   S.map = await api("/api/map");
   $("f-arm").innerHTML = Object.entries(S.cfg.arms)
-    .map(([k, v]) => `<option value="${k}">${v.label}</option>`).join("");
+    .map(([k, v]) => `<option value="${esc(k)}">${esc(v.label)}</option>`).join("");
   $("armnote").textContent = Object.values(S.cfg.arms).map((v) => v.label + "：" + v.note).join("　");
-  $("f-years").max = S.cfg.limits.max_years;
-  $("footer").innerHTML = `模型：${S.cfg.engine.engine_path} @ ${S.cfg.engine.baseline_commit}
-    （sha256 ${S.cfg.engine.engine_sha256.slice(0, 16)}…，参数指纹 ${S.cfg.engine.params_fingerprint}）　·　
-    仓库 HEAD ${S.cfg.repo_commit}　·　数据：${S.cfg.data.runs} 次运行 / ${S.cfg.data.size_mb} MB　·　
-    单次上限 ${S.cfg.limits.max_years} 年，最多保存 ${S.cfg.limits.max_runs} 次运行　·　
-    本页只显示本服务自己的数据库。`;
+  $("footer").textContent = "模型 " + S.cfg.engine.engine_path + " @ " + S.cfg.engine.baseline_commit +
+    " · 仓库 " + (S.cfg.repo_commit || "") +
+    " · 本页只显示本服务自己的数据库。完整哈希与能量账在「技术详情」。";
 
   await refresh();
   const hp = hashParams();
@@ -623,32 +1014,37 @@ async function boot() {
     S.runs.find((r) => r.years_recorded > 0);
   if (first) {
     await openRun(first.run_id);
-    if (hp.t) await gotoYear(parseInt(hp.t, 10) || 0);
-    if (hp.b) selectBand(hp.b);
+    if (hp.t) {
+      const parsed = OverviewLogic.parseStrictInt(hp.t, { name: "年份", min: 0 });
+      if (parsed.ok) await gotoYear(parsed.value);
+    }
+    if (hp.b) selectBand(hp.b, { force: true });
     if (hp.view === "mem") setView("mem");
   } else {
     $("side-empty").textContent = "还没有任何运行记录。到“运行记录”页发起一次模拟。";
+    renderOverview();
   }
   if (hp.tab) showTab(hp.tab);
   setInterval(refresh, 1500);
 }
 
 async function startRun() {
-  const body = {
-    seed: parseInt($("f-seed").value, 10),
-    years: parseInt($("f-years").value, 10),
-    sigma_m: parseInt($("f-sigma").value, 10),
-    move_mort_m: parseInt($("f-mort").value, 10),
-    arm: $("f-arm").value,
-    label: $("f-label").value.trim(),
-  };
-  for (const [k, v] of Object.entries(body)) {
-    if (typeof v === "number" && !Number.isFinite(v)) { flash(`参数 ${k} 不是整数`); return; }
+  const lim = S.cfg.limits;
+  const seed = OverviewLogic.parseStrictInt($("f-seed").value, { name: "种子 seed", min: 0, max: lim.max_seed });
+  const years = OverviewLogic.parseStrictInt($("f-years").value, { name: "年数 years", min: lim.min_years, max: lim.max_years });
+  const sigma = OverviewLogic.parseStrictInt($("f-sigma").value, { name: "SIGMA_M", min: 0, max: 1000 });
+  const mort = OverviewLogic.parseStrictInt($("f-mort").value, { name: "MOVE_MORT_M", min: 0, max: 1000 });
+  for (const x of [seed, years, sigma, mort]) {
+    if (!x.ok) { flash(x.error, true); return; }
   }
+  const body = {
+    seed: seed.value, years: years.value, sigma_m: sigma.value,
+    move_mort_m: mort.value, arm: $("f-arm").value, label: $("f-label").value.trim(),
+  };
   $("b-start").disabled = true;
   try {
     const r = await api("/api/runs", { method: "POST", body: JSON.stringify(body) });
-    flash(`已提交，运行号 ${r.run_id}。计算在后台独立进程里进行，可以直接看进度。`);
+    flash("已提交，运行号 " + r.run_id + "。计算在后台独立进程里进行，可以直接看进度。");
     await refresh(); await openRun(r.run_id);
     showTab("world");
   } catch (e) {
@@ -658,7 +1054,6 @@ async function startRun() {
   }
 }
 
-/* 供 selftest.html 驱动的测试钩子。只读地暴露内部状态与几个入口，不改变运行时行为。 */
 window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot };
 
 if (!window.__OBS_MANUAL_BOOT__) {
@@ -667,7 +1062,6 @@ if (!window.__OBS_MANUAL_BOOT__) {
   });
 }
 
-/* 诊断用：#diag=1 时把关键元素宽度写进页面标题，便于用截图核对布局 */
 if (hashParams().diag === "1") {
   setTimeout(() => {
     const w = (sel) => { const n = document.querySelector(sel); return n ? Math.round(n.getBoundingClientRect().width) : -1; };

@@ -18,16 +18,79 @@
 </header>
 
 <nav class="tabs" id="tabs">
-  <button data-tab="world" class="on">世界地图</button>
+  <button data-tab="world" class="on">世界概览</button>
   <button data-tab="metrics">指标与曲线</button>
-  <button data-tab="events">群体与事件</button>
   <button data-tab="runs">运行记录</button>
   <button data-tab="progress">项目进度</button>
 </nav>
 
+<div id="toast" class="toast" hidden></div>
+
 <main>
-<!-- ========================= 世界地图 ========================= -->
+<!-- ========================= 世界概览 ========================= -->
 <section id="tab-world">
+
+  <div class="overview" id="overview" aria-label="世界概览">
+    <div class="ov-card" id="ov-year">
+      <div class="ov-k">正在查看</div>
+      <div class="ov-v" id="ov-year-value">—</div>
+      <div class="ov-s" id="ov-year-sub">回放年份，不是计算进度</div>
+    </div>
+    <div class="ov-card" id="ov-calc">
+      <div class="ov-k">计算进度</div>
+      <div class="ov-v" id="ov-calc-value">—</div>
+      <div class="ov-s" id="ov-calc-sub">后台已经算到哪一年</div>
+    </div>
+    <div class="ov-card" id="ov-pop">
+      <div class="ov-k">当前人口</div>
+      <div class="ov-v" id="ov-pop-value">—</div>
+      <div class="ov-s" id="ov-pop-sub">跟随回放年份</div>
+    </div>
+    <div class="ov-card" id="ov-bands">
+      <div class="ov-k">当前群体</div>
+      <div class="ov-v" id="ov-bands-value">—</div>
+      <div class="ov-s" id="ov-bands-sub">跟随回放年份</div>
+    </div>
+    <div class="ov-card" id="ov-ev-cum">
+      <div class="ov-k">累计可核实事件</div>
+      <div class="ov-v" id="ov-ev-cum-value">—</div>
+      <div class="ov-s" id="ov-ev-cum-sub">截至当前回放年份</div>
+    </div>
+    <div class="ov-card" id="ov-ev-year">
+      <div class="ov-k">本年可核实事件</div>
+      <div class="ov-v" id="ov-ev-now-value">—</div>
+      <div class="ov-s" id="ov-ev-now-sub">只计已记录的事件清单</div>
+    </div>
+  </div>
+
+  <div class="timeline panel" id="timeline">
+    <div class="tlhead">
+      <span class="pill strong" id="tl-play">正在回放：—</span>
+      <span class="pill" id="tl-calc">已计算到：—</span>
+      <span class="muted" id="tl-note">回放只读取已保存的记录，不会重新计算世界。</span>
+    </div>
+    <div class="tlctl">
+      <button id="b-home" class="btn">⏮ 开局</button>
+      <button id="b-prev" class="btn">◀ 上一年</button>
+      <button id="b-play" class="btn primary">▶ 播放</button>
+      <button id="b-next" class="btn">下一年 ▶</button>
+      <label class="spd">速度
+        <select id="speed">
+          <option value="0.5">0.5×</option><option value="1" selected>1×</option>
+          <option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
+        </select>
+      </label>
+      <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="回放年份">
+      <span class="yearbox">第 <b id="scrub-year">0</b> 年</span>
+    </div>
+  </div>
+
+  <div class="panel summary-panel" id="summary-panel">
+    <h3>这一年发生了什么</h3>
+    <p class="year-summary" id="year-summary">打开一次运行后，这里会用账本增量填写本年摘要。</p>
+    <p class="muted" id="summary-note">出生与死亡来自年度账本增量，不是人口净变化。不编写动机或因果。</p>
+  </div>
+
   <div class="worldgrid">
     <div class="mapwrap panel">
       <div class="maphead">
@@ -37,50 +100,60 @@
         </div>
         <div class="legend" id="legend"></div>
       </div>
-      <div class="mapbox"><svg id="map" viewBox="0 0 660 580" role="img" aria-label="世界地图"></svg></div>
-      <div class="maphint" id="maphint">点击格子看它的资源与占用；点击群体看详情。同格多个群体分开摆放，互不遮挡。</div>
+      <p class="map-key" id="map-key">圆点代表群体，圆点上的数字是人口；格子里标「食物」的是野外存量（人年口粮）；绿色深浅代表资源水平。</p>
+      <div class="mapbox"><svg id="map" viewBox="0 0 520 430" preserveAspectRatio="xMidYMid meet" role="img" aria-label="世界地图"></svg></div>
+      <div class="maphint" id="maphint">点击格子或群体看详情。同格多个群体分开摆放，可分别点选。</div>
+      <p class="muted unit-note">1 人年口粮，是按模型标准折算的 1 人一年的食物量。格子上的食物是该格野外存量，不能据此说某个群体一定能活多少年。</p>
     </div>
 
     <aside class="side panel" id="side">
       <div class="emptystate" id="side-empty">还没有选中任何运行。</div>
       <div id="side-body" hidden>
-        <h3>第 <span id="side-year">0</span> 年 · 当年值</h3>
+        <h3>第 <span id="side-year">0</span> 年 · 当年读数</h3>
         <div class="kv" id="side-now"></div>
-        <details id="side-cum-wrap"><summary>累计值（开局至今）</summary><div class="kv" id="side-cum"></div></details>
-        <details id="side-int-wrap"><summary>账本完整性</summary><div class="kv" id="side-int"></div></details>
-        <h3 id="side-sel-h" hidden>选中群体</h3>
+        <h3 id="side-sel-h" hidden>选中对象</h3>
         <div id="side-sel"></div>
+        <details id="side-cum-wrap"><summary>累计值与技术账（开局至今）</summary>
+          <div class="kv" id="side-cum"></div>
+          <div class="kv" id="side-int" style="margin-top:8px"></div>
+        </details>
       </div>
     </aside>
   </div>
 
-  <div class="timeline panel" id="timeline">
-    <div class="tlhead">
-      <span class="pill" id="tl-calc">已计算到：—</span>
-      <span class="pill strong" id="tl-play">正在回放：—</span>
-      <span class="muted" id="tl-note">回放只读取已保存的记录，不会重新计算世界。</span>
+  <div class="panel event-panel" id="event-panel">
+    <div class="event-head">
+      <h3>可核实事件 <small>第 <span id="ev-year">0</span> 年</small></h3>
+      <div class="seg" id="ev-scope" role="tablist" aria-label="事件范围">
+        <button type="button" data-scope="year" class="on">当前年份</button>
+        <button type="button" data-scope="until">截至当前年份</button>
+      </div>
+      <div class="seg" id="ev-filter" role="tablist" aria-label="事件类型">
+        <button type="button" data-type="all" class="on">全部</button>
+        <button type="button" data-type="migrate">迁移</button>
+        <button type="button" data-type="split">分裂</button>
+        <button type="button" data-type="extinct">群体消失</button>
+      </div>
     </div>
-    <div class="tlctl">
-      <button id="b-home" class="btn">⏮ 回到开局</button>
-      <button id="b-prev" class="btn">◀ 单步</button>
-      <button id="b-play" class="btn primary">▶ 播放</button>
-      <button id="b-next" class="btn">单步 ▶</button>
-      <label class="spd">速度
-        <select id="speed">
-          <option value="0.5">0.5×</option><option value="1" selected>1×</option>
-          <option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
-        </select>
-      </label>
-      <input id="scrub" type="range" min="0" max="0" value="0" step="1">
-      <span class="yearbox">第 <b id="scrub-year">0</b> 年</span>
-    </div>
+    <p class="muted" id="ev-load-note"></p>
+    <div id="events"></div>
+    <p class="muted" id="ev-ledger-note"></p>
+    <h3>当年在世群体</h3>
+    <p class="muted">点一行可定位到地图。已消失的群体不会出现在这张表里，可从事件进入它的历史记录。</p>
+    <div class="tablewrap"><table id="bandtable"></table></div>
   </div>
+
+  <details class="panel tech-details" id="tech-details">
+    <summary>模型版本、参数与能量账（技术详情）</summary>
+    <div id="tech-body" class="muted">打开一次运行后显示。</div>
+  </details>
 </section>
 
 <!-- ========================= 指标与曲线 ========================= -->
 <section id="tab-metrics" hidden>
   <div class="panel">
     <h3>历史曲线（整条运行；竖线是当前回放年份）</h3>
+    <p class="muted">分母为 0 的点显示为缺失，不画成 0%。竖线只表示正在回放的年份。</p>
     <div id="charts" class="charts"></div>
   </div>
   <div class="panel">
@@ -89,29 +162,20 @@
   </div>
 </section>
 
-<!-- ========================= 群体与事件 ========================= -->
-<section id="tab-events" hidden>
-  <div class="panel">
-    <h3>第 <span id="ev-year">0</span> 年的事件</h3>
-    <div id="events"></div>
-  </div>
-  <div class="panel">
-    <h3>当年在世群体</h3>
-    <div class="tablewrap"><table id="bandtable"></table></div>
-  </div>
-</section>
+<!-- 旧地址 #tab=events 仍可用：内容已并入世界概览。保留空壳以免旧脚本报错。 -->
+<section id="tab-events" hidden></section>
 
 <!-- ========================= 运行记录 ========================= -->
 <section id="tab-runs" hidden>
   <div class="panel">
     <h3>发起一次新的模拟</h3>
-    <p class="muted">参数名与含义与模型一致（`exp03/verify3.py`）。这些是<b>未标定的模型参数</b>，
-       不是对现实的预测。改参数意味着新建一次运行，已有运行不会被改写。</p>
+    <p class="muted">参数名与含义与模型一致（<code>exp03/verify3.py</code>）。这些是未标定的模型参数，
+       不是对现实的预测。改参数意味着新建一次运行，已有运行不会被改写。小数会被拒绝，不会悄悄取整。</p>
     <div class="form" id="form">
-      <label>种子 seed<input id="f-seed" type="number" value="0" min="0" step="1"></label>
-      <label>年数 years<input id="f-years" type="number" value="120" min="1" step="1"></label>
-      <label>SIGMA_M 资源再生年际波动（‰）<input id="f-sigma" type="number" value="400" min="0" max="1000" step="1"></label>
-      <label>MOVE_MORT_M 迁移死亡强度（‰）<input id="f-mort" type="number" value="50" min="0" max="1000" step="1"></label>
+      <label>种子 seed<input id="f-seed" type="text" inputmode="numeric" value="0" autocomplete="off"></label>
+      <label>年数 years<input id="f-years" type="text" inputmode="numeric" value="120" autocomplete="off"></label>
+      <label>SIGMA_M 资源再生年际波动（‰）<input id="f-sigma" type="text" inputmode="numeric" value="400" autocomplete="off"></label>
+      <label>MOVE_MORT_M 迁移死亡强度（‰）<input id="f-mort" type="text" inputmode="numeric" value="50" autocomplete="off"></label>
       <label>信息条件（对照臂）<select id="f-arm"></select></label>
       <label>备注（可空）<input id="f-label" type="text" maxlength="60" placeholder="例如：对照 MORT=50"></label>
       <button id="b-start" class="btn primary">开始模拟</button>
@@ -129,6 +193,7 @@
 <section id="tab-progress" hidden>
   <div class="panel">
     <h3>项目进度</h3>
+    <p class="muted">这是仓库开发进度，不是某次模拟已经跑了多少年。状态只有五种，不生成总体完成百分比。</p>
     <div id="ms-note" class="note"></div>
     <div id="milestones"></div>
   </div>
