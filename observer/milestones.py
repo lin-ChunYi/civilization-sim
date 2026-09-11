@@ -46,7 +46,7 @@ MILESTONES = [
     {
         "id": "obs01", "title": "OBS-01 文明观察台（本页）", "status": "已实现待审",
         "updated": "2026-09-11",
-        "commit": "见页脚的仓库 HEAD",
+        "commit": "812205c（本轮实现）",
         "note": "固定网页 + Python 后台 + 独立数据存储。只读观察层调用冻结的 EXP-03 引擎，"
                 "不新增任何世界机制。可在页面上发起运行、看真实计算进度、回放已生成的历史。",
         "sources": ["observer/", "observer/README.md"],
