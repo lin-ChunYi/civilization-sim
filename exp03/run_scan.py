@@ -88,12 +88,14 @@ for sg in SIGMAS:
 
 print()
 print("=" * 120)
-print("第 4 节 —— 待检验假说 H1：全知臂相对记忆臂的福利优势随 MOVE_MORT_M 上升")
+print("第 4 节 —— 观察假说 H1 的原始读数（本轮未完成正式的趋势推断）")
 print("=" * 120)
+print("H1：全知臂相对记忆臂的福利优势随 MOVE_MORT_M 上升。")
 print("福利用两个指标衡量，**不合成综合分**：")
 print("  指标 A：缺粮强度差 = 记忆臂(缺粮/需求) − 全知臂(缺粮/需求)   正值 = 全知臂更好")
 print("  指标 B：末期人口差 = 全知臂人口 − 记忆臂人口                 正值 = 全知臂更好")
 print()
+print("4.1 聚合读数（7 个种子合计）")
 for sg in SIGMAS:
     print(f"  SIGMA_M = {sg}")
     seqA, seqB = [], []
@@ -102,58 +104,93 @@ for sg in SIGMAS:
         dA = m['deficit']/m['need'] - o['deficit']/o['need']
         dB = o['pop'] - m['pop']
         seqA.append(dA); seqB.append(dB)
-        print(f"    MORT={mm:<4} 指标A(缺粮强度差)={dA*100:+.3f}pp   指标B(人口差)={dB:+d}")
-    monoA = all(b >= a for a, b in zip(seqA, seqA[1:]))
-    monoB = all(b >= a for a, b in zip(seqB, seqB[1:]))
-    print(f"    指标A 单调不减：{monoA}    指标B 单调不减：{monoB}")
-    if monoA != monoB:
-        print("    **两个指标方向不一致 —— 不合成综合赢家，如实并列。**")
-    # 逐种子配对差的离散度：聚合差若小于种子间离散度，单调性不可当结论
-    print("    逐种子配对差（用于判断聚合差是否大于种子间离散度）：")
+        print(f"    MORT={mm:<4} 指标A={dA*100:+.3f}pp   指标B={dB:+d}")
+    print(f"    指标A 单调不减：{all(b >= a for a, b in zip(seqA, seqA[1:]))}"
+          f"    指标B 单调不减：{all(b >= a for a, b in zip(seqB, seqB[1:]))}")
+    print()
+
+print("4.2 逐种子读数（同档位、跨臂的配对差）")
+for sg in SIGMAS:
+    print(f"  SIGMA_M = {sg}")
     for mm in MORTS:
         per = []
         for sd in SEEDS:
             m = next(x for x in rows if x['sigma']==sg and x['mort']==mm and x['seed']==sd and x['arm']=='memory')
             o = next(x for x in rows if x['sigma']==sg and x['mort']==mm and x['seed']==sd and x['arm']=='omniscient')
-            per.append((m['deficit']/m['need'] - o['deficit']/o['need'], o['pop'] - m['pop']))
-        a_vals = sorted(x[0] for x in per); b_vals = sorted(x[1] for x in per)
-        a_pos = sum(1 for x in a_vals if x > 0); b_pos = sum(1 for x in b_vals if x > 0)
-        print(f"      MORT={mm:<4} 指标A 逐种子 {a_vals[0]*100:+.3f}pp … {a_vals[-1]*100:+.3f}pp "
-              f"(正号 {a_pos}/7) | 指标B 逐种子 {b_vals[0]:+d} … {b_vals[-1]:+d} (正号 {b_pos}/7)")
+            per.append((sd, m['deficit']/m['need'] - o['deficit']/o['need'], o['pop'] - m['pop']))
+        print(f"    MORT={mm:<4} 指标A: " + " ".join(f"{sd}:{a*100:+.3f}" for sd, a, _ in per))
+        print(f"    {'':>10} 指标B: " + " ".join(f"{sd}:{b:+d}" for sd, _, b in per))
     print()
-# ---- 从数据算出的判读，不让读者自己推 ----
-print("  ---- 判读 ----")
-verdict_lines = []
+
+print("4.3 同种子跨档位的配对变化（记忆臂自身随 MOVE_MORT_M 的变化）")
+print("    这是机制的直接效应，按种子配对，不跨种子平均。")
 for sg in SIGMAS:
-    agg_abs, spread_half, signs = [], [], []
-    for mm in MORTS:
-        m, o = agg[(sg, mm, 'memory')], agg[(sg, mm, 'omniscient')]
-        agg_abs.append(abs(m['deficit']/m['need'] - o['deficit']/o['need']))
-        per = []
+    print(f"  SIGMA_M = {sg}")
+    print(f"    {'seed':>6}  " + "  ".join(f"MORT={mm:<4}" for mm in MORTS))
+    for key, label, fmt in (('defint', '缺粮强度', lambda x: f"{x*100:.3f}%"),
+                            ('pop', '末人口', lambda x: f"{int(x)}"),
+                            ('mig', '迁移', lambda x: f"{int(x)}")):
+        print(f"    {label}：")
         for sd in SEEDS:
-            mm_ = next(x for x in rows if x['sigma']==sg and x['mort']==mm and x['seed']==sd and x['arm']=='memory')
-            oo_ = next(x for x in rows if x['sigma']==sg and x['mort']==mm and x['seed']==sd and x['arm']=='omniscient')
-            per.append(mm_['deficit']/mm_['need'] - oo_['deficit']/oo_['need'])
-        spread_half.append((max(per) - min(per)) / 2)
-        signs.append(sum(1 for x in per if x > 0))
-    ratio = max(a / s if s else float('inf') for a, s in zip(agg_abs, spread_half))
-    print(f"  SIGMA_M={sg}：聚合差的最大绝对值 / 对应档位逐种子半幅 = {ratio:.2f}"
-          f"（<1 表示聚合差小于种子间离散）；各档正号数 {signs}/7")
-    verdict_lines.append(ratio < 1)
-if all(verdict_lines):
-    print("  => **本配置与本样本未支持 H1。** 两个 SIGMA 档位下，聚合差都小于种子间离散半幅，")
-    print("     且逐种子符号接近对半，即使 SIGMA_M=0 档的聚合值呈单调，也不能读成支持。")
-    print("     注意：这是『未支持』，不是『已证伪』——本样本没有分辨力，不是给出了反向结论。")
-else:
-    print("  => 至少一个档位的聚合差大于种子间离散半幅，需要单独核对。")
+            vals = []
+            for mm in MORTS:
+                x = next(r for r in rows if r['sigma']==sg and r['mort']==mm and r['seed']==sd and r['arm']=='memory')
+                vals.append(x['deficit']/x['need'] if key=='defint' else x[key])
+            print(f"    {sd:>6}  " + "  ".join(f"{fmt(v):>10}" for v in vals))
+    print()
+
+# 4.3b 端点比较与逐档单调性：由数据直接计算，不做任何推断，也不设自动判据
+def _series(sg, sd, key):
+    out = []
+    for mm in MORTS:
+        x = next(r for r in rows if r['sigma']==sg and r['mort']==mm and r['seed']==sd and r['arm']=='memory')
+        out.append(x['deficit']/x['need'] if key == 'defint' else x[key])
+    return out
+
+_tot, _ep = 0, 0
+_mono = {'pop': 0, 'mig': 0, 'defint': 0}
+_nonmono = []
+for sg in SIGMAS:
+    for sd in SEEDS:
+        _tot += 1
+        ser = {k: _series(sg, sd, k) for k in ('pop', 'mig', 'defint')}
+        if all(v[0] > v[-1] for v in ser.values()):
+            _ep += 1
+        for k, v in ser.items():
+            if all(a >= b for a, b in zip(v, v[1:])):
+                _mono[k] += 1
+            else:
+                _nonmono.append((sg, sd, k, v))
+
+print("4.3b 端点比较与逐档单调性（直接计数，不是统计检验）")
+print(f"    MORT=0 -> MORT=100 端点上迁移/末人口/缺粮强度三项同时下降：{_ep}/{_tot} 个（种子×SIGMA）组合")
+print(f"    逐档单调不增：末人口 {_mono['pop']}/{_tot}   迁移 {_mono['mig']}/{_tot}   缺粮强度 {_mono['defint']}/{_tot}")
+print("    逐档非单调的组合（端点仍下降，中间档位有反弹）：")
+_lab = {'pop': '末人口', 'mig': '迁移', 'defint': '缺粮强度'}
+for sg, sd, k, v in _nonmono:
+    vs = "  ".join((f"{x*100:.3f}%" if k == 'defint' else f"{int(x)}") for x in v)
+    print(f"      SIGMA={sg:<4} seed={sd:<6} {_lab[k]}: {vs}")
 print()
-print("  H1 只是待检验假说，不是正确性断言。不成立时报告『本配置与本样本未支持』，")
-print("  不调参追曲线。**H1 不成立不能推出决策无效，也不构成禁止以后研究社会机制的依据。**")
-print()
-print("  **本轮没有计算噪声地板**（例如同配置下只换种子集合会有多大波动）。因此即使某一档")
-print("  出现了单调性，只要聚合差没有明显大于上面那些逐种子离散区间，就不能当成结论——")
-print("  只能记为『在本样本上呈现该方向』。要把它变成结论需要更多种子与一个空对照，")
-print("  那不属于本切片。")
+
+print("4.4 本轮能说与不能说的")
+print("""    能说（原始描述）：
+      - SIGMA_M=0 档，两个聚合指标随 MOVE_MORT_M 都呈单调不减。
+      - SIGMA_M=400 档，两个聚合指标都没有同样的趋势。
+      - 逐种子读数在两档都有差异，同一档位内不同种子的符号并不一致。
+      - 记忆臂自身随 MOVE_MORT_M 的端点变化（MORT=0 -> 100）：见 4.3b 的计数。
+        端点上三项同时下降的组合数与逐档单调不增的组合数不一样 —— 端点下降不等于
+        逐档单调，中间档位确有反弹，明细已逐条列出，不做平滑也不做推断。
+        缺粮强度的下降是人口下降的伴生结果，不是福利改善。
+
+    不能说：
+      - **本轮未完成正式的趋势推断。** 没有预注册的检验统计量、没有空对照、
+        没有噪声地板，因此不宣布 H1 成立或不成立。
+      - 不事后挑选统计方法来追求结论。上一版用"聚合差 / 逐种子半极差 < 1"
+        自动判定 H1 未支持、并宣称样本没有分辨力 —— 那个判据是事后挑的，
+        已删除。
+      - H1 的成立与否都不能推出"决策有没有后果"，也不构成禁止以后研究
+        社会机制的依据。
+      - 不为追求趋势调参，不新增大规模扫描。""")
 
 print()
 print("=" * 120)

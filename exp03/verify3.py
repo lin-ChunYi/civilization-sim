@@ -151,7 +151,8 @@ TRAVERSAL_POISONS = frozenset({'order', 'revorder',   # 群体遍历顺序
 SEMANTIC_POISONS  = frozenset({'float', 'seq', 'seqsplit',
                                'clamp', 'counter', 'omniscient',
                                'climseq',             # 波动按调用序而非坐标寻址（EXP-02 新增）
-                               'mortseq'})            # 迁移死亡用全局累加器而非每群体独立（EXP-03 新增）
+                               'mortseq',             # 迁移死亡用全局累加器而非每群体独立（EXP-03 新增）
+                               'mortstrength'})       # step 内实际强度改成 min(mm+1,1000)（EXP-03 新增）
 
 def split_poisons(poison: str):
     """返回 (语义注入集合, 遍历注入集合)。未知名字直接报错，不许静默当成非语义。"""
@@ -189,6 +190,7 @@ def run_id(st) -> str:
     h = hashlib.blake2b(digest_size=16)
     h.update(f"seed={st['seed']};".encode())
     h.update(f"start_stock={st['start_stock']};start_store={st['start_store']};".encode())
+    h.update(f"pop_start={st['pop_start']};".encode())   # 初始人口也是运行身份的一部分
     h.update(("semantic=" + ",".join(sorted(sem)) + ";").encode())
     h.update(f"params={params_fingerprint(st['sigma_m'], st['move_mort_m'])};".encode())
     return h.hexdigest()
@@ -385,8 +387,11 @@ def step(st, suppress_split_in=None):
         # --- EXP-03 唯一新增：迁移死亡代价 ---
         # 相位：本 tick 消费（相位 3）之后。**不回溯修改已结算的当年消费。**
         # 出发人数 = 迁移前的 size；死亡按累加器确定性取整；幸存者带着储存一起走。
-        # 储存不因死亡而减少（人不是能量，守恒式不变）。
+        # 储存不因死亡而减少：当前账本只记录可食用资源，不包含人体能量；
+        # 人口死亡不自动扣减粮食库存，因此能量守恒式不变。
         mm = st['move_mort_m']
+        if 'mortstrength' in P:                # 注入：只改 step 内实际用的强度，
+            mm = min(mm + 1, MOVE_MORT_M_MAX)  # move_mortality() 的单元测试照样通过
         if mm > 0:
             depart = b['size']
             if 'mortseq' in P:                 # 注入：全局累加器，按遍历序推进
@@ -658,4 +663,54 @@ def make_split_scenario(seed: int = 0, macc0: int = 777):
         st['start_stock'] = sum(st['stock'].values())
         st['pop_start'] = 60
         return st, bid
+    return None
+
+
+# ---------- 端到端定向场景：出发人数 / 原余数 / 配置强度全部确定 ----------
+def make_exact_move_scenario(seed: int, mm: int, macc0: int, size: int = 20):
+    """构造一个本 tick 必定迁移、且迁移前人数精确等于 size 的局面。
+
+    做法：把食物比钉在 E_m = 999 —— 刚好低于迁移门槛 1000，同时落在
+    b(E)、d(E) 都取不出整人的区间，于是人口相位对 size 零净变动，
+    迁移时的出发人数精确等于 size。
+
+    这样死亡数、幸存数、余数、人口账增量全部可以事先算出并精确核对，
+    而不是只断言"余数 < 1000"那种恒真式。
+
+    返回 (st, bid, 期望值 dict)；构造不成立时返回 None（记未覆盖，不得默认通过）。
+    """
+    st = make_world(seed, sigma_m=0, move_mort_m=mm)
+    st['bands'].clear()
+    need = size * NEED_PC
+    for P in sorted(i for i in cells() if passable(i) and len(neighbors(i)) >= 2):
+        regen = st['regen'][P]
+        if regen == 0 or regen >= st['cap'][P]:
+            continue
+        harvest = regen * size // (size + K_HALF)
+        store0 = need - 1 - harvest            # => avail = need-1 => E_m = 999
+        if store0 < 0:
+            continue
+        # 迁移基准：自己格采完后的存量 × 1.250；已知邻格必须压过它
+        base_thr = (regen - harvest) * MIG_GAIN_M // MILLE
+        known = next((j for j in neighbors(P) if st['cap'][j] > base_thr), None)
+        if known is None:
+            continue
+        # 死亡冲击不能触发，否则人口相位会多杀人
+        bid = eid_of(0xE2E, 0, 1)
+        if rng(seed, S_SHOCK, 0, bid, 0) % MILLE < SHOCK_P_M:
+            continue
+        st['stock'][P] = 0
+        st['stock'][known] = st['cap'][known]
+        st['bands'][bid] = {'cell': P, 'size': size, 'store': store0,
+                            'bacc': 0, 'dacc': 0, 'macc': macc0,
+                            'mem': {P: 0, known: st['cap'][known]},
+                            'memt': {P: 0, known: 0}}
+        st['start_stock'] = sum(st['stock'].values())
+        st['start_store'] = store0
+        st['pop_start'] = size
+        total = macc0 + size * mm
+        exp = {'depart': size, 'dead': total // MILLE,
+               'survive': size - total // MILLE, 'macc': total % MILLE,
+               'cell': known, 'E_m': MILLE - 1}
+        return st, bid, exp
     return None

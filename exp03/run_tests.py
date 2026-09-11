@@ -207,93 +207,130 @@ else:
          healthy_same and v.state_hash(a) != v.state_hash(b))
 
 # ---------------------------------------------------------------- D11
-hdr("D11 累加器口径：按每次迁移前的实际人数累计")
-size, macc, tot, trace = 20, 0, 0, []
+hdr("D11 累加器口径：单元 + 端到端精确核对 + 注入必须被抓到")
+print("  说明：初版的集成断言写成 `macc == 期望 or macc < 1000`，而后半句恒为真，")
+print("        整条断言是空的。独立复核用『只改 step 内实际强度为 min(mm+1,1000)、")
+print("        保留 move_mortality 单元测试不变』的注入证明了这一点。下面是补正。")
+
+# (i) 单元：指定独立案例
+size, macc, tot = 20, 0, 0
 for _ in range(10):
     d, size, macc = v.move_mortality(size, macc, 20)
-    tot += d; trace.append((d, size, macc))
-exp_ok = (tot, size, macc) == (3, 17, 740)
-print(f"  独立案例：初始 20 人、余数 0、强度 20、连续迁移 10 次、无出生及其他死亡")
-print(f"    累计死亡 {tot}（期望 3）  剩余 {size}（期望 17）  余数 {macc}（期望 740）")
-naive = 10 * 20 * 20 // 1000
-print(f"    对照：若按 N×初始size×强度 计算会得到 {naive} 人，与正确值 {tot} 不同 —— 口径确实是按实际人数")
-# 引擎集成：迁移时用的是迁移前实际人数
-r = v.make_two_movers(0, 20, sizes=(20, 30))
-integ = True
-if r is None:
-    integ_note = '未找到构造位置'
-else:
-    st, i1, i2, _, _ = r
-    pre = {k: st['bands'][k]['size'] for k in (i1, i2)}
+    tot += d
+unit_ok = (tot, size, macc) == (3, 17, 740)
+print(f"  (i) 单元案例（初始 20 人 / 余数 0 / 强度 20 / 连续 10 次）："
+      f"累计死 {tot}、剩 {size}、余数 {macc} —— 期望 (3, 17, 740) {'✓' if unit_ok else '✗'}")
+print(f"      对照：按 N×初始size×强度 会得到 {10*20*20//1000} 人，口径确实是按实际人数")
+
+# (ii) 端到端：出发人数 / 原余数 / 配置强度全部确定，逐字段精确核对
+CASES = [(49, 0, 20), (50, 990, 20), (100, 0, 20)]
+e2e_rows, e2e_ok, uncovered_cases = [], True, []
+for mm, macc0, sz in CASES:
+    r = v.make_exact_move_scenario(0, mm, macc0, sz)
+    if r is None:
+        uncovered_cases.append((mm, macc0, sz)); continue
+    st, bid, exp = r
+    pop0 = st['pop_start']
     s2 = copy.deepcopy(st); v.step(s2)
-    for k in (i1, i2):
-        bb = s2['bands'][k]
-        # 迁移发生在人口相位之后，所以出发人数是人口相位后的人数
-        integ &= (bb['macc'] == ((bb['size'] + 0) * 20) % 1000 or bb['macc'] < 1000)
-    integ_note = f"引擎侧：两群体迁移后 macc = {[s2['bands'][k]['macc'] for k in (i1,i2)]}（均 <1000，余数留存）"
-print(f"    {integ_note}")
-print("  口径声明：这是**确定性取整近似**，不产生方差、不产生尾部事件，")
-print("            不冒充个体随机死亡模型；它只保证长期比例正确。")
-mark('D11 累加器口径', exp_ok and integ)
+    b = s2['bands'].get(bid)
+    got = {
+        'moved': s2['mig_total'] == 1 and b is not None and b['cell'] == exp['cell'],
+        'dead': s2['mig_deaths_cum'], 'survive': b['size'] if b else 0,
+        'macc': b['macc'] if b else None,
+        'popid': v.population_identity_error(s2),
+        'popdelta': (sum(x['size'] for x in s2['bands'].values()) - pop0),
+    }
+    depart_implied = got['survive'] + got['dead']
+    ok = (got['moved'] and got['dead'] == exp['dead'] and got['survive'] == exp['survive']
+          and got['macc'] == exp['macc'] and got['popid'] == 0
+          and depart_implied == exp['depart']
+          and got['popdelta'] == -exp['dead'])
+    e2e_ok &= ok
+    e2e_rows.append((mm, macc0, sz, exp, got, depart_implied, ok))
+    print(f"  (ii) mm={mm:<4} 原余数={macc0:<4} size={sz}：")
+    print(f"       出发 {depart_implied}（期望 {exp['depart']}）| 死 {got['dead']}（期望 {exp['dead']}）| "
+          f"幸存 {got['survive']}（期望 {exp['survive']}）| 余数 {got['macc']}（期望 {exp['macc']}）")
+    print(f"       人口账误差 {got['popid']}（期望 0）| 人口增量 {got['popdelta']}（期望 {-exp['dead']}）"
+          f" {'✓' if ok else '✗'}")
+for c in uncovered_cases:
+    print(f"  (ii) mm={c[0]} 原余数={c[1]} size={c[2]}：**未找到满足前提的构造，记未覆盖**")
+
+# (iii) 注入 mortstrength 必须被 (ii) 抓到
+caught = []
+for mm, macc0, sz, exp, *_ in e2e_rows:
+    st, bid, exp2 = v.make_exact_move_scenario(0, mm, macc0, sz)
+    s3 = copy.deepcopy(st); s3['poison'] = 'mortstrength'; v.step(s3)
+    b3 = s3['bands'].get(bid)
+    differs = (b3 is None or b3['macc'] != exp2['macc'] or b3['size'] != exp2['survive']
+               or s3['mig_deaths_cum'] != exp2['dead'])
+    caught.append(differs)
+    print(f"  (iii) mm={mm} 注入 min(mm+1,1000)："
+          f"余数 {b3['macc'] if b3 else '-'}（健康期望 {exp2['macc']}）、"
+          f"幸存 {b3['size'] if b3 else '-'}（健康期望 {exp2['survive']}）"
+          f" -> {'被抓到 ✓' if differs else '未被抓到 ✗'}")
+print("  (iii) 注：mm=1000 时 min(mm+1,1000) 与 mm 相同，该档位注入在原理上不可检出，未纳入本组。")
+
+if uncovered_cases and not e2e_rows:
+    uncov('D11 累加器口径', '端到端场景全部未能构造')
+else:
+    mark('D11 累加器口径（单元 + 端到端 + 注入检出）',
+         unit_ok and e2e_ok and all(caught) and not uncovered_cases)
 
 # ---------------------------------------------------------------- D12
-hdr("D12 定向场景组")
-sub = {}
+hdr("D12 定向场景组（每条独立记账；构造缺失记未覆盖，不得默认通过）")
 
 # (a) 不变量：没有迁移的 tick 不得累计迁移死亡
 st = v.make_world(12345, move_mort_m=100)
-bad_tick = None
-prev_m, prev_d = st['mig_total'], st['mig_deaths_cum']
-zero_mig_ticks = 0
+bad_tick, zero_mig = None, 0
+pm, pd = st['mig_total'], st['mig_deaths_cum']
 for t in range(Y):
     v.step(st)
-    dm = st['mig_total'] - prev_m; dd = st['mig_deaths_cum'] - prev_d
-    if dm == 0:
-        zero_mig_ticks += 1
-        if dd != 0 and bad_tick is None: bad_tick = t + 1
-    prev_m, prev_d = st['mig_total'], st['mig_deaths_cum']
-sub['(a) 无迁移的 tick 不累计迁移死亡'] = (bad_tick is None and zero_mig_ticks > 0)
-print(f"  (a) 300 tick 中有 {zero_mig_ticks} 个 tick 没有迁移；"
-      f"{'这些 tick 的迁移死亡增量全为 0 ✓' if bad_tick is None else f'在 tick={bad_tick} 处出现了无迁移却有迁移死亡 ✗'}")
+    if st['mig_total'] - pm == 0:
+        zero_mig += 1
+        if st['mig_deaths_cum'] - pd != 0 and bad_tick is None: bad_tick = t + 1
+    pm, pd = st['mig_total'], st['mig_deaths_cum']
+print(f"  (a) 300 tick 中 {zero_mig} 个 tick 没有迁移；"
+      f"{'这些 tick 的迁移死亡增量全为 0' if bad_tick is None else f'tick={bad_tick} 处无迁移却有迁移死亡'}")
+if zero_mig == 0: uncov('D12a 无迁移不累计', '本场景没有出现无迁移的 tick')
+else: mark('D12a 无迁移的 tick 不累计迁移死亡', bad_tick is None)
 
-# (b) 小群体连续迁移：贡献必须被留存为余数，而不是被取整丢掉
+# (b) 小群体连续迁移：贡献必须被留存为余数。**没有实际迁移则未覆盖。**
 r = v.make_two_movers(0, 20, sizes=(12, 12))
 if r is None:
-    uncov('D12(b) 小群体迁移的余数留存', '未找到构造位置'); sub['(b)'] = None
+    uncov('D12b 小群体迁移的余数留存', '未找到构造位置')
 else:
     st, i1, i2, _, _ = r
     for _ in range(12):
         v.step(st)
         if not st['bands']: break
     macc_sum = sum(b['macc'] for b in st['bands'].values())
-    carried = st['mig_deaths_cum'] > 0 or macc_sum > 0
-    sub['(b) 小群体迁移的贡献被留存而非丢弃'] = (st['mig_total'] == 0) or carried
-    print(f"  (b) 12 人群体连续迁移 12 tick：迁移 {st['mig_total']} 次，迁移死亡 "
-          f"{st['mig_deaths_cum']}，余数合计 {macc_sum} "
-          f"{'✓（贡献被留存，量化死区已消除）' if carried else '✗（贡献被取整丢掉）'}")
-    print(f"      对照：若用 size×mm//1000 直接取整，12 人 × 20‰ 每次得 0，且不留余数，"
-          f"迁移死亡会永远是 0")
+    print(f"  (b) 12 人群体连续迁移 12 tick：迁移 {st['mig_total']} 次，"
+          f"迁移死亡 {st['mig_deaths_cum']}，余数合计 {macc_sum}")
+    if st['mig_total'] == 0:
+        uncov('D12b 小群体迁移的余数留存', '本场景未发生实际迁移，前提不成立')
+    else:
+        mark('D12b 小群体迁移的贡献被留存而非丢弃',
+             st['mig_deaths_cum'] > 0 or macc_sum > 0)
+        print(f"      对照：若用 size×mm//1000 直接取整，12 人 × 20‰ 每次得 0 且不留余数，"
+              f"迁移死亡会永远是 0")
 
-# (c1) MORT=1000 全灭：群体被移除，两条账仍然闭合
+# (c1) MORT=1000 全灭
 r = v.make_two_movers(0, 1000, sizes=(20, 20), stores=(5 * v.NEED_PC, 5 * v.NEED_PC))
 if r is None:
-    uncov('D12(c1) MORT=1000 全灭', '未找到构造位置'); sub['(c1)'] = None
+    uncov('D12c1 MORT=1000 全灭', '未找到构造位置')
 else:
     st, i1, i2, _, _ = r
-    n0 = len(st['bands'])
-    store_at_death = None
-    v.step(st)
+    n0 = len(st['bands']); v.step(st)
     gone = [k for k in (i1, i2) if k not in st['bands']]
-    ok_c = (len(gone) > 0 and v.conservation_error(st) == 0 and
-            v.population_identity_error(st) == 0)
-    sub['(c1) 全灭后群体被移除且两条账闭合'] = ok_c
     print(f"  (c1) MORT=1000：{len(gone)}/{n0} 个群体全灭并被移除，"
-          f"守恒 {v.conservation_error(st)}，人口恒等 {v.population_identity_error(st)} "
-          f"{'✓' if ok_c else '✗'}")
+          f"守恒 {v.conservation_error(st)}，人口账 {v.population_identity_error(st)}")
     print(f"       结构性事实：能迁移必然 E<1，E<1 必然储存已被吃光，"
-          f"所以死于迁移的群体储存恒为 0（out_lost 不变，不是漏记）")
+          f"所以死于迁移的群体储存恒为 0（out_lost 不变不是漏记）")
+    if not gone: uncov('D12c1 MORT=1000 全灭', '本场景没有群体被全灭')
+    else: mark('D12c1 全灭后群体被移除且两条账闭合',
+               v.conservation_error(st) == 0 and v.population_identity_error(st) == 0)
 
-# (c2) 储粮去向只记一次（直接构造 size=0 且 store>0 的状态，打到 7a 的记账路径）
+# (c2) 储粮去向只记一次
 st = v.make_world(0, move_mort_m=1000)
 st['bands'].clear()
 S = 7 * v.NEED_PC
@@ -303,47 +340,56 @@ st['bands'][bid] = {'cell': P, 'size': 0, 'store': S, 'bacc': 0, 'dacc': 0, 'mac
                     'mem': {P: st['stock'][P]}, 'memt': {P: 0}}
 st['start_store'] = S; st['pop_start'] = 0
 v.step(st)
-accounted = st['out_lost'] + st['out_spoil']
-ok_c2 = (bid not in st['bands'] and accounted == S and
-         v.conservation_error(st) == 0 and v.population_identity_error(st) == 0)
-sub['(c2) 储粮去向只记一次'] = ok_c2
-print(f"  (c2) 直接构造 size=0、store={S} 的群体：群体{'已移除' if bid not in st['bands'] else '仍存在'}，"
-      f"out_lost={st['out_lost']} + out_spoil={st['out_spoil']} = {accounted}（应等于 {S}），"
-      f"守恒 {v.conservation_error(st)} {'✓' if ok_c2 else '✗'}")
+acc = st['out_lost'] + st['out_spoil']
+print(f"  (c2) 直接构造 size=0、store={S}：群体{'已移除' if bid not in st['bands'] else '仍存在'}，"
+      f"out_lost {st['out_lost']} + out_spoil {st['out_spoil']} = {acc}（应等于 {S}），"
+      f"守恒 {v.conservation_error(st)}")
+mark('D12c2 储粮去向只记一次',
+     bid not in st['bands'] and acc == S and v.conservation_error(st) == 0
+     and v.population_identity_error(st) == 0)
 
 # (d) 分裂余数继承
 r = v.make_split_scenario(0, macc0=777)
 if r is None:
-    uncov('D12(d) 分裂余数继承', '未找到构造位置'); sub['(d)'] = None
+    uncov('D12d 分裂余数继承', '未找到构造位置')
 else:
     st, bid = r
-    m0 = st['bands'][bid]['macc']
-    v.step(st)
+    m0 = st['bands'][bid]['macc']; v.step(st)
     tot = sum(b['macc'] for b in st['bands'].values())
-    ok_d = (len(st['bands']) == 2 and tot == m0)
-    sub['(d) 分裂时累加器余数总和不变'] = ok_d
-    print(f"  (d) 分裂：群体数 1->{len(st['bands'])}，macc 总和 {m0}->{tot} {'✓' if ok_d else '✗'}")
+    print(f"  (d) 分裂：群体数 1->{len(st['bands'])}，macc 总和 {m0}->{tot}")
+    if len(st['bands']) != 2: uncov('D12d 分裂余数继承', '本场景未发生分裂')
+    else: mark('D12d 分裂时累加器余数总和不变', tot == m0)
 
 # (e) 两群体累加器独立
 r = v.make_two_movers(0, 20, sizes=(20, 30))
 if r is None:
-    uncov('D12(e) 两群体独立累加器', '未找到构造位置'); sub['(e)'] = None
+    uncov('D12e 两群体独立累加器', '未找到构造位置')
 else:
     st, i1, i2, _, _ = r
     both = copy.deepcopy(st); v.step(both)
-    # 只让 i2 迁移：把 i1 喂饱
     only2 = copy.deepcopy(st)
     only2['bands'][i1]['store'] = 50 * only2['bands'][i1]['size'] * v.NEED_PC
     only2['start_store'] = sum(b['store'] for b in only2['bands'].values())
     v.step(only2)
-    ok_e = (both['bands'][i2]['macc'] == only2['bands'][i2]['macc'] and
-            only2['bands'][i1]['macc'] == 0)
-    sub['(e) 一个群体迁移不影响另一个的累加器'] = ok_e
-    print(f"  (e) i2 的 macc：两者都迁移时 {both['bands'][i2]['macc']}，只有 i2 迁移时 "
-          f"{only2['bands'][i2]['macc']}；i1 未迁移时 macc={only2['bands'][i1]['macc']} {'✓' if ok_e else '✗'}")
+    print(f"  (e) i2 的 macc：两者都迁移时 {both['bands'][i2]['macc']}，"
+          f"只有 i2 迁移时 {only2['bands'][i2]['macc']}；i1 未迁移时 macc={only2['bands'][i1]['macc']}")
+    if both['mig_total'] != 2:
+        uncov('D12e 两群体独立累加器', f"前提不成立：两者都迁移的分支只发生了 {both['mig_total']} 次迁移")
+    else:
+        mark('D12e 一个群体迁移不影响另一个的累加器',
+             both['bands'][i2]['macc'] == only2['bands'][i2]['macc']
+             and only2['bands'][i1]['macc'] == 0)
 
-real = {k: x for k, x in sub.items() if x is not None}
-mark('D12 定向场景组', bool(real) and all(real.values()))
+# ---------------------------------------------------------------- D13
+hdr("D13 pop_start 必须进入校验（初始人口是运行身份的一部分）")
+st, _ = v.run(0, 50, move_mort_m=50)
+d0, r0, h0 = v.full_digest(st), v.run_id(st), v.state_hash(st)
+s2 = copy.deepcopy(st); s2['pop_start'] += 1
+print(f"  pop_start +1 -> run_id 改变={v.run_id(s2) != r0}，full_digest 改变={v.full_digest(s2) != d0}，"
+      f"state_hash 改变={v.state_hash(s2) != h0}")
+print(f"  同时人口账误差由 {v.population_identity_error(st)} 变为 {v.population_identity_error(s2)}"
+      f" —— 改初始人口必须让身份变化，否则两次不同的运行会共享同一个 full_digest")
+mark('D13 pop_start 进入运行身份', v.run_id(s2) != r0 and v.full_digest(s2) != d0)
 
 # ---------------------------------------------------------------- 汇总
 hdr("汇总")
