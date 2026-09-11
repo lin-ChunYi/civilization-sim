@@ -67,6 +67,7 @@ def neighbors(i: int) -> List[int]:
     return sorted(out)
 
 def make_world(seed: int, poison: str = ""):
+    split_poisons(poison)          # 未登记的注入标志立刻报错，不许静默通过
     st = {'tick': 0, 'seed': seed, 'poison': poison,
           'stock': {}, 'cap': {}, 'regen': {}, 'bands': {},
           'inflow': 0, 'out_eat': 0, 'out_spoil': 0, 'out_move': 0, 'out_lost': 0,
@@ -96,6 +97,58 @@ def lerp_m(x_m, x0, x1, y0, y1):
     if x_m <= x0: return y0
     if x_m >= x1: return y1
     return y0 + (y1 - y0) * (x_m - x0) // (x1 - x0)
+
+# ---------- 运行身份 vs 动态状态摘要 ----------
+# 两者必须分开：
+#   run_id      = 这是"哪一次运行"（世界种子、初始禀赋、规则参数、语义注入）
+#   state_hash  = 这次运行"当前长什么样"（全部动态状态）
+# 单靠 state_hash 不能识别一次运行：它不含 seed 与初始存量，两次不同的运行
+# 在原理上可以撞出同一个 state_hash 而我们无从分辨。
+
+# 注入标志分两类。分错会让 T6/T7 假失败或假通过，所以这里是封闭集合 + 拒绝未知名。
+TRAVERSAL_POISONS = frozenset({'order', 'revorder'})   # 只改遍历方式，世界语义不变
+SEMANTIC_POISONS  = frozenset({'float', 'seq', 'seqsplit',
+                               'clamp', 'counter', 'omniscient'})  # 改变世界语义
+
+def split_poisons(poison: str):
+    """返回 (语义注入集合, 遍历注入集合)。未知名字直接报错，不许静默当成非语义。"""
+    tags = {x for x in poison.split(',') if x} if poison else set()
+    unknown = tags - TRAVERSAL_POISONS - SEMANTIC_POISONS
+    if unknown:
+        raise ValueError(f"未登记的注入标志: {sorted(unknown)}；"
+                         f"必须显式归入 TRAVERSAL_POISONS 或 SEMANTIC_POISONS")
+    return tags & SEMANTIC_POISONS, tags & TRAVERSAL_POISONS
+
+PARAM_NAMES = ('NEED_PC', 'MILLE', 'STORE_YEARS_M', 'SPOIL_M', 'K_HALF',
+               'MOVE_LOSS_M', 'SPLIT_SIZE', 'MIG_E_M', 'MIG_GAIN_M', 'SHOCK_P_M',
+               'E_BLO_M', 'E_BHI_M', 'B_MAX_M',
+               'E_D2_M', 'E_D1_M', 'E_D0_M', 'D_AT_D2_M', 'D_AT_D1_M', 'D_AT_D0_M',
+               'W', 'H')
+
+def params_fingerprint() -> str:
+    """全部规则参数 + 地图形状的指纹。改任何一个参数，运行身份就变。"""
+    g = globals()
+    h = hashlib.blake2b(digest_size=8)
+    for n in PARAM_NAMES:
+        h.update(f"{n}={g[n]};".encode())
+    h.update(("BARRIER_COLS=" + ",".join(map(str, sorted(BARRIER_COLS))) + ";").encode())
+    return h.hexdigest()
+
+def run_id(st) -> str:
+    """一次运行的身份。**不含遍历注入**——改遍历方式不改变这是哪一次运行，
+    否则 T6/T7 会把"同一次运行的两种遍历"误判成两次不同的运行。"""
+    sem, _trav = split_poisons(st['poison'])
+    h = hashlib.blake2b(digest_size=16)
+    h.update(f"seed={st['seed']};".encode())
+    h.update(f"start_stock={st['start_stock']};start_store={st['start_store']};".encode())
+    h.update(("semantic=" + ",".join(sorted(sem)) + ";").encode())
+    h.update(f"params={params_fingerprint()};".encode())
+    return h.hexdigest()
+
+def full_digest(st) -> str:
+    """对外比较两次运行时应当用的东西：身份 + 状态。"""
+    return f"{run_id(st)}/{state_hash(st)}"
+
 
 BAND_FIELDS = ('cell', 'size', 'store', 'bacc', 'dacc')
 

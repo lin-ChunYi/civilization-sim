@@ -82,6 +82,50 @@ for s in SEEDS:
     ok &= (a == b)
 mark('T6', ok)
 
+# ---------------------------------------------------------------- T8
+hdr("T8 运行身份与状态摘要分离")
+sub = {}
+
+ids = {sd: v.run_id(v.make_world(sd)) for sd in SEEDS}
+sub['(a) 不同 seed 的 run_id 两两不同'] = len(set(ids.values())) == len(SEEDS)
+print(f"  (a) {len(set(ids.values()))}/{len(SEEDS)} 个不同的 run_id")
+
+base = v.make_world(12345)
+rev = v.make_world(12345, 'revorder')
+sub['(b) 遍历标志不改变运行身份'] = v.run_id(base) == v.run_id(rev)
+print(f"  (b) '' vs 'revorder' 的 run_id {'相同' if v.run_id(base)==v.run_id(rev) else '不同 <<< 遍历标志被误当成语义差异'}")
+
+full, snap = v.run(12345, Y, snap_at=150)
+cont = v.resume(snap, Y - 150)
+sub['(c) 快照续跑保持同一运行身份'] = v.run_id(full) == v.run_id(cont) and v.full_digest(full) == v.full_digest(cont)
+print(f"  (c) 快照续跑 full_digest {'一致' if v.full_digest(full)==v.full_digest(cont) else '不一致'}")
+
+sem = v.make_world(12345, 'counter')
+sub['(d) 语义注入改变运行身份'] = v.run_id(base) != v.run_id(sem)
+print(f"  (d) '' vs 'counter' 的 run_id {'不同' if v.run_id(base)!=v.run_id(sem) else '相同 <<< 语义注入没进身份'}")
+
+fp0 = v.params_fingerprint(); id0 = v.run_id(base)
+v.SPLIT_SIZE += 1
+fp1 = v.params_fingerprint(); id1 = v.run_id(base)
+v.SPLIT_SIZE -= 1
+sub['(e) 改参数改变运行身份'] = (fp0 != fp1) and (id0 != id1) and (v.params_fingerprint() == fp0)
+print(f"  (e) SPLIT_SIZE ±1 -> 参数指纹 {'改变' if fp0!=fp1 else '未变'}，run_id {'改变' if id0!=id1 else '未变'}，还原后 {'一致' if v.params_fingerprint()==fp0 else '不一致'}")
+
+try:
+    v.make_world(1, 'not_a_registered_flag'); raised = False
+except ValueError:
+    raised = True
+sub['(f) 未登记的注入标志报错'] = raised
+print(f"  (f) 未登记标志 {'已报错' if raised else '被静默接受 <<< 危险'}")
+
+sub['(g) state_hash 不含运行身份（因此不能单独当运行标识）'] = (
+    v.state_hash(v.make_world(12345)) == v.state_hash(v.make_world(12345, 'revorder')))
+print(f"  (g) state_hash 只描述动态状态，运行身份另记；两者合起来才是 full_digest")
+
+for k, ok in sub.items():
+    if not ok: print(f"      失败：{k}")
+mark('T8', all(sub.values()))
+
 # ---------------------------------------------------------------- 错误注入
 hdr("错误注入：预期触发的必须真的触发")
 
