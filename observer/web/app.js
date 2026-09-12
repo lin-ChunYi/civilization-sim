@@ -2764,6 +2764,14 @@ async function boot() {
     gotoYear(+e.target.value, { opGen: S.opGen });
   });
   $("b-start").addEventListener("click", startRun);
+  if ($("b-confirm")) $("b-confirm").addEventListener("click", confirmStartRun);
+  if ($("b-confirm-cancel")) $("b-confirm-cancel").addEventListener("click", () => {
+    S._runDraft = null; if ($("forge-confirm")) $("forge-confirm").hidden = true;
+  });
+  if ($("forge-presets")) $("forge-presets").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-preset]"); if (!b) return;
+    applyForgePreset(b.dataset.preset);
+  });
   if ($("recip-off")) $("recip-off").addEventListener("click", () => { $("f-recip").value = "0"; });
   if ($("recip-on")) $("recip-on").addEventListener("click", () => { $("f-recip").value = "1000"; });
   const railTabs = $("rail-tabs");
@@ -2968,58 +2976,104 @@ function syncEngineForm() {
   }
 }
 
-async function startRun() {
+function collectRunDraft() {
   const lim = S.cfg.limits;
   const seed = OverviewLogic.parseStrictInt($("f-seed").value, { name: "种子 seed", min: 0, max: lim.max_seed });
   const years = OverviewLogic.parseStrictInt($("f-years").value, { name: "年数 years", min: lim.min_years, max: lim.max_years });
   const sigma = OverviewLogic.parseStrictInt($("f-sigma").value, { name: "SIGMA_M", min: 0, max: 1000 });
   const mort = OverviewLogic.parseStrictInt($("f-mort").value, { name: "MOVE_MORT_M", min: 0, max: 1000 });
   for (const x of [seed, years, sigma, mort]) {
-    if (!x.ok) { flash(x.error, true); return; }
+    if (!x.ok) return { ok: false, error: x.error };
   }
   const engine = $("f-engine") ? $("f-engine").value : (S.cfg.default_engine || "exp03");
-  let share_m = 0;
+  const known = S.cfg.engines ? Object.keys(S.cfg.engines) : [];
+  if (known.length && known.indexOf(engine) < 0) return { ok: false, error: "未知引擎：" + engine };
+  const body = {
+    seed: seed.value, years: years.value, sigma_m: sigma.value,
+    move_mort_m: mort.value, arm: $("f-arm").value, label: $("f-label").value.trim(),
+    engine: engine,
+  };
+  const notes = [];
   if (engineHasParam(engine, "share_m")) {
     const share = OverviewLogic.parseStrictInt($("f-share").value, { name: "SHARE_M", min: 0, max: 1000 });
-    if (!share.ok) { flash(share.error, true); return; }
-    share_m = share.value;
+    if (!share.ok) return { ok: false, error: share.error };
+    body.share_m = share.value;
   }
-  let aid_m = 0;
   if (engineHasParam(engine, "aid_m")) {
     const spec = engineParamMeta(engine, "aid_m") || { min: 0, max: 1000 };
     const aid = OverviewLogic.parseStrictInt($("f-aid").value, {
       name: (spec.label || "AID_M"), min: spec.min != null ? spec.min : 0,
       max: spec.max != null ? spec.max : 1000 });
-    if (!aid.ok) { flash(aid.error, true); return; }
-    aid_m = aid.value;
+    if (!aid.ok) return { ok: false, error: aid.error };
+    body.aid_m = aid.value;
   }
-  let recip_m = 0;
-  let sendRecip = false;
   if (engineHasParam(engine, "recip_m")) {
     const spec = engineParamMeta(engine, "recip_m") || { min: 0, max: 1000 };
     const recip = OverviewLogic.parseStrictInt($("f-recip").value, {
       name: (spec.label || "RECIP_M"), min: spec.min != null ? spec.min : 0,
       max: spec.max != null ? spec.max : 1000 });
-    if (!recip.ok) { flash(recip.error, true); return; }
-    recip_m = recip.value;
-    sendRecip = true;
+    if (!recip.ok) return { ok: false, error: recip.error };
+    body.recip_m = recip.value;
+    if ((body.aid_m || 0) <= 0 && recip.value > 0) {
+      notes.push("优先回助需要 AID_M>0 才有预算。当前 AID_M=0，优先机制不会发生。未暗改 AID_M。");
+    }
   }
-  const body = {
-    seed: seed.value, years: years.value, sigma_m: sigma.value,
-    move_mort_m: mort.value, arm: $("f-arm").value, label: $("f-label").value.trim(),
-    engine: engine, share_m: share_m, aid_m: aid_m,
-  };
-  if (sendRecip) body.recip_m = recip_m;
-  $("b-start").disabled = true;
+  const lines = [
+    "引擎 " + engine,
+    "seed " + body.seed,
+    "年数 " + body.years,
+    "SIGMA_M " + body.sigma_m + "‰",
+    "MOVE_MORT_M " + body.move_mort_m + "‰",
+    body.share_m != null ? ("SHARE_M " + body.share_m + "‰") : "SHARE_M 此引擎无此参数",
+    body.aid_m != null ? ("AID_M " + body.aid_m + "‰") : "AID_M 此引擎无此参数（缺指标不填 0）",
+    body.recip_m != null ? ("RECIP_M " + body.recip_m + "‰") : "RECIP_M 此引擎无此参数",
+    "信息条件 " + body.arm,
+  ];
+  return { ok: true, body: body, notes: notes, summary: lines.join(" · ") };
+}
+function applyForgePreset(name) {
+  const engine = $("f-engine") ? $("f-engine").value : "";
+  if (name === "none") {
+    if ($("f-aid") && engineHasParam(engine, "aid_m")) $("f-aid").value = "0";
+    if ($("f-recip") && engineHasParam(engine, "recip_m")) $("f-recip").value = "0";
+  } else if (name === "aid") {
+    if (!engineHasParam(engine, "aid_m")) { flash("当前引擎没有援助参数。", true); return; }
+    $("f-aid").value = "1000";
+    if ($("f-recip") && engineHasParam(engine, "recip_m")) $("f-recip").value = "0";
+  } else if (name === "recip") {
+    if (!engineHasParam(engine, "aid_m") || !engineHasParam(engine, "recip_m")) {
+      flash("当前引擎不能同时开援助和优先回助。", true); return;
+    }
+    $("f-aid").value = "1000";
+    $("f-recip").value = "1000";
+  }
+}
+async function startRun() {
+  const draft = collectRunDraft();
+  if (!draft.ok) { flash(draft.error, true); return; }
+  if ($("forge-confirm")) $("forge-confirm").hidden = false;
+  if ($("forge-summary")) {
+    $("forge-summary").innerHTML = `<p>${esc(draft.summary)}</p>` +
+      (draft.notes.length ? `<p class="err">${esc(draft.notes.join(" "))}</p>` : "") +
+      `<p class="muted">确认后才会提交。不会改已有世界。</p>`;
+  }
+  S._runDraft = draft.body;
+}
+async function confirmStartRun() {
+  const body = S._runDraft;
+  if (!body) { flash("请先核对参数。", true); return; }
+  $("b-confirm").disabled = true;
   try {
     const r = await api("/api/runs", { method: "POST", body: JSON.stringify(body) });
     flash("已提交，运行号 " + r.run_id + "。计算在后台独立进程里进行，可以直接看进度。");
+    S._runDraft = null;
+    if ($("forge-confirm")) $("forge-confirm").hidden = true;
     await refresh(); await openRun(r.run_id);
     showTab("world");
   } catch (e) {
     flash("启动失败：" + e.message, true);
   } finally {
-    $("b-start").disabled = false;
+    if ($("b-confirm")) $("b-confirm").disabled = false;
   }
 }
 
@@ -3028,7 +3082,8 @@ window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, rend
   bumpOp, opAlive, bandAccept, bandCacheKey, applyBandDossier, setPlaying, tickEvents, tick,
   navResult, beginYearLoad, endYearLoad, afterPlayStep, retryYear, reapNavUi, renderYearFailBar,
   pendingCurrentYear, PLAY_PENDING_MS, loadRelations, renderRelations, NetworkLogic,
-  loadCompare, CompareLogic, fillCompareSelects, showTab, showRail };
+  loadCompare, CompareLogic, fillCompareSelects, showTab, showRail,
+  collectRunDraft, applyForgePreset, confirmStartRun };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {

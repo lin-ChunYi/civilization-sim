@@ -1,5 +1,11 @@
 # 连续开发进度
 
+## G06 创世向导
+- 预设无援助/仅援助/援助+优先回助；recip>0 且 AID=0 警告且不暗改
+- 确认摘要后才 POST；EXP01/02 待 C08
+- tests：g06-wizard-test 5/5
+- next：G07 书签收藏检索导出
+
 ## G05 双世界同年对照
 - 缺年标缺失，不夹终年；recip_m 差异如实列出
 - tests：g05-compare-test 6/6；g05-cdp 4/4

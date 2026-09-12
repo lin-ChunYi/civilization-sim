@@ -315,7 +315,19 @@
         </label>
         <label>信息条件（对照臂）<select id="f-arm"></select></label>
         <label>世界备注（可空）<input id="f-label" type="text" maxlength="60" placeholder="例如：对照 MORT=50"></label>
-        <button id="b-start" class="btn primary forge-go">创生世界</button>
+        <div class="recip-presets" id="forge-presets">
+          <button type="button" class="btn small" data-preset="none">预设：无援助对照</button>
+          <button type="button" class="btn small" data-preset="aid">预设：仅援助</button>
+          <button type="button" class="btn small" data-preset="recip">预设：援助+优先回助</button>
+        </div>
+        <p class="muted" id="forge-engine-note">引擎列表来自后台能力。EXP01/02 要等 C08 接入后才会出现；缺指标写「未记录」，不填 0，也不用 EXP03 冒充。</p>
+        <button id="b-start" class="btn primary forge-go">核对并创生</button>
+        <div id="forge-confirm" class="director-card" hidden>
+          <div class="dir-title">确认提交</div>
+          <div id="forge-summary"></div>
+          <button type="button" class="btn primary" id="b-confirm">确认提交这次运行</button>
+          <button type="button" class="btn" id="b-confirm-cancel">返回修改</button>
+        </div>
       </div>
       <div id="formnote" class="note"></div>
       <div id="armnote" class="muted"></div>
