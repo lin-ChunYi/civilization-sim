@@ -476,6 +476,63 @@ const CompareLogic = {
 };
 window.CompareLogic = CompareLogic;
 
+const LIB_KEY = "obs_lib_v1";
+const LibraryLogic = {
+  empty() { return { years: [], events: [] }; },
+  loadAll() {
+    try { return JSON.parse(localStorage.getItem(LIB_KEY) || "{}") || {}; }
+    catch (e) { return {}; }
+  },
+  saveAll(all) { localStorage.setItem(LIB_KEY, JSON.stringify(all)); },
+  forRun(all, runId) {
+    const id = String(runId || "");
+    if (!all[id]) all[id] = this.empty();
+    return all[id];
+  },
+  pinYear(all, runId, t) {
+    const lib = this.forRun(all, runId);
+    if (lib.years.indexOf(t) < 0) lib.years.push(t);
+    lib.years.sort((a, b) => a - b);
+    return all;
+  },
+  pinEvent(all, runId, ev) {
+    const lib = this.forRun(all, runId);
+    const id = ev && ev.id;
+    if (!id) return all;
+    if (!lib.events.some((e) => e.id === id)) lib.events.push({ id: String(id), t: ev.t != null ? ev.t : ev.year, type: ev.type || "" });
+    return all;
+  },
+  exportRecord(run, t, rec, extra) {
+    extra = extra || {};
+    const evs = ((rec && rec.events) || []).map((e) => ({
+      id: String(e.id || ""), type: e.type || "", text: e.text || "", source: e.source || "",
+    }));
+    return {
+      run_id: run ? String(run.run_id) : "",
+      engine: run ? (run.engine || "") : "",
+      engine_sha256: run ? (run.engine_sha256 || "") : "",
+      seed: run ? run.seed : null,
+      years: run ? run.years : null,
+      sigma_m: run ? run.sigma_m : null,
+      move_mort_m: run ? run.move_mort_m : null,
+      share_m: run ? run.share_m : null,
+      aid_m: run ? run.aid_m : null,
+      recip_m: run ? run.recip_m : null,
+      arm: run ? run.arm : null,
+      year: t,
+      year_summary: extra.summary || "",
+      events: evs,
+      selected_event: extra.selEvent || "",
+      selected_band: extra.selBand || "",
+    };
+  },
+  hasForbidden(obj) {
+    const s = JSON.stringify(obj);
+    return /X-Observer-Token|obs_token|\/Users\/|app_secret|server_config/i.test(s);
+  },
+};
+window.LibraryLogic = LibraryLogic;
+
 function hashParams() {
   const out = {};
   (location.hash || "").replace(/^#/, "").split("&").forEach((kv) => {
@@ -1384,6 +1441,55 @@ async function loadBand(id) {
   }
 }
 
+function renderLibrary() {
+  const boxY = $("lib-years"), boxE = $("lib-events");
+  if (!boxY || !boxE) return;
+  if (!S.run) { boxY.textContent = "先打开一次运行。"; boxE.textContent = ""; return; }
+  const all = LibraryLogic.loadAll();
+  const lib = LibraryLogic.forRun(all, S.run.run_id);
+  boxY.innerHTML = lib.years.length
+    ? lib.years.map((t) => `<button type="button" class="prior-jump" data-y="${t}">第 ${t} 年</button>`).join(" ")
+    : "无";
+  boxE.innerHTML = lib.events.length
+    ? lib.events.map((e) => `<button type="button" class="prior-jump" data-eid="${esc(e.id)}" data-y="${e.t}">${esc(e.id)}</button>`).join(" ")
+    : "无";
+  boxY.querySelectorAll("[data-y]").forEach((n) => n.addEventListener("click", () => gotoYear(+n.dataset.y)));
+  boxE.querySelectorAll("[data-eid]").forEach((n) => n.addEventListener("click", () => {
+    const y = +n.dataset.y;
+    gotoYear(y).then(() => {
+      const found = findEventByKey(n.dataset.eid, y);
+      if (found) focusEvent(found);
+    });
+  }));
+}
+function pinCurrentYear() {
+  if (!S.run) return;
+  const all = LibraryLogic.pinYear(LibraryLogic.loadAll(), S.run.run_id, S.t);
+  LibraryLogic.saveAll(all);
+  renderLibrary();
+}
+function pinCurrentEvent() {
+  if (!S.run || !S.selEvent) { flash("先选中一条事件。", true); return; }
+  const ev = findEventByKey(S.selEvent, S.t) || { id: S.selEvent, t: S.t };
+  const all = LibraryLogic.pinEvent(LibraryLogic.loadAll(), S.run.run_id, ev);
+  LibraryLogic.saveAll(all);
+  renderLibrary();
+}
+function exportCurrentRecord() {
+  if (!S.run) { flash("没有打开的运行。", true); return; }
+  const rec = recNow();
+  const payload = LibraryLogic.exportRecord(S.run, S.t, rec, {
+    summary: ($("year-summary") && $("year-summary").textContent) || "",
+    selEvent: S.selEvent || "",
+    selBand: S.selBand || "",
+  });
+  if (LibraryLogic.hasForbidden(payload)) { flash("导出被拦截：含禁止字段。", true); return; }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "obs-" + S.run.run_id + "-t" + S.t + ".json";
+  a.click();
+}
 function relCacheKey(runId, scope, year) {
   return String(runId) + "|rel|" + scope + "|" + (scope === "full" ? "full" : String(year));
 }
@@ -1535,13 +1641,14 @@ function showRail(name) {
   const tabs = document.querySelectorAll("#rail-tabs button");
   if (!tabs.length) return;
   tabs.forEach((x) => x.classList.toggle("on", x.dataset.rail === name));
-  ["chronicle", "dossier", "network", "help"].forEach((n) => {
+  ["chronicle", "dossier", "network", "library", "help"].forEach((n) => {
     const pane = $("pane-" + n); if (!pane) return;
     const on = n === name;
     pane.hidden = !on;
     pane.classList.toggle("on", on);
   });
   if (name === "network") loadRelations();
+  if (name === "library") renderLibrary();
 }
 function selectBand(id, opts) {
   opts = opts || {};
@@ -2034,7 +2141,12 @@ function renderEvents() {
   if (rec) {
     const head = `<tr><th>群体</th><th>人口</th><th>储粮(人年)</th><th>所在格</th><th>区块</th>
                   <th>记忆格数</th></tr>`;
-    $("bandtable").innerHTML = head + rec.bands.map((b) => `<tr data-b="${esc(b.id)}"
+    const q = (($("band-search") && $("band-search").value) || "").trim().toLowerCase();
+    const shown = rec.bands.filter((b) => {
+      if (!q) return true;
+      return String(b.name).toLowerCase().indexOf(q) >= 0 || String(b.id).toLowerCase().indexOf(q) >= 0;
+    });
+    $("bandtable").innerHTML = head + shown.map((b) => `<tr data-b="${esc(b.id)}"
         class="${S.selBand === b.id ? "on" : ""}"><td class="clickable">${esc(b.name)}</td>
         <td>${nf(b.size)}人</td><td>${py(b.store)}</td><td>${b.cell}</td>
         <td>${esc(S.map.cells[b.cell].region)}</td><td>${Object.keys(b.mem).length}</td></tr>`).join("");
@@ -2768,6 +2880,10 @@ async function boot() {
   if ($("b-confirm-cancel")) $("b-confirm-cancel").addEventListener("click", () => {
     S._runDraft = null; if ($("forge-confirm")) $("forge-confirm").hidden = true;
   });
+  if ($("b-pin-year")) $("b-pin-year").addEventListener("click", pinCurrentYear);
+  if ($("b-pin-event")) $("b-pin-event").addEventListener("click", pinCurrentEvent);
+  if ($("b-export-rec")) $("b-export-rec").addEventListener("click", exportCurrentRecord);
+  if ($("band-search")) $("band-search").addEventListener("input", () => renderEvents());
   if ($("forge-presets")) $("forge-presets").addEventListener("click", (e) => {
     const b = e.target.closest("[data-preset]"); if (!b) return;
     applyForgePreset(b.dataset.preset);
@@ -2778,7 +2894,7 @@ async function boot() {
   if (railTabs) railTabs.addEventListener("click", (e) => {
     const b = e.target.closest("[data-rail]"); if (!b) return;
     document.querySelectorAll("#rail-tabs button").forEach((x) => x.classList.toggle("on", x === b));
-    ["chronicle", "dossier", "network", "help"].forEach((name) => {
+    ["chronicle", "dossier", "network", "library", "help"].forEach((name) => {
       const pane = $("pane-" + name); if (!pane) return;
       const on = name === b.dataset.rail;
       pane.hidden = !on;
@@ -3083,7 +3199,8 @@ window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, rend
   navResult, beginYearLoad, endYearLoad, afterPlayStep, retryYear, reapNavUi, renderYearFailBar,
   pendingCurrentYear, PLAY_PENDING_MS, loadRelations, renderRelations, NetworkLogic,
   loadCompare, CompareLogic, fillCompareSelects, showTab, showRail,
-  collectRunDraft, applyForgePreset, confirmStartRun };
+  collectRunDraft, applyForgePreset, confirmStartRun, LibraryLogic, renderLibrary,
+  pinCurrentYear, pinCurrentEvent, exportCurrentRecord };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {

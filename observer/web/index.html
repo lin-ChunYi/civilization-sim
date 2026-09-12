@@ -112,6 +112,7 @@
         <button type="button" data-rail="chronicle" class="on">卷宗</button>
         <button type="button" data-rail="dossier">档案</button>
         <button type="button" data-rail="network">关系</button>
+        <button type="button" data-rail="library">收藏</button>
         <button type="button" data-rail="help">口径</button>
       </div>
       <div class="rail-pane on" id="pane-chronicle">
@@ -169,6 +170,20 @@
         <p class="muted" id="rel-rail-note">只记录谁给过谁食物。不是盟友、敌人或国家。布局不是地图位置。</p>
         <div id="rel-rail-summary" class="muted">打开运行后显示截至当前回放年的往来。</div>
         <button type="button" class="btn small" id="b-open-network">打开关系网</button>
+      </div>
+      <div class="rail-pane" id="pane-library" hidden>
+        <div class="panel-kicker">LIBRARY</div>
+        <p class="muted">按运行隔离，保存在本机。刷新可恢复。不含令牌或服务器路径。</p>
+        <label>检索在世群体 <input id="band-search" type="search" placeholder="名称或 id 片段"></label>
+        <div class="recip-presets">
+          <button type="button" class="btn small" id="b-pin-year">收藏当前年</button>
+          <button type="button" class="btn small" id="b-pin-event">收藏选中事件</button>
+          <button type="button" class="btn small" id="b-export-rec">导出本页记录</button>
+        </div>
+        <h4 class="subh">年份书签</h4>
+        <div id="lib-years" class="muted">无</div>
+        <h4 class="subh">事件收藏</h4>
+        <div id="lib-events" class="muted">无</div>
       </div>
       <div class="rail-pane" id="pane-help" hidden>
         <div class="help-copy">
