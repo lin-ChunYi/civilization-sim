@@ -18,6 +18,14 @@ const S = {
   hoverCell: null,
   yearLoading: null,
   skin: "sandtable",
+  playMode: "year",
+  selEvent: null,
+  bandScope: "as_of",
+  fxGen: 0,
+  fxTimers: [],
+  fxRaf: null,
+  _mapYear: null,
+  _mapRun: null,
 };
 const ykey = (runId, t) => `${runId}|${t}`;
 const bump = () => ++S.epoch;
@@ -181,6 +189,155 @@ const OverviewLogic = {
   },
 };
 window.OverviewLogic = OverviewLogic;
+
+const DirectorLogic = {
+  orderNote: "同一年的事件按记录数组列出，这个顺序不保证年内机制先后，也不是因果或精确发生顺序。",
+  yearFromEventId(eid) {
+    const m = String(eid || "").match(/^t(\d+)-/);
+    return m ? Number(m[1]) : null;
+  },
+  eventKey(e, t, i) {
+    if (e && e.id != null && String(e.id) !== "") return String(e.id);
+    const yr = e && e.year != null ? e.year : t;
+    const idx = e && e._i != null ? e._i : i;
+    return "t" + yr + "-" + ((e && e.type) || "ev") + "-" + idx;
+  },
+  eventYearsFromSeries(series) {
+    const years = [];
+    (series || []).forEach((r) => {
+      if (!r || typeof r.t !== "number") return;
+      if (typeof r.events === "number" && r.events > 0) years.push(r.t);
+    });
+    years.sort((a, b) => a - b);
+    return years;
+  },
+  nextEventYear(eventYears, t) {
+    const ys = eventYears || [];
+    for (let i = 0; i < ys.length; i++) if (ys[i] > t) return ys[i];
+    return null;
+  },
+  prevEventYear(eventYears, t) {
+    const ys = eventYears || [];
+    for (let i = ys.length - 1; i >= 0; i--) if (ys[i] < t) return ys[i];
+    return null;
+  },
+  eventModeStatus(input) {
+    const series = (input && input.series) || [];
+    const recorded = input && input.yearsRecorded != null ? input.yearsRecorded : 0;
+    const runStatus = (input && input.runStatus) || "";
+    const rec = input ? input.rec : null;
+    const t = input ? input.t : null;
+    const computing = runStatus === "queued" || runStatus === "running";
+    if (computing && recorded <= 0) {
+      return { kind: "computing", text: "后台还在计算，事件清单尚未落盘。不把空清单当成 0 条事件。" };
+    }
+    if (t != null && t > recorded && computing) {
+      return { kind: "computing", text: "第 " + t + " 年还在计算，记录尚未落盘。" };
+    }
+    if (t != null && rec == null && recorded >= t) {
+      return { kind: "missing", text: "第 " + t + " 年的记录尚未加载或读取失败，不把空清单当成 0 条事件。" };
+    }
+    const years = this.eventYearsFromSeries(series);
+    if (series.length && years.length === 0 && !computing) {
+      return { kind: "none", text: "这次运行已保存的年份里没有可核实事件。人口、出生与账本迁移次数不是事件。" };
+    }
+    if (rec && Array.isArray(rec.events) && rec.events.length === 0) {
+      return { kind: "empty-year", text: (t === 0 ? "开局" : "第 " + t + " 年") +
+        "没有可核实事件。人口变化与出生人数不是事件。" };
+    }
+    if (rec && rec.events && rec.events.length) return { kind: "ready", text: "" };
+    if (computing) {
+      return { kind: "computing", text: "后台还在计算，事件清单尚未落盘。不把空清单当成 0 条事件。" };
+    }
+    return { kind: "missing", text: "事件记录尚未就绪，不补编。" };
+  },
+  displayYearFromMemory(mem) {
+    if (!mem) return { year: null, eventId: null, note: "未记录" };
+    if (mem.last_year_display != null && mem.last_year_display !== "") {
+      return { year: mem.last_year_display, eventId: mem.last_event_id || null, source: "last_year_display" };
+    }
+    if (mem.last_event_id) {
+      const y = this.yearFromEventId(mem.last_event_id);
+      if (y != null) return { year: y, eventId: mem.last_event_id, source: "last_event_id" };
+    }
+    return { year: null, eventId: null,
+      note: "未记录：没有可跳转的展示年份（不使用内部 tick last_year）" };
+  },
+  displayYearFromBasis(basis) {
+    if (!basis) return { year: null, eventId: null };
+    if (basis.remembered_last_year_display != null && basis.remembered_last_year_display !== "") {
+      return { year: basis.remembered_last_year_display,
+        eventId: basis.remembered_last_event_id || null, source: "remembered_last_year_display" };
+    }
+    if (basis.remembered_last_event_id) {
+      const y = this.yearFromEventId(basis.remembered_last_event_id);
+      if (y != null) {
+        return { year: y, eventId: basis.remembered_last_event_id, source: "remembered_last_event_id" };
+      }
+    }
+    const priors = basis.prior_events || [];
+    if (priors.length) {
+      const last = priors[priors.length - 1];
+      const y = this.yearFromEventId(last);
+      if (y != null) return { year: y, eventId: last, source: "prior_events" };
+    }
+    return { year: null, eventId: null,
+      note: "未记录：找不到先前事件（不使用 remembered_last_year 内部 tick）" };
+  },
+  eventFocus(e) {
+    if (!e) return { cells: [], locate: false, kind: "none", note: "未选中事件", related: [] };
+    const related = [];
+    ["parent", "donor", "receiver", "band"].forEach((k) => {
+      if (e[k] != null && e[k] !== "") related.push({ role: k, id: String(e[k]) });
+    });
+    if (e.type === "share" || e.type === "aid") {
+      if (e.cell === null || e.cell === undefined || e.cell === "") {
+        return { cells: [], locate: false, kind: e.type,
+          note: "信息/援助地点未记录，不拿年末群体位置猜测。", related, repay: !!e.repay };
+      }
+      const cell = +e.cell;
+      if (!Number.isFinite(cell)) {
+        return { cells: [], locate: false, kind: e.type,
+          note: "信息/援助地点未记录，不拿年末群体位置猜测。", related, repay: !!e.repay };
+      }
+      return { cells: [cell], locate: true, kind: e.type,
+        note: "锚定事件格第 " + cell + " 号（不是年末群体位置）。", related, repay: !!e.repay };
+    }
+    if (e.type === "migrate") {
+      const cells = [];
+      if (e.from != null && e.from !== "") cells.push(+e.from);
+      if (e.to != null && e.to !== "") cells.push(+e.to);
+      const valid = cells.filter((n) => Number.isFinite(n));
+      if (!valid.length) {
+        return { cells: [], locate: false, kind: "migrate",
+          note: "迁移地点未记录，不拿年末位置猜测。", related };
+      }
+      return { cells: valid, locate: true, kind: "migrate",
+        note: "只表现端点位置变化。具体路线未记录，不虚构中间格子。",
+        related, from: e.from, to: e.to };
+    }
+    if (e.type === "split" || e.type === "extinct") {
+      return { cells: [], locate: false, kind: e.type,
+        note: "现有日志只有群体 ID，没有事件格。地点未记录，禁用地图定位，不拿年末位置猜测。",
+        related, parent: e.parent || null, band: e.band || null };
+    }
+    if (e.cell != null && e.cell !== "") {
+      const cell = +e.cell;
+      if (Number.isFinite(cell)) {
+        return { cells: [cell], locate: true, kind: e.type || "other",
+          note: "锚定记录中的格子。", related };
+      }
+    }
+    return { cells: [], locate: false, kind: e.type || "other",
+      note: "地点未记录，不拿年末位置猜测。", related };
+  },
+  prefersReducedMotion() {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+    catch (err) { return false; }
+  },
+};
+window.DirectorLogic = DirectorLogic;
 
 function hashParams() {
   const out = {};
@@ -444,7 +601,10 @@ function renderDensity() {
     const x = i * w / Math.max(s.length, 1);
     const bh = (r.events || 0) / maxe * (h - 2);
     const hot = r.t === S.t;
-    bars += `<rect x="${x.toFixed(2)}" y="${(h - bh).toFixed(2)}" width="${Math.max(1, w / s.length - 0.4).toFixed(2)}" height="${bh.toFixed(2)}" fill="${hot ? "#d4b06a" : "rgba(111,179,124,.55)"}"/>`;
+    const hasEv = (r.events || 0) > 0;
+    const fill = hot ? "#d4b06a"
+      : (S.playMode === "events" && !hasEv ? "rgba(94,102,96,.28)" : "rgba(111,179,124,.55)");
+    bars += `<rect x="${x.toFixed(2)}" y="${(h - bh).toFixed(2)}" width="${Math.max(1, w / s.length - 0.4).toFixed(2)}" height="${bh.toFixed(2)}" fill="${fill}"/>`;
   });
   svg.innerHTML = bars;
 }
@@ -721,17 +881,21 @@ function renderMap() {
           </g>`;
         }
         return;
-      } else if (e.type === "split" && e.parent && e.band) {
-        a = bandPos[String(e.parent)]; b = bandPos[String(e.band)];
+      } else if (e.type === "split" || e.type === "extinct") {
+        return;
       }
       if (!a || !b) return;
       if (e.type === "aid" || e.type === "share") return;
-      out += `<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"
+      const eid = e.id != null ? String(e.id) : "";
+      out += `<line data-event-id="${esc(eid)}" x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"
         class="flow-line" stroke="${col[e.type] || "#d4b06a"}"/>`;
     });
   }
 
   svg.innerHTML = out;
+  S._mapYear = S.t;
+  S._mapRun = S.run ? S.run.run_id : null;
+  paintDirectorFx();
   svg.querySelectorAll(".band").forEach((n) =>
     n.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -779,8 +943,7 @@ function bandName(rec, id) {
   return b ? b.name : (String(id).slice(0, 8) + "…");
 }
 function yearFromEventId(eid) {
-  const m = String(eid || "").match(/^t(\d+)-/);
-  return m ? Number(m[1]) : null;
+  return DirectorLogic.yearFromEventId(eid);
 }
 function renderAidMemory(b, rec) {
   const mem = b.aid_memory;
@@ -793,11 +956,11 @@ function renderAidMemory(b, rec) {
   }
   const rows = keys.map((id) => {
     const e = mem[id] || {};
-    const last = (e.last_year === null || e.last_year === undefined)
-      ? "时间未记录" : ("最近第 " + e.last_year + " 年");
-    const jump = (e.last_year === null || e.last_year === undefined)
+    const shown = DirectorLogic.displayYearFromMemory(e);
+    const last = shown.year == null ? (shown.note || "时间未记录") : ("最近第 " + shown.year + " 年");
+    const jump = shown.year == null
       ? `<span>${esc(bandName(rec, id))}</span>`
-      : `<button type="button" class="prior-jump" data-prior-year="${e.last_year}">${esc(bandName(rec, id))}</button>`;
+      : `<button type="button" class="prior-jump" data-prior-year="${shown.year}"${shown.eventId ? ` data-prior-id="${esc(shown.eventId)}"` : ""}>${esc(bandName(rec, id))}</button>`;
     return `<div class="mem-row">${jump}
       累计 ${nf(e.kcal)} kcal（${py(e.kcal)} 人年口粮）· ${esc(last)}</div>`;
   }).join("");
@@ -834,6 +997,13 @@ function renderSide() {
   $("side-empty").hidden = true;
   $("side-body").hidden = false;
   $("side-year").textContent = S.t;
+  document.querySelectorAll("#band-scope [data-scope]").forEach((b) =>
+    b.classList.toggle("on", b.dataset.scope === S.bandScope));
+  if ($("band-scope-note")) {
+    $("band-scope-note").textContent = S.bandScope === "full"
+      ? "全档案含该年之后才发生的轨迹。导演回放请用截至当前回放年。"
+      : "只用第 0.." + S.t + " 年已保存的记录；之后的出生/迁移/分裂/消失不计入。";
+  }
   const y = rec.year, cum = rec.cum, agg = rec.agg;
   const rows = [
     ["总人口", `${nf(agg.pop)} <small>人</small>`],
@@ -925,15 +1095,17 @@ function renderSide() {
   h.hidden = false;
   if (!b) {
     h.textContent = "历史群体";
-    selWrap.innerHTML = `<div class="gone-note">该群体在第 ${S.t} 年不在世，不把它画在地图上。
+    selWrap.innerHTML = directorLineageHtml() +
+      `<div class="gone-note">该群体在第 ${S.t} 年不在世，不把它画在地图上。
       下面是已保存的历史记录，不是当前地图上的位置。</div>
       <div id="bandmore" class="muted" style="margin-top:8px">正在读取历史记录…</div>`;
+    bindDirectorLineage(selWrap);
     loadBand(S.selBand);
     return;
   }
   h.textContent = "选中群体";
   const known = Object.keys(b.mem).length;
-  selWrap.innerHTML = `<div class="kv">
+  selWrap.innerHTML = directorLineageHtml() + `<div class="kv">
     <div class="k">名称</div><div class="v">${esc(b.name)}</div>
     <div class="k">人口</div><div class="v">${nf(b.size)} <small>人</small></div>
     <div class="k">储粮</div><div class="v">${kcalCell(b.store)}</div>
@@ -952,30 +1124,43 @@ function renderSide() {
     });
     n.addEventListener("pointerdown", (e) => e.stopPropagation());
   });
+  bindDirectorLineage(selWrap);
   loadBand(b.id);
 }
 
 async function loadBand(id) {
   if (!S.run) return;
   const myRun = S.run.run_id, myEpoch = S.epoch, myBand = id;
+  const full = S.bandScope === "full";
+  const q = full ? "" : ("?at_year=" + S.t);
   try {
-    const d = await api(`/api/runs/${myRun}/band/${id}`);
+    const d = await api(`/api/runs/${myRun}/band/${id}` + q);
     if (stale(myEpoch, myRun) || S.selBand !== myBand) return;
     S.band = d;
     const box = $("bandmore"); if (!box) return;
-    const traj = d.trajectory.map((p) => `第${p[0]}年→${p[1]}号格`).join("，");
+    const traj = (d.trajectory || []).map((p) => `第${p[0]}年→${p[1]}号格`).join("，");
     const gone = d.extinct_at !== null
       ? `（第 ${d.extinct_at} 年被移除，当年不在地图上）` : "";
-    box.innerHTML = `<div><b>来源</b>：${esc(d.origin)}</div>
+    const scope = d.history_scope || {};
+    const scopeLine = scope.mode === "as_of_year"
+      ? ("档案口径：截至第 " + scope.at_year + " 年。" + (scope.note ? " " + scope.note : ""))
+      : ("档案口径：全档案。" + (scope.note ? " " + scope.note : "含该年之后发生的事。"));
+    box.innerHTML = `<div class="muted">${esc(scopeLine)}</div>
+      <div><b>来源</b>：${esc(d.origin)}</div>
       <div><b>存续</b>：第 ${d.first_seen} 年 至 第 ${d.last_seen} 年 ${gone}</div>
-      <div><b>分裂出</b>：${d.children.length
+      <div><b>分裂出</b>：${(d.children && d.children.length)
         ? d.children.map((p) => `第${p[0]}年 ${esc(String(p[1]).slice(0, 8))}…`).join("，") : "无记录"}</div>
-      <div><b>迁移轨迹</b>：${esc(traj)}</div>
-      <div style="margin-top:4px">${esc(d.source)}</div>`;
+      <div><b>迁移轨迹</b>：${esc(traj || "无记录")}</div>
+      <div style="margin-top:4px">${esc(d.source || "")}</div>`;
   } catch (e) {
     if (stale(myEpoch, myRun) || S.selBand !== myBand) return;
     const box = $("bandmore");
-    if (box) box.innerHTML = `<span class="err">轨迹读取失败：${esc(e.message)}</span>`;
+    if (!box) return;
+    if (e.status === 404 && !full) {
+      box.innerHTML = `<span class="muted">截至第 ${S.t} 年的记录里没有这个群体。不把它画在当年地图上，也不用后来的位置补。</span>`;
+    } else {
+      box.innerHTML = `<span class="err">轨迹读取失败：${esc(e.message)}</span>`;
+    }
   }
 }
 
@@ -997,10 +1182,11 @@ function selectBand(id, opts) {
   if (!opts.force && S.selBand === id) S.selBand = null;
   else S.selBand = id || null;
   setHash({ b: S.selBand || "" });
-  S.selCell = null;
+  if (!opts.keepCell) S.selCell = null;
   if (!S.selBand && S.view === "mem") setView("truth");
-  if (S.selBand) showRail("dossier");
-  renderMap(); renderSide();
+  if (S.selBand && opts.rail !== "none") showRail(opts.rail || "dossier");
+  if (!opts.skipMap) renderMap();
+  renderSide();
 }
 function setView(v) {
   if (v === "mem" && !S.selBand) { flash("先点一个群体，才能看它记忆里的世界。"); return; }
@@ -1044,7 +1230,13 @@ function commitYear(t) {
   S.yearWait = null;
   setYearLoadOverlay(t, false);
   syncYearWidgets(t);
-  setHash({ t: String(t) });
+  setHash({
+    t: String(t),
+    mode: S.playMode === "events" ? "events" : "",
+    event: S.selEvent || "",
+    archive: S.bandScope === "full" ? "full" : "",
+  });
+  renderDirectorChrome();
 }
 async function gotoYear(t, opts) {
   opts = opts || {};
@@ -1052,6 +1244,13 @@ async function gotoYear(t, opts) {
   const myRun = S.run.run_id;
   const myEpoch = bump();
   t = Math.max(0, Math.min(t, maxT()));
+  cancelFx({ keepStatic: !!opts.keepEvent && !!S.selEvent });
+  if (!opts.keepEvent && S.selEvent) {
+    const ey = DirectorLogic.yearFromEventId(S.selEvent);
+    if (ey != null && ey !== t) {
+      S.selEvent = null;
+    }
+  }
   if (S.years.has(ykey(myRun, t))) {
     if (stale(myEpoch, myRun)) return;
     commitYear(t);
@@ -1080,8 +1279,15 @@ async function gotoYear(t, opts) {
   if (!opts.quiet) renderCharts();
   if (S.evScope === "until") prefetchYears(myRun, t);
 }
+function playDelay() {
+  return Math.max(80, (S.playMode === "events" ? 900 : 600) / Math.max(S.speed || 1, 0.25));
+}
 function tick() {
   if (!S.playing) return;
+  if (S.playMode === "events") {
+    tickEvents();
+    return;
+  }
   if (S.t >= maxT()) {
     if (S.run && (S.run.status === "running" || S.run.status === "queued")) {
       $("tl-note").textContent = "已经放到最新算出来的一年，等后台继续计算…";
@@ -1091,15 +1297,22 @@ function tick() {
   }
   gotoYear(S.t + 1, { quiet: true }).then(() => {
     renderCharts();
-    S.timer = setTimeout(tick, Math.max(60, 600 / S.speed));
+    S.timer = setTimeout(tick, playDelay());
   });
 }
 function setPlaying(v) {
   S.playing = v;
-  $("b-play").textContent = v ? "⏸ 暂停" : "▶ 播放历史";
-  $("tl-note").textContent = v ? "回放中（只读已保存的记录）"
-    : "回放只读取已保存的记录，不会重新计算世界。";
+  if ($("b-play")) {
+    $("b-play").textContent = v ? "⏸ 暂停"
+      : (S.playMode === "events" ? "▶ 播放事件" : "▶ 播放");
+  }
+  if ($("tl-note")) {
+    $("tl-note").textContent = v
+      ? (S.playMode === "events" ? "按有记录的事件年播放（只读）" : "回放中（只读已保存的记录）")
+      : "回放只读取已保存的记录，不会重新计算世界。";
+  }
   clearTimeout(S.timer);
+  if (!v) cancelFx({ keepStatic: !!S.selEvent });
   if (v) tick();
 }
 
@@ -1245,7 +1458,11 @@ function renderEvents() {
       loadNote = "已加载开局至" + OverviewLogic.yearViewLabel(S.t) + "的全部事件清单。";
     }
   }
-  if ($("ev-load-note")) $("ev-load-note").textContent = loadNote;
+  if ($("ev-load-note")) {
+    $("ev-load-note").textContent = loadNote
+      ? loadNote + " " + DirectorLogic.orderNote
+      : DirectorLogic.orderNote;
+  }
 
   const filtered = S.evFilter === "all" ? items
     : S.evFilter === "repay" ? items.filter((e) => e.type === "aid" && e.repay)
@@ -1269,16 +1486,20 @@ function renderEvents() {
           return y == null ? esc(String(id))
             : `<button type="button" class="prior-jump" data-prior-year="${y}" data-prior-id="${esc(id)}">第 ${y} 年原援助</button>`;
         }).join("");
-        const remY = e.basis.remembered_last_year;
+        const shownY = DirectorLogic.displayYearFromBasis(e.basis);
         basis = `<div class="src basis-row">依据：${esc(e.basis.why || "未记录")}` +
           (e.basis.remembered_kcal != null ? ` · 援助前记住 ${nf(e.basis.remembered_kcal)} kcal` : "") +
-          (remY == null ? "" : ` · 最近受助于第 ${remY} 年`) +
+          (shownY.year == null ? (" · " + (shownY.note || "先前年份未记录")) : ` · 最近受助于第 ${shownY.year} 年`) +
           (priors ? `<div class="prior-row">跳转 ${priors}</div>` : " · 先前事件未记录") + `</div>`;
       }
       const cls = [e.type, e.repay ? "repay" : "", e.phase === "recip" ? "phase-recip" : ""]
         .filter(Boolean).join(" ");
-      return `<div class="ev ${esc(cls)}" data-t="${e.t}"
-        data-band="${esc(e.band || e.receiver || "")}" data-to="${e.to != null ? e.to : ""}"
+      const ek = DirectorLogic.eventKey(e, e.t, e._i);
+      const on = S.selEvent && ek === S.selEvent;
+      return `<div class="ev ${esc(cls)}${on ? " on" : ""}" data-t="${e.t}" data-eid="${esc(ek)}"
+        data-type="${esc(e.type || "")}" data-band="${esc(e.band || e.receiver || "")}"
+        data-parent="${esc(e.parent || "")}" data-donor="${esc(e.donor || "")}"
+        data-receiver="${esc(e.receiver || "")}" data-to="${e.to != null ? e.to : ""}"
         data-from="${e.from != null ? e.from : ""}" data-cell="${e.cell != null ? e.cell : ""}">
         <div><span class="when">${e.t === 0 ? "开局" : "第 " + e.t + " 年"}</span>
           ${badges.join(" ")} ${esc(TYPE_LABEL(e.type))} · ${esc(e.text)}</div>
@@ -1288,13 +1509,18 @@ function renderEvents() {
     }).join("");
     box.querySelectorAll(".ev").forEach((n) => n.addEventListener("click", (ev) => {
       if (ev.target.closest(".prior-jump, .prior-row, [data-prior-year]")) return;
-      jumpToEvent({
-        t: +n.dataset.t,
-        band: n.dataset.band || null,
-        to: n.dataset.to === "" ? null : +n.dataset.to,
-        from: n.dataset.from === "" ? null : +n.dataset.from,
-        cell: n.dataset.cell === "" ? null : +n.dataset.cell,
-      });
+      const found = findEventByKey(n.dataset.eid, +n.dataset.t);
+      if (found) focusEvent(found);
+      else {
+        focusEvent({
+          t: +n.dataset.t, id: n.dataset.eid, type: n.dataset.type,
+          band: n.dataset.band || null, parent: n.dataset.parent || null,
+          donor: n.dataset.donor || null, receiver: n.dataset.receiver || null,
+          to: n.dataset.to === "" ? null : +n.dataset.to,
+          from: n.dataset.from === "" ? null : +n.dataset.from,
+          cell: n.dataset.cell === "" ? null : +n.dataset.cell,
+        });
+      }
     }));
     box.querySelectorAll(".prior-jump").forEach((n) => {
       const go = (e) => {
@@ -1302,7 +1528,15 @@ function renderEvents() {
         e.stopPropagation();
         if (e.stopImmediatePropagation) e.stopImmediatePropagation();
         const y = +n.dataset.priorYear;
-        if (Number.isFinite(y)) gotoYear(y);
+        const pid = n.dataset.priorId;
+        if (Number.isFinite(y)) {
+          gotoYear(y).then(() => {
+            if (pid) {
+              const found = findEventByKey(pid, y);
+              if (found) focusEvent(found);
+            }
+          });
+        }
       };
       n.addEventListener("click", go);
       n.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
@@ -1344,18 +1578,354 @@ function renderEvents() {
     $("bandtable").querySelectorAll("tr[data-b]").forEach((n) =>
       n.addEventListener("click", () => { selectBand(n.dataset.b, { force: true }); showTab("world"); }));
   }
+  renderDirectorCard();
+  renderDirectorChrome();
+}
+
+function cancelFx(opts) {
+  opts = opts || {};
+  S.fxGen += 1;
+  (S.fxTimers || []).forEach((id) => { clearTimeout(id); });
+  S.fxTimers = [];
+  if (S.fxRaf != null && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(S.fxRaf);
+  }
+  S.fxRaf = null;
+  const svg = $("map");
+  if (svg) {
+    const layer = svg.querySelector("#fx-overlay");
+    if (layer) layer.remove();
+    svg.querySelectorAll(".fx-hot,.fx-share,.fx-aid,.fx-repay,.fx-migrate").forEach((n) => {
+      n.classList.remove("fx-hot", "fx-share", "fx-aid", "fx-repay", "fx-migrate");
+    });
+  }
+  if (opts.keepStatic && S.selEvent) paintDirectorFx({ staticOnly: true });
+}
+function scheduleFx(fn, ms) {
+  const gen = S.fxGen;
+  const id = setTimeout(() => { if (gen === S.fxGen) fn(); }, ms);
+  S.fxTimers.push(id);
+  return id;
+}
+function mapIsCurrent() {
+  return !!(S.run && S._mapRun === S.run.run_id && S._mapYear === S.t &&
+    $("map") && $("map").querySelector(".cell"));
+}
+function findEventByKey(key, tHint) {
+  if (!key || !S.run) return null;
+  const tryYear = (t) => {
+    if (t == null || t < 0) return null;
+    const rec = S.years.get(ykey(S.run.run_id, t));
+    if (!rec || !rec.events) return null;
+    for (let i = 0; i < rec.events.length; i++) {
+      const e = rec.events[i];
+      if (DirectorLogic.eventKey(e, t, i) === key) {
+        return Object.assign({}, e, { t: t, _i: i });
+      }
+    }
+    return null;
+  };
+  if (tHint != null) {
+    const hit = tryYear(tHint);
+    if (hit) return hit;
+  }
+  const y = DirectorLogic.yearFromEventId(key);
+  if (y != null) {
+    const hit = tryYear(y);
+    if (hit) return hit;
+  }
+  return tryYear(S.t);
+}
+function directorLineageHtml() {
+  const ev = findEventByKey(S.selEvent, S.t);
+  if (!ev || (ev.type !== "split" && ev.type !== "extinct")) return "";
+  if (ev.type === "split") {
+    return `<div class="dir-lineage">谱系提示来自事件记录，不是地图位置。
+      父群体 ${esc(String(ev.parent || "未记录"))} 分裂出 ${esc(String(ev.band || "未记录"))}。
+      地点未记录，禁用地图定位，不拿年末位置猜测。</div>`;
+  }
+  return `<div class="dir-gone">消失提示来自事件记录：群体 ${esc(String(ev.band || "未记录"))}
+    人口归零被移除。地点未记录，不拿年末位置猜测。</div>`;
+}
+function bindDirectorLineage(wrap) {
+  if (!wrap) return;
+  wrap.querySelectorAll(".prior-jump").forEach((n) => {
+    n.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const y = +n.dataset.priorYear;
+      if (Number.isFinite(y)) gotoYear(y);
+    });
+    n.addEventListener("pointerdown", (e) => e.stopPropagation());
+  });
+}
+function svgEl(name, attrs) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", name);
+  Object.keys(attrs || {}).forEach((k) => n.setAttribute(k, attrs[k]));
+  return n;
+}
+function paintDirectorFx(opts) {
+  opts = opts || {};
+  const svg = $("map");
+  if (!svg || !S.map) return;
+  const prev = svg.querySelector("#fx-overlay");
+  if (prev) prev.remove();
+  svg.querySelectorAll(".fx-hot,.fx-share,.fx-aid,.fx-repay,.fx-migrate").forEach((n) => {
+    n.classList.remove("fx-hot", "fx-share", "fx-aid", "fx-repay", "fx-migrate");
+  });
+  if (!S.selEvent) return;
+  const ev = findEventByKey(S.selEvent, S.t);
+  if (!ev) return;
+  const focus = DirectorLogic.eventFocus(ev);
+  focus.cells.forEach((i) => {
+    const p = svg.querySelector('.cell[data-cell="' + i + '"]');
+    if (!p) return;
+    p.classList.add("fx-hot");
+    if (ev.type === "share") p.classList.add("fx-share");
+    else if (ev.type === "aid" && ev.repay) p.classList.add("fx-repay");
+    else if (ev.type === "aid") p.classList.add("fx-aid");
+    else if (ev.type === "migrate") p.classList.add("fx-migrate");
+  });
+  if (!focus.locate) return;
+  const overlay = svgEl("g", { id: "fx-overlay", "pointer-events": "none" });
+  const reduced = opts.staticOnly || DirectorLogic.prefersReducedMotion();
+  if (ev.type === "migrate") {
+    if (Number.isFinite(+ev.from) && S.map.cells[+ev.from]) {
+      const xy = cellCenter(S.map.cells[+ev.from]);
+      overlay.appendChild(svgEl("circle", {
+        class: "fx-endpoint fx-endpoint-from", cx: xy[0].toFixed(1), cy: xy[1].toFixed(1), r: "11",
+      }));
+    }
+    if (Number.isFinite(+ev.to) && S.map.cells[+ev.to]) {
+      const xy = cellCenter(S.map.cells[+ev.to]);
+      overlay.appendChild(svgEl("circle", {
+        class: "fx-endpoint fx-endpoint-to", cx: xy[0].toFixed(1), cy: xy[1].toFixed(1), r: "13",
+      }));
+    }
+  } else if ((ev.type === "share" || ev.type === "aid") && focus.cells.length) {
+    const cell = S.map.cells[focus.cells[0]];
+    if (cell) {
+      const xy = cellCenter(cell);
+      const mark = ev.type === "share" ? "fx-share-mark"
+        : (ev.repay ? "fx-repay-mark" : "fx-aid-mark");
+      overlay.appendChild(svgEl("circle", {
+        class: mark + (reduced ? "" : " fx-pulse"),
+        cx: xy[0].toFixed(1), cy: (xy[1] - 6).toFixed(1), r: "7",
+      }));
+    }
+  }
+  svg.appendChild(overlay);
+}
+function panToCell(i, gen) {
+  if (DirectorLogic.prefersReducedMotion()) return;
+  if (!S.map || !S.map.cells[i]) return;
+  const xy = cellCenter(S.map.cells[i]);
+  const start = { x: S.cam.x, y: S.cam.y };
+  const tx = 260 - xy[0], ty = 215 - xy[1];
+  const t0 = performance.now();
+  const dur = 280;
+  const step = (now) => {
+    if (gen !== S.fxGen) return;
+    const u = Math.min(1, (now - t0) / dur);
+    S.cam.x = start.x + (tx - start.x) * u;
+    S.cam.y = start.y + (ty - start.y) * u;
+    applyCam();
+    if (u < 1) S.fxRaf = requestAnimationFrame(step);
+  };
+  S.fxRaf = requestAnimationFrame(step);
+}
+function renderDirectorChrome() {
+  document.querySelectorAll("#play-mode [data-mode]").forEach((b) =>
+    b.classList.toggle("on", b.dataset.mode === S.playMode));
+  const years = DirectorLogic.eventYearsFromSeries(S.series);
+  const prev = DirectorLogic.prevEventYear(years, S.t);
+  const next = DirectorLogic.nextEventYear(years, S.t);
+  if ($("b-prev-ev")) $("b-prev-ev").disabled = prev == null;
+  if ($("b-next-ev")) $("b-next-ev").disabled = next == null;
+  const rec = recNow();
+  const st = DirectorLogic.eventModeStatus({
+    series: S.series, yearsRecorded: S.run ? (S.run.years_recorded ?? 0) : 0,
+    runStatus: S.run ? S.run.status : "", rec: rec, t: S.t,
+  });
+  if ($("dir-mode-note")) {
+    if (S.playMode === "events") {
+      $("dir-mode-note").textContent = st.text ||
+        ("只跳有记录的事件年（" + years.length + " 个年份）。" + DirectorLogic.orderNote);
+    } else {
+      $("dir-mode-note").textContent = st.kind === "empty-year" || st.kind === "none"
+        ? st.text
+        : "逐年推进已保存记录。空年也会停，不把出生人数当成事件。";
+    }
+  }
+}
+function renderDirectorCard() {
+  const box = $("director-card");
+  const body = $("director-card-body");
+  if (!box || !body) return;
+  const ev = findEventByKey(S.selEvent, S.t);
+  if (!ev) { box.hidden = true; body.innerHTML = ""; return; }
+  box.hidden = false;
+  const focus = DirectorLogic.eventFocus(ev);
+  const rec = recNow();
+  const related = focus.related.map((r) => {
+    const name = rec ? bandName(rec, r.id) : (String(r.id).slice(0, 8) + "…");
+    const role = ({ parent: "父群体", donor: "供给方", receiver: "接收方", band: "相关群体" })[r.role] || r.role;
+    return `<button type="button" class="prior-jump" data-b="${esc(r.id)}">${esc(role)} · ${esc(name)}</button>`;
+  }).join("");
+  body.innerHTML = `<div class="dir-title">${ev.t === 0 ? "开局" : "第 " + ev.t + " 年"} · ${esc(TYPE_LABEL(ev.type))}${ev.repay ? " · 回助" : ""} · ${esc(DirectorLogic.eventKey(ev, ev.t, ev._i))}</div>
+    <p class="dir-text">${esc(ev.text || "")}</p>
+    <div class="dir-meta">来源：${esc(ev.source || "未标注")}${ev.unrecorded ? "　·　未记录：" + esc(ev.unrecorded) : ""}</div>
+    <div class="dir-meta">${esc(focus.note)}</div>
+    <div class="dir-meta">${esc(DirectorLogic.orderNote)}</div>
+    ${related ? `<div class="dir-related">${related}</div>` : ""}`;
+  body.querySelectorAll("[data-b]").forEach((n) => {
+    n.addEventListener("click", (e) => {
+      e.preventDefault();
+      selectBand(n.dataset.b, { force: true, keepCell: true, skipMap: mapIsCurrent(), rail: "dossier" });
+    });
+  });
+}
+function setPlayMode(mode, opts) {
+  opts = opts || {};
+  const next = mode === "events" ? "events" : "year";
+  if (S.playMode === next && !opts.force) {
+    renderDirectorChrome();
+    setHash({ mode: next === "events" ? "events" : "" });
+    return;
+  }
+  if (!opts.keepPlaying) setPlaying(false);
+  cancelFx({ keepStatic: !!S.selEvent });
+  S.playMode = next;
+  setHash({ mode: next === "events" ? "events" : "" });
+  renderDirectorChrome();
+  renderDensity();
+  if (!opts.silent) {
+    renderEvents();
+    paintDirectorFx({ staticOnly: true });
+  }
+}
+async function gotoEventYear(t) {
+  setPlaying(false);
+  await gotoYear(t);
+  const rec = recNow();
+  if (rec && rec.events && rec.events.length) {
+    await focusEvent(Object.assign({}, rec.events[0], { t: t, _i: 0 }));
+  } else {
+    S.selEvent = null;
+    renderDirectorCard();
+    renderDirectorChrome();
+  }
+}
+async function stepEventYear(dir) {
+  const years = DirectorLogic.eventYearsFromSeries(S.series);
+  const t = dir < 0 ? DirectorLogic.prevEventYear(years, S.t) : DirectorLogic.nextEventYear(years, S.t);
+  if (t == null) {
+    const rec = recNow();
+    const st = DirectorLogic.eventModeStatus({
+      series: S.series, yearsRecorded: S.run ? (S.run.years_recorded ?? 0) : 0,
+      runStatus: S.run ? S.run.status : "", rec: rec, t: S.t,
+    });
+    if ($("tl-note")) $("tl-note").textContent = st.text || "没有更多有记录的事件年。";
+    return;
+  }
+  await gotoEventYear(t);
+}
+async function tickEvents() {
+  if (!S.playing) return;
+  const years = DirectorLogic.eventYearsFromSeries(S.series);
+  const rec0 = recNow();
+  const st = DirectorLogic.eventModeStatus({
+    series: S.series, yearsRecorded: S.run ? (S.run.years_recorded ?? 0) : 0,
+    runStatus: S.run ? S.run.status : "", rec: rec0, t: S.t,
+  });
+  if (!years.length) {
+    if ($("tl-note")) $("tl-note").textContent = st.text;
+    setPlaying(false);
+    return;
+  }
+  const rec = rec0;
+  if (rec && rec.events && rec.events.length) {
+    const items = rec.events.map((e, i) => Object.assign({}, e, { t: S.t, _i: i }));
+    const idx = items.findIndex((e) => DirectorLogic.eventKey(e, S.t, e._i) === S.selEvent);
+    if (idx < 0) {
+      await focusEvent(items[0], { fromPlay: true, skipMap: mapIsCurrent() });
+      S.timer = setTimeout(tick, playDelay());
+      return;
+    }
+    if (idx + 1 < items.length) {
+      await focusEvent(items[idx + 1], { fromPlay: true, skipMap: mapIsCurrent() });
+      S.timer = setTimeout(tick, playDelay());
+      return;
+    }
+  }
+  const ny = DirectorLogic.nextEventYear(years, S.t);
+  if (ny == null) {
+    if (S.run && (S.run.status === "running" || S.run.status === "queued")) {
+      if ($("tl-note")) $("tl-note").textContent = "已经放到最新有记录的事件年，等后台继续计算…";
+      S.timer = setTimeout(tick, 700);
+      return;
+    }
+    setPlaying(false);
+    return;
+  }
+  await gotoYear(ny, { quiet: true });
+  const rec2 = recNow();
+  if (!rec2) {
+    if ($("tl-note")) $("tl-note").textContent = "第 " + ny + " 年的记录尚未加载，不把空清单当成 0 条事件。";
+    S.timer = setTimeout(tick, playDelay());
+    return;
+  }
+  if (!rec2.events || !rec2.events.length) {
+    if ($("tl-note")) $("tl-note").textContent = "第 " + ny + " 年曲线记有事件，但事件清单缺失。不补编。";
+    S.timer = setTimeout(tick, playDelay());
+    return;
+  }
+  await focusEvent(Object.assign({}, rec2.events[0], { t: ny, _i: 0 }), { fromPlay: true });
+  S.timer = setTimeout(tick, playDelay());
+}
+async function focusEvent(ev, opts) {
+  opts = opts || {};
+  if (!ev) return;
+  if (!opts.fromPlay && !opts.fromHash) setPlaying(false);
+  showTab("world");
+  const t = ev.t != null ? ev.t : ev.year;
+  cancelFx();
+  if (t != null && t !== S.t) {
+    await gotoYear(t, { quiet: opts.quiet, keepEvent: true });
+  }
+  const rec = recNow();
+  const resolved = (rec && rec.events && t === S.t)
+    ? findEventByKey(DirectorLogic.eventKey(ev, t, ev._i), S.t) || Object.assign({}, ev, { t: S.t })
+    : Object.assign({}, ev, { t: t });
+  S.selEvent = DirectorLogic.eventKey(resolved, resolved.t, resolved._i);
+  const focus = DirectorLogic.eventFocus(resolved);
+  if (focus.locate && focus.cells.length) {
+    if (resolved.type === "migrate" && resolved.to != null) S.selCell = +resolved.to;
+    else S.selCell = focus.cells[0];
+  } else if (resolved.type === "split" || resolved.type === "extinct") {
+    S.selCell = null;
+  }
+  const relatedId = resolved.band || resolved.receiver || resolved.donor || resolved.parent || null;
+  if (relatedId) S.selBand = String(relatedId);
+  setHash({
+    event: S.selEvent, t: String(S.t),
+    mode: S.playMode === "events" ? "events" : "",
+    b: S.selBand || "",
+  });
+  if (resolved.type === "split" || resolved.type === "extinct") showRail("dossier");
+  else showRail("chronicle");
+  const skipMap = opts.skipMap && mapIsCurrent();
+  if (!skipMap) renderMap();
+  else paintDirectorFx();
+  renderEvents();
+  renderSide();
+  renderDirectorCard();
+  const evNode = document.querySelector('#events .ev[data-eid="' + S.selEvent + '"]');
+  if (evNode && evNode.scrollIntoView) evNode.scrollIntoView({ block: "nearest" });
+  if (focus.locate && focus.cells.length) panToCell(focus.cells[0], S.fxGen);
 }
 
 function jumpToEvent(ev) {
-  setPlaying(false);
-  showTab("world");
-  gotoYear(ev.t).then(() => {
-    if (ev.to != null) S.selCell = ev.to;
-    else if (ev.from != null) S.selCell = ev.from;
-    else if (ev.cell != null && ev.cell !== "") S.selCell = +ev.cell;
-    if (ev.band) selectBand(ev.band, { force: true });
-    else { renderMap(); renderSide(); }
-  });
+  focusEvent(ev);
 }
 
 /* ---------------- 运行记录 ---------------- */
@@ -1402,6 +1972,8 @@ function renderRuns() {
 async function openRun(id) {
   const myEpoch = bump();
   setPlaying(false);
+  cancelFx();
+  S.selEvent = null;
   let run, ser;
   try {
     run = await api(`/api/runs/${id}`);
@@ -1424,8 +1996,13 @@ async function openRun(id) {
   $("scrub").max = maxT();
   S.t = 0;
   syncYearWidgets(0);
-  setHash({ run: id, b: "", view: "", t: "0" });
+  setHash({
+    run: id, b: "", view: "", t: "0", event: "",
+    mode: S.playMode === "events" ? "events" : "",
+    archive: S.bandScope === "full" ? "full" : "",
+  });
   renderOverview(); renderMap(); renderSide(); renderEvents(); renderStatus();
+  renderDirectorCard(); renderDirectorChrome();
   await gotoYear(0);
   renderRuns(); renderCharts(); renderStatus(); renderOverview();
   prefetchYears(id, maxT());
@@ -1561,9 +2138,35 @@ async function boot() {
   if ($("zoom-out")) $("zoom-out").addEventListener("click", () => { S.cam.k = Math.max(0.7, S.cam.k / 1.25); renderMap(); });
   if ($("zoom-reset")) $("zoom-reset").addEventListener("click", () => { S.cam = { x: 0, y: 0, k: 1 }; renderMap(); });
   $("b-play").addEventListener("click", () => setPlaying(!S.playing));
-  $("b-next").addEventListener("click", () => { setPlaying(false); gotoYear(S.t + 1); });
-  $("b-prev").addEventListener("click", () => { setPlaying(false); gotoYear(S.t - 1); });
-  $("b-home").addEventListener("click", () => { setPlaying(false); gotoYear(0); });
+  $("b-next").addEventListener("click", () => {
+    setPlaying(false);
+    if (S.playMode === "events") stepEventYear(1);
+    else gotoYear(S.t + 1);
+  });
+  $("b-prev").addEventListener("click", () => {
+    setPlaying(false);
+    if (S.playMode === "events") stepEventYear(-1);
+    else gotoYear(S.t - 1);
+  });
+  $("b-home").addEventListener("click", () => {
+    setPlaying(false);
+    cancelFx();
+    S.selEvent = null;
+    gotoYear(0);
+  });
+  if ($("b-prev-ev")) $("b-prev-ev").addEventListener("click", () => stepEventYear(-1));
+  if ($("b-next-ev")) $("b-next-ev").addEventListener("click", () => stepEventYear(1));
+  if ($("play-mode")) $("play-mode").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-mode]"); if (!b) return;
+    setPlayMode(b.dataset.mode);
+  });
+  if ($("band-scope")) $("band-scope").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-scope]"); if (!b) return;
+    S.bandScope = b.dataset.scope === "full" ? "full" : "as_of";
+    setHash({ archive: S.bandScope === "full" ? "full" : "" });
+    if (S.selBand) loadBand(S.selBand);
+    renderSide();
+  });
   $("speed").addEventListener("change", (e) => { S.speed = +e.target.value; });
   $("scrub").addEventListener("input", (e) => { setPlaying(false); gotoYear(+e.target.value); });
   $("b-start").addEventListener("click", startRun);
@@ -1585,10 +2188,15 @@ async function boot() {
     const tag = (el && el.tagName) || "";
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") return;
     if (el && el.isContentEditable) return;
-    if (e.key === "ArrowLeft") { e.preventDefault(); setPlaying(false); gotoYear(S.t - 1); }
-    else if (e.key === "ArrowRight") { e.preventDefault(); setPlaying(false); gotoYear(S.t + 1); }
-    else if (e.key === "Home") { e.preventDefault(); setPlaying(false); gotoYear(0); }
-    else if (e.key === " " || e.code === "Space") { e.preventDefault(); setPlaying(!S.playing); }
+    if (e.key === "ArrowLeft") {
+      e.preventDefault(); setPlaying(false);
+      if (S.playMode === "events") stepEventYear(-1); else gotoYear(S.t - 1);
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault(); setPlaying(false);
+      if (S.playMode === "events") stepEventYear(1); else gotoYear(S.t + 1);
+    } else if (e.key === "Home") {
+      e.preventDefault(); setPlaying(false); cancelFx(); S.selEvent = null; gotoYear(0);
+    } else if (e.key === " " || e.code === "Space") { e.preventDefault(); setPlaying(!S.playing); }
   });
   $("ev-scope").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-scope]"); if (!b) return;
@@ -1627,13 +2235,20 @@ async function boot() {
   const wanted = hp.run && S.runs.find((r) => r.run_id === hp.run);
   const first = wanted || S.runs.find((r) => r.status === "running") ||
     S.runs.find((r) => r.years_recorded > 0);
+  if (hp.mode === "events") S.playMode = "events";
+  if (hp.archive === "full") S.bandScope = "full";
   if (first) {
     await openRun(first.run_id);
+    if (hp.mode === "events") setPlayMode("events", { silent: true, force: true });
     if (hp.t) {
       const parsed = OverviewLogic.parseStrictInt(hp.t, { name: "年份", min: 0 });
       if (parsed.ok) await gotoYear(parsed.value);
     }
-    if (hp.b) selectBand(hp.b, { force: true });
+    if (hp.event) {
+      const ev = findEventByKey(hp.event, S.t);
+      if (ev) await focusEvent(ev, { fromHash: true });
+    }
+    if (hp.b) selectBand(hp.b, { force: true, keepCell: !!S.selEvent });
     if (hp.view === "mem") setView("mem");
   } else {
     $("side-empty").textContent = "还没有任何运行记录。到“运行记录”页发起一次模拟。";
@@ -1814,7 +2429,8 @@ async function startRun() {
   }
 }
 
-window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot, startRun, setLayer };
+window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot, startRun, setLayer,
+  setPlayMode, focusEvent, cancelFx, loadBand, gotoEventYear, stepEventYear, findEventByKey };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {

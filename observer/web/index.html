@@ -140,6 +140,11 @@
       <div class="rail-pane" id="pane-dossier" hidden>
         <div class="dossier" id="side">
           <div class="panel-kicker">DOSSIER</div>
+          <div class="seg" id="band-scope" role="tablist" aria-label="档案范围">
+            <button type="button" data-scope="as_of" class="on">截至当前回放年</button>
+            <button type="button" data-scope="full">全档案</button>
+          </div>
+          <p class="muted" id="band-scope-note">默认只用当前回放年及以前的记录，避免把尚未发生的轨迹画进来。</p>
           <div class="emptystate" id="side-empty">还没有选中任何运行。</div>
           <div id="side-body" hidden>
             <h3>第 <span id="side-year">0</span> 年 · 当年读数</h3>
@@ -162,6 +167,8 @@
           <p class="unit-note">1 人年口粮 = 模型标准下 1 人一年的食物量。格子颜色只表示相对存量，不能据此说某个群体一定能活多少年。</p>
           <p class="muted">64 格、六邻接、A/B 被不可通行屏障列隔开。屏障只表示不可通行，不是山脉、国界或城市。</p>
           <p class="muted">缩放：缩小时只保留棋子；放大后显示人口与名称。流向层锚定事件记录的格子，不是年末位置。</p>
+          <p class="muted">导演模式：逐年播放会经过没有事件的年份；只看有记录的事件则按 series.events 与当年事件清单跳年，不把人口或出生账冒充事件。同一年列表顺序不保证机制先后，也不是因果。</p>
+          <p class="muted">迁移只标 from/to 端点，具体路线未记录时不补画中间格。分裂/消失日志没有事件格，只在档案里给谱系或消失提示，不拿年末位置定位。</p>
           <p class="muted">援助<strong>活动</strong>次数 = 格×年（一次多人援助算 1）。<strong>转移</strong> = 一个供给方给一个接收方算 1 笔。
             <strong>回助</strong>笔数含碰巧，不代表规则起作用。<strong>分配改变</strong>是 recip.changed（格×年），与 repay 不是同一计数。不要把这些数相加。</p>
           <div class="hud-params" id="hud-params"></div>
@@ -171,11 +178,20 @@
   </div>
 
   <div class="console glass" id="timeline">
+    <div class="tlhead">
+      <div class="seg" id="play-mode" role="tablist" aria-label="回放模式">
+        <button type="button" data-mode="year" class="on" id="mode-year">逐年播放</button>
+        <button type="button" data-mode="events" id="mode-events">只看有记录的事件</button>
+      </div>
+      <span class="pill" id="dir-mode-note">逐年推进已保存年份。出生人数不是事件。</span>
+    </div>
     <div class="tlctl">
       <button id="b-home" class="btn" title="开局">⏮</button>
-      <button id="b-prev" class="btn" title="上一年">◀</button>
+      <button id="b-prev" class="btn" title="上一年或上一事件年">◀</button>
       <button id="b-play" class="btn primary play">▶ 播放</button>
-      <button id="b-next" class="btn" title="下一年">▶</button>
+      <button id="b-next" class="btn" title="下一年或下一事件年">▶</button>
+      <button id="b-prev-ev" class="btn" title="前一事件年">前一事件年</button>
+      <button id="b-next-ev" class="btn" title="下一事件年">下一事件年</button>
       <label class="spd">速率
         <select id="speed">
           <option value="0.5">0.5×</option><option value="1" selected>1×</option>
@@ -186,11 +202,15 @@
       <span class="pill" id="tl-calc">已计算：—</span>
       <span class="yearbox">第 <b id="scrub-year">0</b> 年</span>
     </div>
+    <div id="director-card" class="director-card" hidden>
+      <div class="panel-kicker">SELECTED EVENT</div>
+      <div id="director-card-body"></div>
+    </div>
     <div class="density-wrap">
       <svg id="density" class="density" preserveAspectRatio="none"></svg>
       <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="回放年份">
     </div>
-    <p class="muted" id="tl-note">← → 逐年，空格播放。回放只读已保存记录。</p>
+    <p class="muted" id="tl-note">← → 按当前模式步进，空格播放。回放只读已保存记录，不改世界。</p>
   </div>
 
   <details class="panel glass tech-details" id="tech-details">

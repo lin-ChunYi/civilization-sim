@@ -145,6 +145,37 @@ window.__OBS_MANUAL_BOOT__ = true;
     ok("L41 年末仍在事件格才允许弧", fb && fb.kind === "arc" && fb.cell === 0, JSON.stringify(fb));
     const fc = L.flowAnchor({ type: "share", donor: "A", receiver: "B" }, { A: 1, B: 1 });
     ok("L42 缺 e.cell 不猜测年末格", fc && fc.kind === "unrecorded" && fc.cell === null, JSON.stringify(fc));
+
+    const D = window.DirectorLogic;
+    ok("L43 DirectorLogic 已暴露", !!D && typeof D.eventYearsFromSeries === "function");
+    const evYears = D.eventYearsFromSeries([
+      { t: 0, events: 0, year: { births_cum: 12 } },
+      { t: 1, events: 2 },
+      { t: 2, events: 0, agg: { pop: 200 } },
+      { t: 3, events: 1 },
+    ]);
+    ok("L44 事件年只看 series.events>0，不用出生/人口", evYears.join() === "1,3", JSON.stringify(evYears));
+    ok("L45 下一事件年", D.nextEventYear(evYears, 1) === 3);
+    ok("L46 前一事件年", D.prevEventYear(evYears, 3) === 1);
+    const none = D.eventModeStatus({ series: [{ t: 0, events: 0 }, { t: 1, events: 0 }], yearsRecorded: 1, runStatus: "done", rec: { events: [] }, t: 1 });
+    ok("L47 无事件年说明不是出生账", none.kind === "none" && /不是事件/.test(none.text), none.kind + none.text);
+    const computing = D.eventModeStatus({ series: [], yearsRecorded: 0, runStatus: "running", rec: null, t: 0 });
+    ok("L48 还在计算不把空清单当 0", computing.kind === "computing" && /尚未落盘/.test(computing.text), computing.kind);
+    const missing = D.eventModeStatus({ series: [{ t: 5, events: 1 }], yearsRecorded: 5, runStatus: "done", rec: null, t: 5 });
+    ok("L49 记录缺失单独说明", missing.kind === "missing" && /不把空清单/.test(missing.text), missing.kind);
+    const shareF = D.eventFocus({ type: "share", id: "t125-share-1", cell: 0, donor: "A", receiver: "B" });
+    ok("L50 t125-share-1 锚在 0 格不猜年末 1", shareF.locate && shareF.cells[0] === 0, JSON.stringify(shareF));
+    const migF = D.eventFocus({ type: "migrate", from: 0, to: 1, band: "X" });
+    ok("L51 迁移只标端点并声明路线未记录", migF.locate && migF.cells.join() === "0,1" && /路线未记录/.test(migF.note), migF.note);
+    const splitF = D.eventFocus({ type: "split", parent: "P", band: "C" });
+    ok("L52 分裂无事件格禁用地图定位", !splitF.locate && splitF.cells.length === 0 && /不拿年末/.test(splitF.note), splitF.note);
+    const memOld = D.displayYearFromMemory({ last_year: 82, kcal: 1 });
+    ok("L53 缺展示字段不把 raw tick 当展示年", memOld.year == null, JSON.stringify(memOld));
+    const memNew = D.displayYearFromMemory({ last_year: 82, last_year_display: 83, last_event_id: "t83-aid-3" });
+    ok("L54 用 last_year_display 与 last_event_id", memNew.year === 83 && memNew.eventId === "t83-aid-3", JSON.stringify(memNew));
+    const basis = D.displayYearFromBasis({ remembered_last_year: 82, prior_events: ["t83-aid-3"] });
+    ok("L55 优先真实 prior_event 链接", basis.year === 83 && basis.eventId === "t83-aid-3", JSON.stringify(basis));
+    ok("L56 年内顺序免责声明存在", /不保证年内机制先后/.test(D.orderNote));
   } catch (e) {
     out.push("FAIL 自检脚本本身出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
   }

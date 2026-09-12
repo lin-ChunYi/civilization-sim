@@ -209,7 +209,8 @@ button.prior-jump{
 button.prior-jump:hover,button.prior-jump:focus{outline:2px solid var(--gold);background:rgba(212,176,106,.16)}
 .basis-row{display:block}
 @media (prefers-reduced-motion: reduce){
-  .flow-line,.year-display.pulse{animation:none}
+  .flow-line,.year-display.pulse,.fx-pulse,.fx-token{animation:none}
+  .fx-pulse{opacity:1;transform:none}
 }
 .ev .src{color:var(--muted);font-size:11.5px;margin-top:2px}
 .ev .when{font-weight:700;margin-right:8px;color:var(--gold);font-variant-numeric:tabular-nums}
@@ -231,6 +232,33 @@ footer{color:var(--muted);font-size:12px;padding:12px 24px 28px;text-align:cente
 .year-display.pulse{animation:yearpulse .35s ease}
 
 .cell.hover{stroke:#f3deaa;stroke-width:2}
+.director-card{margin:6px 0 4px;padding:8px 10px;border:1px solid var(--gold);border-radius:8px;
+  background:rgba(26,20,8,.45)}
+.director-card .dir-title{font-weight:700;color:var(--gold2);margin:0 0 4px}
+.director-card .dir-text{font-size:13px;margin:0 0 6px;color:#f2ead6}
+.director-card .dir-meta{font-size:12px;color:var(--muted);margin:2px 0}
+.director-card .dir-related{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.ev.on{background:rgba(212,176,106,.16);outline:1px solid var(--gold)}
+.cell.fx-hot{stroke:#f3deaa;stroke-width:2.8}
+.cell.fx-share{stroke:#6eb8b4}
+.cell.fx-aid{stroke:#6fb37c}
+.cell.fx-repay{stroke:#f3deaa}
+.cell.fx-migrate{stroke:#d4b06a}
+.fx-pulse{transform-box:fill-box;transform-origin:center;animation:fxpulse 1.05s ease-out 1}
+.fx-aid-mark{fill:#6fb37c;stroke:#f3deaa;stroke-width:1.2}
+.fx-repay-mark{fill:#d4b06a;stroke:#f3deaa;stroke-width:1.4}
+.fx-share-mark{fill:#6eb8b4;stroke:#e8eadc;stroke-width:1.2}
+.fx-endpoint{fill:none;stroke:#d4b06a;stroke-width:2.2}
+.fx-endpoint-from{stroke:#c8a05a}
+.fx-endpoint-to{stroke:#f3deaa}
+.fx-token{fill:#e8a04a;stroke:#f3deaa;stroke-width:1.4}
+.dir-lineage{background:rgba(122,167,216,.1);border:1px solid rgba(122,167,216,.35);border-radius:8px;padding:8px 10px;margin:8px 0}
+.dir-gone{background:rgba(196,92,82,.1);border:1px solid rgba(196,92,82,.3);border-radius:8px;padding:8px 10px;margin:8px 0}
+@keyframes fxpulse{from{transform:scale(.45);opacity:.9}to{transform:scale(2.15);opacity:0}}
+@media (max-width:620px){
+  #b-prev-ev,#b-next-ev{font-size:11px;padding:5px 7px}
+  .director-card{font-size:12px}
+}
 html.skin-console{
   --gold:#8fd4d0; --gold2:#d7f4f2; --line:rgba(110,184,180,.28);
 }

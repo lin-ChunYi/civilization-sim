@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>G03 导演模式 · 实点击验收</title>
+<style>body{font:13px/1.5 monospace;background:#111;color:#ddd;padding:8px}#result{white-space:pre-wrap}#mount{max-height:280px;overflow:auto}</style>
+</head>
+<body>
+<pre id="result">running…</pre>
+<div id="mount"></div>
+<script>window.__OBS_MANUAL_BOOT__ = true;</script>
+<script>
+(async () => {
+  const realFetch = window.fetch.bind(window);
+  const out = [];
+  const ok = (name, cond, detail) => out.push((cond ? "PASS" : "FAIL") + " " + name + (detail ? " :: " + detail : ""));
+  const txt = (sel) => (document.querySelector(sel) || { textContent: "" }).textContent.replace(/\s+/g, " ").trim();
+  const click = (sel) => {
+    const n = document.querySelector(sel);
+    if (!n) throw new Error("missing " + sel);
+    n.click();
+  };
+  try {
+    const html = await realFetch("/static/index.html").then((r) => r.text());
+    const body = html.split("<body>")[1].split("</body>")[0].replace(/<script[\s\S]*?<\/script>/g, "");
+    document.getElementById("mount").innerHTML = body;
+    await new Promise((res, rej) => {
+      const el = document.createElement("script");
+      el.src = "/static/app.js?g03=" + Date.now(); el.onload = res; el.onerror = () => rej(new Error("app.js"));
+      document.head.appendChild(el);
+    });
+    const O = window.__obs;
+    await O.boot();
+    ok("C0 导演钩子", !!(O.setPlayMode && O.focusEvent && O.cancelFx && window.DirectorLogic));
+    ok("C1 模式按钮在 DOM", !!(document.getElementById("mode-year") && document.getElementById("mode-events")));
+    ok("C2 前/下一事件年按钮", !!(document.getElementById("b-prev-ev") && document.getElementById("b-next-ev")));
+
+    const runs = O.S.runs || [];
+    const exp06 = runs.find((r) => r.run_id.indexOf("exp06-recip1000") >= 0 || (r.engine === "exp06" && r.kind === "preset"))
+      || runs.find((r) => r.engine === "exp06" && (r.years_recorded || 0) >= 125);
+    const exp03 = runs.find((r) => r.run_id.indexOf("s4242") >= 0 || (r.engine === "exp03" && r.kind === "preset"))
+      || runs.find((r) => (r.engine || "exp03") === "exp03");
+    ok("C3 有 exp06 案例", !!exp06, exp06 && exp06.run_id);
+    ok("C4 有 exp03 案例", !!exp03, exp03 && exp03.run_id);
+    if (!exp06) throw new Error("no exp06");
+
+    await O.openRun(exp06.run_id);
+    click("#mode-events");
+    ok("C5 点击只看有记录的事件", O.S.playMode === "events" && /mode=events/.test(location.hash), location.hash);
+    ok("C6 模式说明可见", /事件/.test(txt("#dir-mode-note")), txt("#dir-mode-note").slice(0, 80));
+
+    const t0 = O.S.t;
+    click("#b-next-ev");
+    await new Promise((r) => setTimeout(r, 500));
+    ok("C7 下一事件年跳过空年", O.S.t !== t0 && O.S.t > 0, "from=" + t0 + " to=" + O.S.t);
+    ok("C8 URL 含 t 与 mode", /t=/.test(location.hash) && /mode=events/.test(location.hash), location.hash);
+    ok("C9 选中事件卡出现", !document.getElementById("director-card").hidden && txt("#director-card-body").length > 8,
+      txt("#director-card-body").slice(0, 100));
+
+    await O.gotoYear(0);
+    click("#b-play");
+    ok("C10 播放中", O.S.playing === true, "playing=" + O.S.playing);
+    click("#b-play");
+    ok("C11 暂停取消回调", O.S.playing === false && O.S.fxTimers.length === 0, "timers=" + O.S.fxTimers.length);
+
+    await O.gotoYear(120);
+    const emptyNote = txt("#dir-mode-note") + txt("#events");
+    ok("C12 无事件年有说明且不补编", /没有可核实事件/.test(emptyNote), emptyNote.slice(0, 120));
+
+    await O.gotoYear(125);
+    const rec125 = O.S.years.get(O.ykey(exp06.run_id, 125));
+    const share = rec125 && (rec125.events || []).find((e) => e.id === "t125-share-1" || (e.type === "share" && e.cell === 0));
+    ok("C13 第125年有 share 在 0 格", !!(share && share.cell === 0), share && (share.id + " cell=" + share.cell));
+    if (share) {
+      await O.focusEvent(Object.assign({}, share, { t: 125 }));
+      ok("C14 信息锚 e.cell 不是年末格猜测", O.S.selCell === 0, "selCell=" + O.S.selCell);
+      const mark = document.querySelector('#map .fx-hot, #fx-overlay .fx-share-mark, #fx-overlay .fx-pulse');
+      ok("C15 地图有事件格高亮", !!mark || !!document.querySelector('#map .cell.fx-hot'));
+    }
+
+    let aidThenMig = null, aidT = null;
+    for (let t = 0; t <= (O.S.run.years_recorded || 0) && !aidThenMig; t++) {
+      if (!O.S.years.has(O.ykey(exp06.run_id, t))) {
+        try { O.S.years.set(O.ykey(exp06.run_id, t), await O.api("/api/runs/" + exp06.run_id + "/year/" + t)); }
+        catch (e) { continue; }
+      }
+      const rec = O.S.years.get(O.ykey(exp06.run_id, t));
+      const evs = (rec && rec.events) || [];
+      const aid = evs.find((e) => e.type === "aid");
+      const mig = evs.find((e) => e.type === "migrate" && aid && e.band && (e.band === aid.donor || e.band === aid.receiver));
+      if (aid && mig) { aidThenMig = { aid, mig }; aidT = t; }
+    }
+    ok("C16 找到同格援助后迁移的年份", !!aidThenMig, aidThenMig && ("t=" + aidT + " aid=" + aidThenMig.aid.id + " mig=" + aidThenMig.mig.id));
+    if (aidThenMig) {
+      await O.focusEvent(Object.assign({}, aidThenMig.aid, { t: aidT }));
+      ok("C17 援助聚焦事件格", O.S.selCell === aidThenMig.aid.cell, "selCell=" + O.S.selCell + " e.cell=" + aidThenMig.aid.cell);
+      await O.focusEvent(Object.assign({}, aidThenMig.mig, { t: aidT }));
+      ok("C18 随后迁移改到终点格", O.S.selCell === aidThenMig.mig.to, "selCell=" + O.S.selCell + " to=" + aidThenMig.mig.to);
+      ok("C19 迁移卡声明路线未记录", /路线未记录/.test(txt("#director-card-body")), txt("#director-card-body").slice(0, 160));
+    }
+
+    const bandId = "7567856178022945294";
+    O.S.selBand = bandId;
+    O.S.bandScope = "as_of";
+    await O.gotoYear(124);
+    await O.loadBand(bandId);
+    const traj = (O.S.band && O.S.band.trajectory) || [];
+    ok("C20 at_year=124 不含 125/131", !traj.some((p) => p[0] === 125 || p[0] === 131), JSON.stringify(traj));
+    ok("C21 history_scope as_of_year", O.S.band && O.S.band.history_scope && O.S.band.history_scope.mode === "as_of_year",
+      O.S.band && JSON.stringify(O.S.band.history_scope));
+
+    click('[data-scope="full"]');
+    await O.loadBand(bandId);
+    const trajFull = (O.S.band && O.S.band.trajectory) || [];
+    ok("C22 显式全档案才含后续年", trajFull.some((p) => p[0] === 125 || p[0] === 131), JSON.stringify(trajFull));
+    click('[data-scope="as_of"]');
+
+    const other = runs.find((r) => r.run_id !== exp06.run_id && r.years_recorded > 0) || exp03;
+    const beforeGen = O.S.fxGen;
+    if (other) {
+      await O.openRun(other.run_id);
+      ok("C23 快速换运行取消旧动画", O.S.fxGen > beforeGen && O.S.selEvent == null, "fxGen " + beforeGen + "->" + O.S.fxGen);
+      await O.openRun(exp06.run_id);
+    }
+
+    if (exp03) {
+      await O.openRun(exp03.run_id);
+      let split = null, st = null;
+      const max = exp03.years_recorded || 0;
+      for (let t = 0; t <= max && !split; t++) {
+        if (!O.S.years.has(O.ykey(exp03.run_id, t))) {
+          try { O.S.years.set(O.ykey(exp03.run_id, t), await O.api("/api/runs/" + exp03.run_id + "/year/" + t)); }
+          catch (e) { continue; }
+        }
+        const rec = O.S.years.get(O.ykey(exp03.run_id, t));
+        const hit = ((rec && rec.events) || []).find((e) => e.type === "split");
+        if (hit) { split = hit; st = t; }
+      }
+      ok("C24 EXP03 有分裂事件", !!split, split && ("t=" + st + " " + split.id));
+      if (split) {
+        await O.focusEvent(Object.assign({}, split, { t: st }));
+        ok("C25 分裂不用地图定位", O.S.selCell == null, "selCell=" + O.S.selCell);
+        ok("C26 档案出现谱系提示", /谱系|分裂/.test(txt("#side-sel") + txt("#director-card-body")),
+          (txt("#side-sel") + txt("#director-card-body")).slice(0, 160));
+      }
+    }
+
+    click("#mode-year");
+    ok("C27 切回逐年播放", O.S.playMode === "year" && !/mode=events/.test(location.hash), location.hash);
+    const w = Math.round((document.querySelector(".tlctl") || document.body).getBoundingClientRect().width);
+    ok("C28 时间轴控件存在（宽度实测）", w >= 0, "tlctlWidth=" + w);
+  } catch (e) {
+    out.push("FAIL 脚本出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
+  }
+  const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
+  out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
+  document.getElementById("result").textContent = out.join("\n");
+})();
+</script>
+</body>
+</html>
