@@ -6,7 +6,6 @@
 **只读** observer/web/app.js（那是 UI 分支的文件），产物写到 observer/tests/web/_poison_app.js，
 跑完即删，不进版本库。后台绝不往 observer/web/ 里写东西。
 """
-import re
 from pathlib import Path
 
 from . import config
@@ -23,8 +22,17 @@ def build() -> Path:
                   "const stale = () => false;   // 注入：取消“迟到响应”守卫")
     s = s.replace("const ykey = (runId, t) => `${runId}|${t}`;",
                   "const ykey = (runId, t) => String(t);   // 注入：缓存退回只按 t 作键")
-    s = re.sub(r"^.*S\.epoch !== myEpoch.*\n", "", s, flags=re.M)      # openRun 里的守卫
-    s = re.sub(r"^.*stale\(myEpoch, myRun\).*\n", "", s, flags=re.M)   # 其余守卫
+    s = s.replace("function opAlive(op) {\n  return op === S.opGen;\n}",
+                  "function opAlive(op) { return true; }")
+    s = s.replace("function yearNavAlive(myEpoch, myRun, myOp) {\n"
+                  "  return opAlive(myOp) && !stale(myEpoch, myRun);\n}",
+                  "function yearNavAlive(myEpoch, myRun, myOp) { return true; }")
+    s = s.replace("if (S.epoch !== myEpoch || !opAlive(myOp)) return { ok: false, reason: \"stale\" };",
+                  "if (false) return { ok: false, reason: \"stale\" };")
+    s = s.replace("function bandAccept(epoch, runId, bandId, scope, year, req) {\n"
+                  "  if (stale(epoch, runId)) return false;",
+                  "function bandAccept(epoch, runId, bandId, scope, year, req) {\n"
+                  "  return true; if (stale(epoch, runId)) return false;")
     s = s.replace("function esc(x) {\n  return String",
                   "function esc(x) {\n  return String(x);   // 注入：不转义\n  return String")
     DST.write_text(s, encoding="utf-8")

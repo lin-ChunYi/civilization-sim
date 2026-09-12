@@ -11,8 +11,8 @@ const SHOT = join(here, "screenshots", "game-v2");
 mkdirSync(SHOT, { recursive: true });
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9341;
-const RUN = "946a58d28b05";
-const PAGE = "http://127.0.0.1:8772/static/index.html?v=game-v2#tab=world&run=" + RUN + "&t=0";
+const RUN = "preset-exp06-recip1000";
+const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v2b#tab=world&run=" + RUN + "&t=0";
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
   `--remote-debugging-port=${PORT}`,
@@ -84,13 +84,17 @@ try {
     var circles=[].slice.call(document.querySelectorAll('#map circle.band'));
     var polys=[].slice.call(document.querySelectorAll('#map polygon.band'));
     var O=window.__obs; var rec=O.S.years.get(O.S.run.run_id+'|'+O.S.t);
+    var party=units.map(function(n){return n.getAttribute('data-party');});
     return {units:units.length, circleTokens:circles.length, diamondTokens:polys.length,
       bands: rec && rec.bands ? rec.bands.length : 0, t:O.S.t, run:O.S.run && O.S.run.run_id,
-      hasHead: !!document.querySelector('#map .unit-head'), hasTunic: !!document.querySelector('#map .unit-tunic')};
+      hasHead: !!document.querySelector('#map .unit-head'), hasTunic: !!document.querySelector('#map .unit-tunic'),
+      hasCamp: !!document.querySelector('#map .unit-camp'), skirts: document.querySelectorAll('#map .cell-skirt').length,
+      party: party};
   })()`);
   ok("V1 代表人数等于在世群体且不是圆点/菱形棋子",
     census && census.units === census.bands && census.units > 0
-    && census.circleTokens === 0 && census.diamondTokens === 0 && census.hasHead && census.hasTunic,
+    && census.circleTokens === 0 && census.diamondTokens === 0 && census.hasHead && census.hasTunic
+    && census.hasCamp && census.skirts > 0,
     JSON.stringify(census));
   await shot("desktop-t0-units.png");
 
@@ -126,12 +130,13 @@ try {
     var to=document.querySelector('#fx-overlay .fx-endpoint-to');
     return {ok: !!(fe && fe.ok), t:O.S.t, eid:e.id, from:e.from, to:e.to,
       walker: !!(w && w.getAttribute('data-path')==='endpoints-only'),
+      stage: w && w.getAttribute('data-stage'),
       linePath: line && line.getAttribute('data-path'),
       endpoints: !!(from && to), caption: (document.querySelector('#fx-overlay .fx-caption')||{}).textContent||''};
   })()`);
   ok("V3 迁移有端点人物动作且不编中间格子",
     mig && mig.ok && mig.t === 4 && mig.walker && mig.linePath === "endpoints-only" && mig.endpoints
-    && /路线未记录/.test(mig.caption),
+    && /路线未记录/.test(mig.caption) && mig.stage,
     JSON.stringify(mig));
   await shot("desktop-migrate-walk.png");
   await sleep(500);

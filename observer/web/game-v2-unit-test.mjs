@@ -47,7 +47,7 @@ const palB = U.palette(idB);
 ok("U1 palette stable for same id", palA1.cloth === palA2.cloth && palA1.sash === palA2.sash);
 ok("U2 palette differs across bands", palA1.cloth !== palB.cloth || palA1.sash !== palB.sash);
 ok("U3 scale grows with size but stays bounded",
-  U.scale(1) < U.scale(80) && U.scale(1) >= 0.78 && U.scale(400) <= 1.28);
+  U.scale(1) < U.scale(80) && U.scale(1) >= 0.9 && U.scale(400) <= 1.42);
 
 const mk = U.markup({ id: idA, name: "群体-ABC123", size: 20, cell: 10 }, 100, 80, { selected: true, pose: "select" });
 ok("U4 markup is a group representative not a lone circle token",
@@ -80,6 +80,14 @@ ok("U14 share without cell is unlocated", shareMiss.locate === false && shareMis
 const slot0 = U.slot(3, 0, 100, 50);
 const slot2 = U.slot(3, 2, 100, 50);
 ok("U15 same-cell representatives are offset not stacked", slot0[0] < 100 && slot2[0] > 100);
+ok("U16 party count follows group size not individuals",
+  U.partyCount(10) === 1 && U.partyCount(20) === 2 && U.partyCount(40) === 3);
+const mk2 = U.markup({ id: idA, name: "群体-ABC123", size: 20, cell: 10 }, 100, 80, { selected: true });
+ok("U17 twenty-person group is a two-figure camp with banner",
+  /data-party="2"/.test(mk2) && /unit-camp/.test(mk2) && /unit-banner/.test(mk2)
+  && /unit-companion/.test(mk2) && /unit-lead/.test(mk2));
+ok("U18 migrate stages stay on the endpoint segment",
+  U.migrateStage(0) === "leave" && U.migrateStage(0.5) === "travel" && U.migrateStage(1) === "arrive");
 
 const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
 out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);

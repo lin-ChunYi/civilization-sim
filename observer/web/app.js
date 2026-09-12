@@ -43,6 +43,7 @@ const S = {
   relCardKey: "",
   cmp: { a: "", b: "", t: null },
   cmpReqGen: 0,
+  reduceMotion: false,
 };
 const PLAY_PENDING_MS = 700;
 function navResult(kind, extra) {
@@ -406,6 +407,7 @@ const DirectorLogic = {
       note: "地点未记录，不拿年末位置猜测。", related };
   },
   prefersReducedMotion() {
+    if (typeof S !== "undefined" && S && S.reduceMotion) return true;
     if (typeof window === "undefined" || !window.matchMedia) return false;
     try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
     catch (err) { return false; }
@@ -445,7 +447,19 @@ const UnitArt = {
   },
   scale(size) {
     const n = Math.max(1, Number(size) || 1);
-    return Math.max(0.78, Math.min(1.28, 0.7 + Math.sqrt(n) * 0.07));
+    return Math.max(0.92, Math.min(1.42, 0.82 + Math.sqrt(n) * 0.075));
+  },
+  partyCount(size) {
+    const n = Math.max(1, Number(size) || 1);
+    if (n >= 40) return 3;
+    if (n >= 16) return 2;
+    return 1;
+  },
+  migrateStage(u) {
+    const t = Math.max(0, Math.min(1, u));
+    if (t < 0.2) return "leave";
+    if (t < 0.85) return "travel";
+    return "arrive";
   },
   slot(n, k, cx, cy) {
     const count = Math.max(1, n || 1);
@@ -487,16 +501,35 @@ const UnitArt = {
   },
   propMarkup(v, pal) {
     if (v === 0) {
-      return `<path class="unit-prop" d="M7.2,-6.5 L7.6,9.5" stroke="${pal.accent}" stroke-width="1.3" stroke-linecap="round" fill="none"/>`
-        + `<circle cx="7.2" cy="-7.4" r="1.3" fill="${pal.sash}"/>`;
+      return `<path class="unit-prop" d="M8.2,-7.2 L8.6,10.2" stroke="${pal.accent}" stroke-width="1.4" stroke-linecap="round" fill="none"/>`
+        + `<circle cx="8.2" cy="-8.1" r="1.45" fill="${pal.sash}"/>`;
     }
     if (v === 1) {
-      return `<ellipse class="unit-prop" cx="-7.4" cy="4.2" rx="2.4" ry="1.8" fill="${pal.sash}" stroke="${pal.accent}" stroke-width="0.6"/>`;
+      return `<ellipse class="unit-prop" cx="-8.2" cy="5.0" rx="2.7" ry="2.0" fill="${pal.sash}" stroke="${pal.accent}" stroke-width="0.65"/>`;
     }
     if (v === 2) {
-      return `<path class="unit-prop" d="M-5.6,-2.2 C-8.2,1.2 -7.4,8.2 -3.2,8.6" fill="${pal.sash}" opacity="0.85"/>`;
+      return `<path class="unit-prop" d="M-6.2,-2.6 C-9.2,1.4 -8.4,9.0 -3.4,9.4" fill="${pal.sash}" opacity="0.88"/>`;
     }
-    return `<path class="unit-prop" d="M-6.8,2.8 L-5.2,6.4 M6.6,2.8 L5.2,6.4" stroke="${pal.accent}" stroke-width="1.2" stroke-linecap="round" fill="none"/>`;
+    return `<path class="unit-prop" d="M-7.4,3.2 L-5.6,7.2 M7.4,3.2 L5.6,7.2" stroke="${pal.accent}" stroke-width="1.3" stroke-linecap="round" fill="none"/>`;
+  },
+  figureMarkup(pal, pose, v, ox, oy, sc, lead) {
+    const armY = pose === "give" ? "-3.4" : (pose === "select" ? "-2.4" : (pose === "walk" ? "2.0" : "3.8"));
+    const armRY = pose === "talk" ? "-3.6" : (pose === "walk" ? "2.6" : "3.6");
+    const legL = pose === "walk" ? "M-2.6,7.2 L-4.6,13.0" : "M-2.4,7.2 L-3.4,12.8";
+    const legR = pose === "walk" ? "M2.4,7.2 L4.4,13.0" : "M2.2,7.2 L3.2,12.8";
+    const prop = lead ? this.propMarkup(v, pal) : "";
+    return `<g class="unit-figure${lead ? " unit-lead" : " unit-companion"}" transform="translate(${ox},${oy}) scale(${sc})">
+        <path class="unit-leg unit-leg-l" d="${legL}" stroke="${pal.hair}" stroke-width="2.15" stroke-linecap="round" fill="none"/>
+        <path class="unit-leg unit-leg-r" d="${legR}" stroke="${pal.hair}" stroke-width="2.15" stroke-linecap="round" fill="none"/>
+        <path class="unit-tunic" d="M-6.4,-1.8 C-7.0,4.0 -5.6,8.6 -3.8,9.6 L3.8,9.6 C5.6,8.6 7.0,4.0 6.4,-1.8 C3.8,-3.4 -3.8,-3.4 -6.4,-1.8Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.8"/>
+        <path class="unit-sash" d="M-5.4,1.5 L5.6,2.8 L5.2,4.7 L-5.8,3.4Z" fill="${pal.sash}"/>
+        <path class="unit-arm-l" d="M-5.6,0.2 L-8.6,${armY}" stroke="${pal.skin}" stroke-width="1.85" stroke-linecap="round" fill="none"/>
+        <path class="unit-arm-r" d="M5.6,0.2 L8.4,${armRY}" stroke="${pal.skin}" stroke-width="1.85" stroke-linecap="round" fill="none"/>
+        <circle class="unit-head" cx="0" cy="-6.6" r="4.15" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.7"/>
+        <path class="unit-hair" d="M-4.0,-7.4 C-3.4,-11.0 3.4,-11.0 4.0,-7.4 C1.8,-8.8 -1.8,-8.8 -4.0,-7.4Z" fill="${pal.hair}"/>
+        ${lead ? `<circle cx="-1.25" cy="-6.35" r="0.55" fill="${pal.hair}" opacity="0.5"/><circle cx="1.25" cy="-6.35" r="0.55" fill="${pal.hair}" opacity="0.5"/>` : ""}
+        ${prop}
+      </g>`;
   },
   markup(b, x, y, opts) {
     opts = opts || {};
@@ -511,26 +544,27 @@ const UnitArt = {
     const size = (b && b.size) != null ? b.size : "";
     const bid = b && b.id != null ? String(b.id) : "";
     const cell = b && b.cell != null ? String(b.cell) : "";
-    const armY = pose === "give" ? "-2.6" : (pose === "select" ? "-1.4" : "3.3");
-    const armRY = pose === "talk" ? "-2.8" : "3.1";
-    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-pose="${esc(pose)}" data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
-      <title>${esc(name)} · 群体代表 · ${size}人。这是群体的可视替身，不是独立个人生平。</title>
-      <ellipse class="unit-shadow" cx="0" cy="11" rx="7.2" ry="2.3" fill="rgba(10,12,8,.42)"/>
-      <g class="unit-body unit-${esc(pose)}">
-        <path class="unit-leg unit-leg-l" d="M-2.2,6 L-3.4,11.2" stroke="${pal.hair}" stroke-width="1.7" stroke-linecap="round" fill="none"/>
-        <path class="unit-leg unit-leg-r" d="M2.0,6 L3.2,11.2" stroke="${pal.hair}" stroke-width="1.7" stroke-linecap="round" fill="none"/>
-        <path class="unit-tunic" d="M-5.2,-1.2 C-5.6,3.2 -4.8,7.2 -3.4,8.4 L3.4,8.4 C4.8,7.2 5.6,3.2 5.2,-1.2 C3.2,-2.4 -3.2,-2.4 -5.2,-1.2Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.7"/>
-        <path class="unit-sash" d="M-4.4,1.6 L4.6,2.6 L4.2,4.2 L-4.8,3.2Z" fill="${pal.sash}"/>
-        <path class="unit-arm-l" d="M-4.6,0.2 L-7.2,${armY}" stroke="${pal.skin}" stroke-width="1.5" stroke-linecap="round" fill="none"/>
-        <path class="unit-arm-r" d="M4.6,0.2 L7.0,${armRY}" stroke="${pal.skin}" stroke-width="1.5" stroke-linecap="round" fill="none"/>
-        <circle class="unit-head" cx="0" cy="-5.6" r="3.55" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.6"/>
-        <path class="unit-hair" d="M-3.3,-6.4 C-2.8,-9.4 2.8,-9.4 3.3,-6.4 C1.6,-7.6 -1.6,-7.6 -3.3,-6.4Z" fill="${pal.hair}"/>
-        ${this.propMarkup(v, pal)}
-      </g>
-      ${on ? `<circle class="unit-ring" cx="0" cy="1" r="13.5" fill="none" stroke="${pal.accent}" stroke-width="1.35"/>` : ""}
-      ${opts.hit === false ? "" : `<rect class="unit-hit" x="-12" y="-18" width="24" height="34" fill="transparent"/>`}
-      ${opts.showPop === false ? "" : `<text class="unit-pop" x="0" y="16.5" text-anchor="middle" font-size="7.2" fill="${on ? "#f3deaa" : "#1a1408"}" font-weight="700" pointer-events="none">${size}人</text>`}
-      ${opts.showName ? `<text class="unit-name" x="0" y="-16.5" text-anchor="middle" font-size="6.4" fill="#f3deaa" pointer-events="none">${esc(name)}</text>` : ""}
+    const nParty = opts.party != null ? opts.party : this.partyCount(b && b.size);
+    const campRx = (6.2 + nParty * 3.1).toFixed(1);
+    let party = "";
+    if (nParty >= 3) party += this.figureMarkup(pal, pose, v, -9.2, 2.4, 0.68, false);
+    if (nParty >= 2) party += this.figureMarkup(pal, pose, v, 8.8, 2.8, 0.7, false);
+    party += this.figureMarkup(pal, pose, v, 0, 0, 1, true);
+    const banner = on
+      ? `<g class="unit-banner" pointer-events="none">
+          <path d="M9.5,-20 L9.5,5" stroke="${pal.accent}" stroke-width="1.25"/>
+          <path d="M9.5,-20 L20.5,-15.5 L9.5,-11Z" fill="${pal.sash}" stroke="${pal.accent}" stroke-width="0.5"/>
+        </g>`
+      : "";
+    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-pose="${esc(pose)}" data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
+      <title>${esc(name)} · 群体代表（${nParty}人造型）· ${size}人。这是群体的可视替身，不是独立个人生平。</title>
+      <ellipse class="unit-camp" cx="0" cy="13.2" rx="${campRx}" ry="3.6" fill="${pal.cloth}" fill-opacity="0.32" stroke="${pal.sash}" stroke-width="0.95"/>
+      <g class="unit-body unit-${esc(pose)}">${party}</g>
+      ${on ? `<circle class="unit-ring" cx="0" cy="2" r="15.5" fill="none" stroke="${pal.accent}" stroke-width="1.45"/>` : ""}
+      ${banner}
+      ${opts.hit === false ? "" : `<rect class="unit-hit" x="-18" y="-22" width="36" height="42" fill="transparent"/>`}
+      ${opts.showPop === false ? "" : `<text class="unit-pop" x="0" y="19.2" text-anchor="middle" font-size="7.1" fill="${on ? "#f3deaa" : "#1a1408"}" font-weight="700" pointer-events="none">${size}人</text>`}
+      ${opts.showName ? `<text class="unit-name" x="0" y="-18.5" text-anchor="middle" font-size="6.5" fill="#f3deaa" pointer-events="none">${esc(name)}</text>` : ""}
     </g>`;
   },
   labelMarkup(b, x, y, opts) {
@@ -1052,6 +1086,26 @@ function hexPath(cx, cy) {
   }
   return d + "Z";
 }
+function hexSkirtPath(cx, cy) {
+  const pts = [];
+  for (let k = 0; k < 6; k++) {
+    const a = Math.PI / 180 * (60 * k - 90);
+    pts.push([cx + R * Math.cos(a), cy + R * Math.sin(a)]);
+  }
+  const drop = 6;
+  const q = (i) => pts[i][0].toFixed(1) + "," + (pts[i][1] + drop).toFixed(1);
+  return "M" + pts[1][0].toFixed(1) + "," + pts[1][1].toFixed(1)
+    + "L" + pts[2][0].toFixed(1) + "," + pts[2][1].toFixed(1)
+    + "L" + pts[3][0].toFixed(1) + "," + pts[3][1].toFixed(1)
+    + "L" + pts[4][0].toFixed(1) + "," + pts[4][1].toFixed(1)
+    + "L" + q(4) + "L" + q(3) + "L" + q(2) + "Z";
+}
+function shadeFill(fill, amt) {
+  const m = String(fill).match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if (!m) return "#0b100e";
+  const d = (x) => Math.max(0, Math.round(Number(x) * amt));
+  return "rgb(" + d(m[1]) + "," + d(m[2]) + "," + d(m[3]) + ")";
+}
 function cellCenter(c) {
   const x = 28 + (c.col + (c.row % 2 === 0 ? 0.5 : 0)) * SQ3 * R + SQ3 * R / 2;
   const y = 26 + c.row * 1.5 * R + R;
@@ -1163,6 +1217,8 @@ function renderMap() {
     const hovered = S.hoverCell === c.i;
     const hot = eventCells.has(c.i) && (layer === "event" || layer === "flow");
     const stroke = selected ? "#f3deaa" : hovered ? "#e6c888" : (hot ? "#d4b06a" : (S.skin === "console" ? "#2c4a48" : "#2a3530"));
+    const skirtFill = c.passable ? shadeFill(fill, 0.52) : "#0a0e0c";
+    out += `<path class="cell-skirt" d="${hexSkirtPath(cx, cy)}" fill="${skirtFill}" stroke="none" pointer-events="none"/>`;
     out += `<path d="${hexPath(cx, cy)}" fill="${fill}" stroke="${stroke}"
         stroke-width="${selected ? 2.8 : hovered ? 2 : hot ? 1.8 : 1}" data-cell="${c.i}" class="cell${hovered ? " hover" : ""}"${selected ? ' filter="url(#glow)"' : ""}>
         <title>${esc(title)}</title></path>`;
@@ -1845,6 +1901,13 @@ function selectBand(id, opts) {
   if (S.selBand && opts.rail !== "none") showRail(opts.rail || "dossier");
   if (!opts.skipMap) renderMap();
   renderSide();
+  if (S.selBand && !opts.skipPan && !DirectorLogic.prefersReducedMotion()) {
+    const rec = recNow();
+    const b = rec && rec.bands.find((x) => String(x.id) === String(S.selBand));
+    if (b && Number.isFinite(+b.cell) && S.map && S.map.cells[+b.cell]) {
+      panToCell(+b.cell, S.fxGen);
+    }
+  }
 }
 function setView(v) {
   if (v === "mem" && !S.selBand) { flash("先点一个群体，才能看它记忆里的世界。"); return; }
@@ -2013,7 +2076,7 @@ async function gotoYear(t, opts) {
   return finishOk();
 }
 function playDelay() {
-  return Math.max(80, (S.playMode === "events" ? 900 : 600) / Math.max(S.speed || 1, 0.25));
+  return Math.max(80, (S.playMode === "events" ? 1250 : 650) / Math.max(S.speed || 1, 0.25));
 }
 function tick() {
   if (!S.playing) return;
@@ -2497,13 +2560,14 @@ function paintMigrateAction(overlay, ev, plan, reduced) {
   };
   const u0 = reduced ? 1 : 0;
   const xy = UnitArt.lerp(a, b, u0);
-  const walker = svgEl("g", { id: "fx-walker", "data-fx": "migrate-walk", "data-path": "endpoints-only" });
+  const walker = svgEl("g", { id: "fx-walker", "data-fx": "migrate-walk", "data-path": "endpoints-only", "data-stage": reduced ? "arrive" : "leave" });
   walker.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
   walker.innerHTML = UnitArt.markup(band, 0, 0, {
     pose: reduced ? "idle" : "walk", selected: true, hit: false, skin: S.skin, showPop: false,
   });
   overlay.appendChild(walker);
-  fxCaption(overlay, (a[0] + b[0]) / 2, Math.min(a[1], b[1]) - 22, "端点动作 · 路线未记录");
+  fxCaption(overlay, (a[0] + b[0]) / 2, Math.min(a[1], b[1]) - 22,
+    reduced ? "端点动作 · 路线未记录 · 到达" : "端点动作 · 路线未记录 · 离开");
   const tok = $("map") && $("map").querySelector('.band[data-band="' + String(ev.band || "") + '"]');
   if (tok) tok.classList.add("unit-ghost");
   S.fxAwayBand = ev.band ? String(ev.band) : null;
@@ -2515,7 +2579,16 @@ function paintMigrateAction(overlay, ev, plan, reduced) {
       const u = Math.min(1, (now - S.fxAnim.t0) / S.fxAnim.dur);
       const p = UnitArt.lerp(a, b, u);
       const w = document.getElementById("fx-walker");
-      if (w) w.setAttribute("transform", "translate(" + p[0].toFixed(1) + "," + p[1].toFixed(1) + ")");
+      const stage = UnitArt.migrateStage(u);
+      if (w) {
+        w.setAttribute("transform", "translate(" + p[0].toFixed(1) + "," + p[1].toFixed(1) + ")");
+        w.setAttribute("data-stage", stage);
+      }
+      const cap = overlay.querySelector(".fx-caption");
+      if (cap) {
+        cap.textContent = "端点动作 · 路线未记录 · "
+          + (stage === "leave" ? "离开" : (stage === "arrive" ? "到达" : "移动"));
+      }
       if (u < 1) S.fxWalkRaf = requestAnimationFrame(step);
       else {
         const g = document.querySelector(".band.unit-ghost");
@@ -3177,6 +3250,13 @@ async function boot() {
     if (e.target.value) openRun(e.target.value);
   });
   bindMapCam();
+  if ($("b-motion")) $("b-motion").addEventListener("click", () => {
+    S.reduceMotion = !S.reduceMotion;
+    $("b-motion").textContent = S.reduceMotion ? "动效关" : "动效开";
+    $("b-motion").classList.toggle("on", !S.reduceMotion);
+    cancelFx({ keepStatic: !!S.selEvent });
+    if (S.selEvent) paintDirectorFx({ staticOnly: S.reduceMotion });
+  });
   if ($("zoom-in")) $("zoom-in").addEventListener("click", () => { S.cam.k = Math.min(3.2, S.cam.k * 1.25); renderMap(); });
   if ($("zoom-out")) $("zoom-out").addEventListener("click", () => { S.cam.k = Math.max(0.7, S.cam.k / 1.25); renderMap(); });
   if ($("zoom-reset")) $("zoom-reset").addEventListener("click", () => { S.cam = { x: 0, y: 0, k: 1 }; renderMap(); });

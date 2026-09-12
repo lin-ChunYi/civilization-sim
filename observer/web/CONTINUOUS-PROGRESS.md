@@ -1,6 +1,16 @@
 # 连续开发进度
 
-## game-v2 + C07/C08 检查点（本轮）
+## GROK_BUILD_002 检查点
+- 从 a217dc42 续：先跑完整 `observer/run_tests.py`，修 O18b/O18c（毒化脚本删行导致语法错，自检 dump 0 条 FAIL）。
+- 毒化现同时关掉 opAlive / yearNavAlive / openRun 世代守卫，且不再用正则删行。套件 **213 pass / 0 fail / 1 uncovered**（O28m 预置无消失，未覆盖）。
+- 游戏品质：群体代表改为 1–3 人营地（按人口分档）、营地底盘、选中旗帜与镜头跟过去；六边形加装饰性侧裙增加层次（不是地形事实）；迁移动作分离开/移动/到达；HUD「动效开/关」。
+- 8788 已用显式 `OBSERVER_BUILD_COMMIT=a217dc42…` 重启，数据 `/tmp/obs-g2-8788` 保留。8765/8772 未杀。
+- 入口：http://127.0.0.1:8788/static/index.html#tab=world&run=preset-exp06-recip1000&t=0
+- tests：run_tests 213/0/1uncov；c07 16/0；c08 51/0；game-v2-unit 19/0；game-v2-cdp 19/0（8788，营地/侧裙/阶段/390）；c08-wizard 6/0；g04-fix 6/0；g05 11/0；g06 5/0；g07 5/0；director-logic 18/0
+- Safari 有安装但无可用 headless CDP；Firefox 未安装。
+- 下一轮：人物体量与衣饰再拉开；播放节奏/事件聚焦更清楚；手机点选命中；可选 bitmap 精灵；不要空等浏览器。
+
+## game-v2 + C07/C08 检查点（上轮）
 - 标准：GROK-REVIEW.md `standard_version: game-v2`。G03 导演 659b726 不重做。
 - 世界主画面保留沙盘。圆点/菱形棋子换成 **SVG 群体代表**（头/衣/绶带/道具，稳定配色，待机/选中）。明确不是独立个人。
 - 动作：迁移只演示记录的 from→to 端点（直线插值 + 端点圈，不编中间格子）；share/aid/repay 锚 `e.cell`；split/extinct 不定位。
