@@ -151,6 +151,18 @@ docker run -p 8765:8765 -e OBSERVER_TOKEN=换成你的令牌 -v $PWD/observer-da
 两边的接口、口径与前端测试钩子写在 [`../docs/OBS-01-API-CONTRACT.md`](../docs/OBS-01-API-CONTRACT.md)，
 以那份文件为准，不各自实现一套。
 
+## EXP-06 接入（obs-1.4，新增字段全部向后兼容）
+
+`engine` 多一个取值 `exp06`（援助记忆与优先回助），`POST /api/runs` 多一个**可选**参数 `recip_m`。
+`engine=exp06` 的运行多三样东西：`aid` 事件带 `phase`（是否走优先阶段）与 `repay`（供给方记得对方帮过自己）；
+群体记录带 `aid_memory`（谁以前帮过我、累计多少、最近哪一年，**只由实际转移累加**）；
+年份记录多 `recip` 段（含 `changed` = 优先规则**真的改变了分配**的次数）。
+
+> 回助 · 群体-A 向 群体-B 援助了 …（优先回助阶段：供给方记得对方帮过自己）
+
+**`repay` 与 `changed` 必须分开显示**：`RECIP_M=0` 时 `repay` 照样出现（碰巧），
+只有 `changed` 能说明规则真的起了作用。其它引擎的记录完全不变。
+
 ## EXP-05 接入（obs-1.3，新增字段全部向后兼容）
 
 `engine` 多一个取值 `exp05`（同格食物援助），`POST /api/runs` 多一个**可选**参数 `aid_m`。

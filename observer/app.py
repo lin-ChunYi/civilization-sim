@@ -213,7 +213,8 @@ class NewRun(BaseModel):
     label: StrictStr = Field("", description="备注")
     engine: StrictStr = Field(config.DEFAULT_ENGINE, description="模拟引擎：exp03 | exp04")
     share_m: StrictInt = Field(0, description="SHARE_M：同格信息交换的参与概率，千分之一（exp04 起）")
-    aid_m: StrictInt = Field(0, description="AID_M：供给方愿意拿出的可援助余粮比例，千分之一（仅 exp05）")
+    aid_m: StrictInt = Field(0, description="AID_M：供给方愿意拿出的可援助余粮比例，千分之一（exp05 起）")
+    recip_m: StrictInt = Field(0, description="RECIP_M：优先回助的预算比例，千分之一（仅 exp06）")
 
 
 def _validate(body: NewRun) -> None:
@@ -234,6 +235,13 @@ def _validate(body: NewRun) -> None:
     elif body.aid_m != 0:
         raise HTTPException(400, f"引擎 {body.engine} 没有 AID_M 这个参数，"
                                  f"要用同格食物援助请选 exp05")
+    if "recip_m" in params:
+        if not (v3.RECIP_M_MIN <= body.recip_m <= v3.RECIP_M_MAX):
+            raise HTTPException(400, f"RECIP_M 越界，合法范围 "
+                                     f"[{v3.RECIP_M_MIN}, {v3.RECIP_M_MAX}]")
+    elif body.recip_m != 0:
+        raise HTTPException(400, f"引擎 {body.engine} 没有 RECIP_M 这个参数，"
+                                 f"要用优先回助请选 exp06")
     if not (0 <= body.seed <= config.MAX_SEED):
         raise HTTPException(400, f"seed 越界，合法范围 [0, {config.MAX_SEED}]")
     if not (config.MIN_YEARS <= body.years <= config.MAX_YEARS):
@@ -264,7 +272,7 @@ def post_run(body: NewRun):
     run_id = store.claim_slot(seed=body.seed, years=body.years, sigma_m=body.sigma_m,
                               move_mort_m=body.move_mort_m, arm=body.arm,
                               label=body.label, kind="user", share_m=body.share_m,
-                              aid_m=body.aid_m,
+                              aid_m=body.aid_m, recip_m=body.recip_m,
                               engine_name=body.engine,
                               engine=adapter.engine_info(body.engine),
                               repo_commit=repo_commit())

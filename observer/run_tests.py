@@ -577,9 +577,8 @@ with store.connect() as c:
     c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
 with TestClient(app) as c7:
     cfg = c7.get("/api/config").json()
-    check("O25a /api/config 列出三个引擎",
-          sorted(cfg.get("engines", {})) == ["exp03", "exp04", "exp05"] and
-          cfg["api_version"] == "obs-1.3", str(sorted(cfg.get("engines", {}))))
+    check("O25a /api/config 里有 exp05 引擎",
+          "exp05" in cfg.get("engines", {}), str(sorted(cfg.get("engines", {}))))
     b1 = c7.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp04", "aid_m": 500})
     check("O25b exp04 引擎不接受 AID_M", b1.status_code == 400, str(b1.json())[:60])
     b2 = c7.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp05", "aid_m": 1001})
@@ -627,6 +626,75 @@ with TestClient(app) as c7:
             uncov("O25h–l 援助事件", "这次运行里没有出现援助事件，前提缺失")
         rec3 = c7.get(f"/api/runs/{next(x for x in c7.get('/api/runs').json()['runs'] if x['kind'] == 'preset')['run_id']}/year/1").json()
         check("O25m exp03 的记录里没有 aid 段（前端要容忍缺席）", "aid" not in rec3)
+
+# ---------------------------------------------------------------- EXP-06 接入
+print("\nO26 EXP-06 引擎接入观察台（援助记忆与优先回助可展示）")
+with store.connect() as c:
+    c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+with TestClient(app) as c8:
+    cfg = c8.get("/api/config").json()
+    check("O26a /api/config 里有 exp06 且契约版本更新",
+          "exp06" in cfg.get("engines", {}) and cfg["api_version"] == "obs-1.4",
+          str(sorted(cfg.get("engines", {}))))
+    b1 = c8.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp05", "recip_m": 500})
+    check("O26b exp05 引擎不接受 RECIP_M", b1.status_code == 400, str(b1.json())[:60])
+    b2 = c8.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp06", "recip_m": 1001})
+    check("O26c RECIP_M 越界被拒", b2.status_code == 400)
+    b3 = c8.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp06", "recip_m": True})
+    check("O26d RECIP_M 非整数被拒（422）", b3.status_code == 422)
+
+    r = c8.post("/api/runs", json={"seed": 4242, "years": 300, "sigma_m": 400,
+                                   "move_mort_m": 50, "engine": "exp06", "share_m": 1000,
+                                   "aid_m": 1000, "recip_m": 1000, "label": "EXP-06 接入"})
+    check("O26e exp06 运行可以启动", r.status_code == 200, str(r.json())[:60])
+    if r.status_code == 200:
+        rid6 = r.json()["run_id"]
+        for _ in range(900):
+            row = store.get_run(rid6)
+            if row["status"] in ("done", "failed", "canceled", "interrupted"):
+                break
+            time.sleep(0.05)
+        check("O26f exp06 运行跑完", row["status"] == "done",
+              f"{row['status']} {row['error'][:40]}")
+        check("O26g 台账记下了 recip_m", row["recip_m"] == 1000)
+        found = rel = None
+        for t in range(row["years_done"] + 1):
+            rec = c8.get(f"/api/runs/{rid6}/year/{t}").json()
+            ev = [e for e in rec["events"] if e["type"] == "aid"]
+            if ev and found is None:
+                found = (t, rec, ev)
+            withmem = [b for b in rec["bands"] if b.get("aid_memory")]
+            if withmem and rel is None:
+                rel = (t, withmem[0])
+            if found and rel:
+                break
+        if found:
+            t, rec, ev = found
+            e0 = ev[0]
+            print(f"      第 {t} 年的一条援助事件：{e0['text'][:80]}")
+            check("O26h 援助事件带上了阶段与回助标记",
+                  "phase" in e0 and "repay" in e0, str(sorted(e0)))
+            check("O26i 年份记录带 recip 段（含'分配改变'与'回助'两个不同计数）",
+                  "recip" in rec and {"changed", "repay_transfers", "transfers"}
+                  <= set(rec["recip"]), str(rec.get("recip"))[:90])
+            check("O26j 记忆账恒等误差为 0",
+                  rec["integrity"].get("aid_memory_error") == 0)
+        else:
+            uncov("O26h–j 援助事件与 recip 段", "这次运行里没有援助事件，前提缺失")
+        if rel:
+            t, band = rel
+            k0 = sorted(band["aid_memory"])[0]
+            print(f"      第 {t} 年 {band['name']} 的关系记录：{k0[:8]}… "
+                  f"{band['aid_memory'][k0]}")
+            check("O26k 关系记录可展示（谁以前帮过我、累计多少、最近哪一年）",
+                  isinstance(k0, str)
+                  and {"kcal", "last_year"} <= set(band["aid_memory"][k0]))
+        else:
+            uncov("O26k 关系记录", "这次运行里没有群体积累过援助记忆，前提缺失")
+        pre = next(x for x in c8.get("/api/runs").json()["runs"] if x["kind"] == "preset")
+        rec3 = c8.get(f"/api/runs/{pre['run_id']}/year/1").json()
+        check("O26l exp03 的记录里没有 recip 段、群体也没有 aid_memory（前端要容忍缺席）",
+              "recip" not in rec3 and "aid_memory" not in rec3["bands"][0])
 
 # ---------------------------------------------------------------- 探测未知 ≠ 死亡
 print("\nO23 进程探测：查不到不等于死了；回收前要比对状态与 pid")

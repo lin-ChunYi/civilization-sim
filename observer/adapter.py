@@ -53,6 +53,7 @@ def engine_info(name: str = None) -> Dict[str, Any]:
             "SIGMA_M_MAX": v3.SIGMA_M_MAX, "MOVE_MORT_M_MAX": v3.MOVE_MORT_M_MAX,
             **({"SHARE_M_MAX": v3.SHARE_M_MAX} if hasattr(v3, "SHARE_M_MAX") else {}),
             **({"AID_M_MAX": v3.AID_M_MAX} if hasattr(v3, "AID_M_MAX") else {}),
+            **({"RECIP_M_MAX": v3.RECIP_M_MAX} if hasattr(v3, "RECIP_M_MAX") else {}),
         },
     }
 
@@ -80,7 +81,8 @@ def map_geometry(engine: str = None) -> Dict[str, Any]:
 # ---------------------------------------------------------------- 运行期
 
 def make_world(seed: int, sigma_m: int, move_mort_m: int, arm: str,
-               engine: str = None, share_m: int = 0, aid_m: int = 0):
+               engine: str = None, share_m: int = 0, aid_m: int = 0,
+               recip_m: int = 0):
     """建世界。参数校验由引擎自己做（严格整数 + 范围），这里不重复实现一份。"""
     v3, _ = load_engine(engine)
     poison = config.ARMS[arm]["poison"]
@@ -88,6 +90,7 @@ def make_world(seed: int, sigma_m: int, move_mort_m: int, arm: str,
     extra = []
     if "share_m" in params: extra.append(share_m)
     if "aid_m" in params: extra.append(aid_m)
+    if "recip_m" in params: extra.append(recip_m)
     return v3.make_world(seed, poison, sigma_m, move_mort_m, *extra)
 
 
@@ -104,6 +107,13 @@ SHARE_FIELDS = ("share_groups", "share_participants", "share_received",
 # 是两个不同的计数，不要合并。
 AID_FIELDS = ("aid_events", "aid_transfers", "aid_kcal", "aid_donors",
               "aid_receivers", "aid_supply", "aid_demand")
+
+# EXP-06 才有的优先回助与记忆账字段。
+# 注意 repay（供给方记得对方帮过自己）与 recip_changed（优先规则真的改变了分配）
+# 是两回事：RECIP_M=0 时 repay 也可能发生，那是碰巧。
+RECIP_FIELDS = ("recip_budget", "recip_kcal", "recip_transfers", "recip_changed",
+                "repay_kcal", "repay_transfers", "amem_dropped_kcal",
+                "amem_entries_dropped")
 
 CUM_FIELDS = (
     "births_cum", "deaths_demo_cum", "mig_deaths_cum", "mig_total", "mig_regret",
@@ -164,10 +174,16 @@ class Recorder:
                 "bacc": b["bacc"],
                 "dacc": b["dacc"],
                 "mem": {str(c): [b["mem"][c], b["memt"].get(c)] for c in sorted(b["mem"])},
+                # EXP-06：援助记忆（谁实际援助过我）。只由实际转移累加，来源见 source 字段。
+                **({"aid_memory": {str(k): {"kcal": b["amem"][k][0],
+                                            "last_year": b["amem"][k][1]}
+                                   for k in sorted(b["amem"])}}
+                   if "amem" in b else {}),
             })
 
         fields = (tuple(CUM_FIELDS) + tuple(f for f in SHARE_FIELDS if f in st)
-                  + tuple(f for f in AID_FIELDS if f in st))
+                  + tuple(f for f in AID_FIELDS if f in st)
+                  + tuple(f for f in RECIP_FIELDS if f in st))
         cum = {k: st[k] for k in fields}
         prev = self._prev_cum or {k: 0 for k in fields}
         year = {k: cum[k] - prev.get(k, 0) for k in fields}
@@ -187,6 +203,8 @@ class Recorder:
             integrity["share_ledger_error"] = v3.share_ledger_error(st)
         if "aid_ledger_error" in dir(v3):
             integrity["aid_ledger_error"] = v3.aid_ledger_error(st)
+        if "aid_memory_error" in dir(v3):
+            integrity["aid_memory_error"] = v3.aid_memory_error(st)
         events = self._events(st, t, cells_now)
         rec = {"t": t, "stock": stock, "bands": bands, "cum": cum, "year": year,
                "agg": agg, "integrity": integrity, "events": events}
@@ -212,6 +230,20 @@ class Recorder:
                 "cum_kcal": cum.get("aid_kcal", 0),
                 "cum_events": cum.get("aid_events", 0),
                 "cum_transfers": cum.get("aid_transfers", 0),
+            }
+        if "recip_m" in st:                         # EXP-06：优先回助的当年统计
+            rec["recip"] = {
+                "budget": year.get("recip_budget", 0),
+                "kcal": year.get("recip_kcal", 0),
+                "transfers": year.get("recip_transfers", 0),
+                "changed": year.get("recip_changed", 0),      # 优先规则真的改变了分配的次数
+                "repay_kcal": year.get("repay_kcal", 0),      # 回助（含碰巧的）
+                "repay_transfers": year.get("repay_transfers", 0),
+                "cum_kcal": cum.get("recip_kcal", 0),
+                "cum_changed": cum.get("recip_changed", 0),
+                "cum_repay_transfers": cum.get("repay_transfers", 0),
+                "memory_entries": sum(len(b.get("amem", {})) for b in st["bands"].values()),
+                "memory_dropped": cum.get("amem_entries_dropped", 0),
             }
         self._prev_cum = cum
         self._prev_cells = cells_now
@@ -252,15 +284,22 @@ class Recorder:
         aid_log = st.get("aid_log")                 # 来源四：模型记录的食物援助（EXP-05）
         if aid_log is not None:
             need_pc = load_engine(self.engine)[0].NEED_PC
-            for (tick, cell, donor, recv, amt) in aid_log[self._aid_len:]:
+            for entry in aid_log[self._aid_len:]:
+                tick, cell, donor, recv, amt = entry[:5]
+                phase = entry[5] if len(entry) > 5 else "normal"
+                repay = bool(entry[6]) if len(entry) > 6 else False
                 d, r = str(donor), str(recv)
+                tag = "回助 · " if repay else ""
+                why = ("（优先回助阶段：供给方记得对方帮过自己）" if phase == "recip"
+                       else ("（普通阶段，但供给方确实记得对方帮过自己）" if repay else ""))
                 out.append({
                     "type": "aid", "source": "模型日志 st['aid_log']",
                     "band": r, "donor": d, "receiver": r, "cell": cell,
                     "kcal": amt, "person_years": amt / need_pc,
-                    "text": f"{self._names.get(d, d)} 向 {self._names.get(r, r)} "
+                    "phase": phase, "repay": repay,
+                    "text": f"{tag}{self._names.get(d, d)} 向 {self._names.get(r, r)} "
                             f"援助了 {amt} kcal（{amt / need_pc:.2f} 人年口粮），"
-                            f"地点在第 {cell} 号格",
+                            f"地点在第 {cell} 号格{why}",
                 })
             self._aid_len = len(aid_log)
 
