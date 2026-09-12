@@ -329,6 +329,11 @@ html.skin-console #pane-help{display:none !important}
   .sandtable{background-size:220% auto;background-position:center}
 }
 @media (max-width:400px){
+  main,.world-shell,.console,.overview,.net-svg,.density-wrap,.tablewrap,.panel{max-width:100%}
+  .tablewrap{overflow-x:auto}
+  table{max-width:100%}
+  td,th{word-break:break-word}
+  .tlctl{flex-wrap:wrap}
   .hud{padding:4px 8px;gap:6px;flex-wrap:nowrap;align-items:center}
   .brand{min-width:0;flex:0 1 auto}
   .brand-name{font-size:14px}
