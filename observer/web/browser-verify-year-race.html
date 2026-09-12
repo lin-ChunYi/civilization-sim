@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>OBS-01 开局 year/0 竞态</title>
+<style>body{font:13px/1.5 monospace;background:#111;color:#ddd;padding:8px}#result{white-space:pre-wrap}#mount{background:#0e1512;color:#ece8d8;max-height:280px;overflow:auto}</style>
+</head>
+<body>
+<pre id="result">running…</pre>
+<div id="mount"></div>
+<script>window.__OBS_MANUAL_BOOT__ = true;</script>
+<script>
+(async () => {
+  const realFetch = window.fetch.bind(window);
+  const out = [];
+  const ok = (name, cond, detail) => out.push((cond ? "PASS" : "FAIL") + " " + name + (detail ? " :: " + detail : ""));
+  const txt = (sel) => (document.querySelector(sel) || { textContent: "" }).textContent.replace(/\s+/g, " ").trim();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const html = await realFetch("/static/index.html").then((r) => r.text());
+    const body = html.split("<body>")[1].split("</body>")[0].replace(/<script[\s\S]*?<\/script>/g, "");
+    document.getElementById("mount").innerHTML = body;
+    await new Promise((res, rej) => {
+      const el = document.createElement("script");
+      el.src = "/static/app.js?race=" + Date.now(); el.onload = res; el.onerror = () => rej(new Error("app.js"));
+      document.head.appendChild(el);
+    });
+    const O = window.__obs;
+    await O.boot();
+
+    let blocked = 0;
+    const prevFetch = window.fetch;
+    window.fetch = async function (url, opts) {
+      const u = String(url);
+      const method = (opts && opts.method) || "GET";
+      if (blocked === 0 && method === "GET" && /\/api\/runs\/[^/]+\/year\/0$/.test(u) && u.indexOf("preset") < 0) {
+        blocked = 1;
+        return new Response(JSON.stringify({ detail: "year 0 not flushed" }), {
+          status: 404, headers: { "Content-Type": "application/json" }
+        });
+      }
+      return prevFetch.apply(this, arguments);
+    };
+
+    document.getElementById("f-engine").value = "exp06";
+    document.getElementById("f-engine").dispatchEvent(new Event("change"));
+    document.getElementById("f-seed").value = "31337";
+    document.getElementById("f-years").value = "150";
+    document.getElementById("f-sigma").value = "0";
+    document.getElementById("f-mort").value = "50";
+    document.getElementById("f-share").value = "1000";
+    document.getElementById("f-aid").value = "1000";
+    document.getElementById("f-recip").value = "1000";
+    document.getElementById("f-label").value = "year0 竞态验收";
+    await O.startRun();
+    const rid = O.S.run && O.S.run.run_id;
+    ok("R0 已创建运行", !!rid, rid);
+    ok("R1 首次 year/0 被 404", blocked === 1);
+    ok("R2 右栏不是「还没有选中任何运行」",
+      !!O.S.run && txt("#side-empty").indexOf("还没有选中任何运行") < 0,
+      txt("#side-empty"));
+    ok("R3 等待文案提到开局/落盘，而不是假装 0 条一致",
+      /等待开局|落盘|尚未加载/.test(txt("#side-empty") + txt("#year-summary") + txt("#ev-load-note"))
+      && txt("#ev-ledger-note").indexOf("一致（0）") < 0,
+      txt("#side-empty") + " | " + txt("#ev-ledger-note"));
+
+    let shown = false;
+    for (let i = 0; i < 40; i++) {
+      await O.refresh();
+      const rec = O.S.run && O.S.years.get(O.ykey(O.S.run.run_id, O.S.t));
+      if (rec && rec.agg && rec.agg.pop) { shown = true; break; }
+      await sleep(250);
+    }
+    ok("R4 同一页未再调 openRun/gotoYear，自动出现开局人口", shown && O.S.t === 0 && txt("#ov-pop-value").indexOf("120") >= 0,
+      "t=" + O.S.t + " pop=" + txt("#ov-pop-value") + " run=" + (O.S.run && O.S.run.run_id));
+    ok("R5 地图有格子且属于本次运行",
+      !!document.querySelector("#map .cell") && O.S.run.run_id === rid, rid);
+    const sideBody = document.getElementById("side-body");
+    ok("R6 右栏已选中本次运行",
+      sideBody && !sideBody.hidden && txt("#side-now").indexOf("120") >= 0,
+      txt("#side-now").slice(0, 80));
+    window.fetch = prevFetch;
+    out.push("RUN_ID " + (rid || ""));
+  } catch (e) {
+    out.push("FAIL 脚本出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
+  }
+  const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
+  out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
+  document.getElementById("result").textContent = out.join("\n");
+})();
+</script>
+</body></html>

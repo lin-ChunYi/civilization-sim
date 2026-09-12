@@ -131,6 +131,18 @@ window.__OBS_MANUAL_BOOT__ = true;
     ok("L37 回助含碰巧与 changed 分开", /回助/.test(rb) && /3 笔/.test(rb) && /改变 0 次/.test(rb));
     ok("L38 援助活动与逐笔转移仍分开", /援助活动 1 次/.test(rb) && /逐笔转移 2 笔/.test(rb));
     ok("L39 RECIP_M=0 是合法整数", L.parseStrictInt("0", { name: "RECIP_M", min: 0, max: 1000 }).ok);
+    const fa = L.flowAnchor(
+      { type: "share", id: "t125-share-1", cell: 0, donor: "A", receiver: "B" },
+      { A: 1, B: 1 }
+    );
+    ok("L40 年末同格但事件在 0，锚在事件格且不画年末弧", fa && fa.kind === "mark" && fa.cell === 0, JSON.stringify(fa));
+    const fb = L.flowAnchor(
+      { type: "aid", cell: 0, donor: "A", receiver: "B" },
+      { A: 0, B: 0 }
+    );
+    ok("L41 年末仍在事件格才允许弧", fb && fb.kind === "arc" && fb.cell === 0, JSON.stringify(fb));
+    const fc = L.flowAnchor({ type: "share", donor: "A", receiver: "B" }, { A: 1, B: 1 });
+    ok("L42 缺 e.cell 不猜测年末格", fc && fc.kind === "unrecorded" && fc.cell === null, JSON.stringify(fc));
   } catch (e) {
     out.push("FAIL 自检脚本本身出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
   }

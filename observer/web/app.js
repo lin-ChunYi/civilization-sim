@@ -13,6 +13,8 @@ const S = {
   layer: "resource",
   cam: { x: 0, y: 0, k: 1 },
   lastYearLabel: null,
+  yearWait: null,
+  yearMiss: {},
 };
 const ykey = (runId, t) => `${runId}|${t}`;
 const bump = () => ++S.epoch;
@@ -153,6 +155,18 @@ const OverviewLogic = {
       " 笔；分配被优先规则改变 " + recip.changed +
       " 次（格×年）。repay、优先阶段笔数、changed 不是同一个计数。");
   },
+  flowAnchor(e, endCellByBand) {
+    if (!e || (e.type !== "share" && e.type !== "aid")) return null;
+    if (e.cell === null || e.cell === undefined || e.cell === "") {
+      return { kind: "unrecorded", cell: null };
+    }
+    const cell = +e.cell;
+    if (!Number.isFinite(cell)) return { kind: "unrecorded", cell: null };
+    const d = endCellByBand ? endCellByBand[String(e.donor)] : undefined;
+    const r = endCellByBand ? endCellByBand[String(e.receiver)] : undefined;
+    if (d === cell && r === cell) return { kind: "arc", cell: cell };
+    return { kind: "mark", cell: cell };
+  },
 };
 window.OverviewLogic = OverviewLogic;
 
@@ -231,6 +245,39 @@ function statusBadge(st) {
 function recNow() {
   return S.run ? S.years.get(ykey(S.run.run_id, S.t)) : null;
 }
+function yearMissKey(runId, t) { return runId + "|" + t; }
+function isPendingYearError(err, t) {
+  if (!err || err.status !== 404) return false;
+  if (!S.run) return false;
+  const rec = S.run.years_recorded ?? 0;
+  const st = S.run.status;
+  if (st === "queued" || st === "running") return true;
+  if (rec < t) return true;
+  if (t === 0 && rec === 0) return true;
+  if (st === "done" && rec >= t) return true;
+  return false;
+}
+function yearWaitMessage() {
+  if (!S.run) return "还没有选中任何运行。";
+  if (S.yearWait && !S.yearWait.pending) {
+    return "读取第 " + S.t + " 年失败：" + (S.yearWait.message || "未知错误");
+  }
+  if (S.t === 0) return "等待开局记录生成（后台还在写入第 0 年，不会重新计算世界）。";
+  return "等待第 " + S.t + " 年落盘（已计算 " + (S.run.years_recorded ?? 0) + " 年）。";
+}
+function shouldRetryMissingYear(run, t) {
+  if (!run) return false;
+  if (S.years.has(ykey(run.run_id, t))) return false;
+  const st = run.status;
+  if (st === "failed" || st === "interrupted" || st === "canceled") return false;
+  const rec = run.years_recorded ?? 0;
+  if (st === "queued" || st === "running") return true;
+  if (rec >= t) {
+    const n = S.yearMiss[yearMissKey(run.run_id, t)] || 0;
+    return n < 8;
+  }
+  return false;
+}
 
 /* ---------------- API ---------------- */
 async function api(path, opts) {
@@ -300,12 +347,12 @@ function renderOverview() {
 
   if (!rec) {
     $("ov-pop-value").textContent = "…";
-    $("ov-pop-sub").textContent = "正在读取第 " + S.t + " 年";
+    $("ov-pop-sub").textContent = yearWaitMessage();
     $("ov-bands-value").textContent = "…";
     $("ov-bands-sub").textContent = "跟随回放年份";
     $("ov-ev-now-value").textContent = "…";
     $("ov-ev-now-sub").textContent = "本年事件清单尚未加载";
-    $("year-summary").textContent = "正在读取第 " + S.t + " 年的记录…";
+    $("year-summary").textContent = yearWaitMessage();
   } else {
     const st = startAgg();
     $("ov-pop-value").textContent = nf(rec.agg.pop) + " 人";
@@ -498,7 +545,7 @@ function renderMap() {
   if (!S.map || !S.run) { svg.innerHTML = ""; return; }
   const rec = recNow();
   if (!rec) {
-    svg.innerHTML = `<text x="20" y="40" fill="#8e9688">正在读取第 ${S.t} 年…</text>`;
+    svg.innerHTML = `<text x="24" y="40" fill="#d4b06a">${esc(yearWaitMessage())}</text>`;
     return;
   }
   const cap = S.meta ? S.meta.cap : null;
@@ -614,13 +661,30 @@ function renderMap() {
       let a, b;
       if (e.type === "migrate" && e.from != null && e.to != null) {
         a = cellCenter(S.map.cells[e.from]); b = cellCenter(S.map.cells[e.to]);
-      } else if ((e.type === "share" || e.type === "aid") && e.donor && e.receiver) {
-        a = bandPos[String(e.donor)]; b = bandPos[String(e.receiver)];
-        if (!a || !b || a[2] !== b[2]) return;
+      } else if (e.type === "share" || e.type === "aid") {
+        const endCells = {};
+        Object.keys(bandPos).forEach((id) => { endCells[id] = bandPos[id][2]; });
+        const anc = OverviewLogic.flowAnchor(e, endCells);
         const stroke = e.repay ? "#f3deaa" : (col[e.type] || "#6fb37c");
-        const x = a[0], y = a[1] - (e.repay ? 20 : 16);
-        out += `<path d="M${a[0].toFixed(1)},${a[1].toFixed(1)} Q${x.toFixed(1)},${y} ${b[0].toFixed(1)},${b[1].toFixed(1)}"
-          class="flow-line${e.repay ? " repay-flow" : ""}" stroke="${stroke}" stroke-width="${e.repay ? 2.2 : 1.6}"/>`;
+        const eid = e.id != null ? String(e.id) : "";
+        if (!anc || anc.kind === "unrecorded") {
+          return;
+        }
+        const cell = S.map.cells[anc.cell];
+        if (!cell) return;
+        const xy = cellCenter(cell);
+        const attrs = `data-event-id="${esc(eid)}" data-event-cell="${anc.cell}" data-event-type="${esc(e.type)}"`;
+        if (anc.kind === "arc") {
+          a = bandPos[String(e.donor)]; b = bandPos[String(e.receiver)];
+          const x = a[0], y = a[1] - (e.repay ? 20 : 16);
+          out += `<path ${attrs} d="M${a[0].toFixed(1)},${a[1].toFixed(1)} Q${x.toFixed(1)},${y} ${b[0].toFixed(1)},${b[1].toFixed(1)}"
+            class="flow-line${e.repay ? " repay-flow" : ""}" stroke="${stroke}" stroke-width="${e.repay ? 2.2 : 1.6}"/>`;
+        } else {
+          out += `<g class="flow-mark" ${attrs}>
+            <circle cx="${xy[0].toFixed(1)}" cy="${(xy[1] - 6).toFixed(1)}" r="5.5" fill="${stroke}" stroke="#f3deaa" stroke-width="1.2"/>
+            <title>${esc(TYPE_LABEL(e.type))}记录在第 ${anc.cell} 号格；年末群体位置不是事件地点，不把线画到年末格。</title>
+          </g>`;
+        }
         return;
       } else if (e.type === "split" && e.parent && e.band) {
         a = bandPos[String(e.parent)]; b = bandPos[String(e.band)];
@@ -685,9 +749,10 @@ function renderAidMemory(b, rec) {
     const e = mem[id] || {};
     const last = (e.last_year === null || e.last_year === undefined)
       ? "时间未记录" : ("最近第 " + e.last_year + " 年");
-    const jump = (e.last_year === null || e.last_year === undefined) ? "" :
-      ` class="link" data-prior-year="${e.last_year}"`;
-    return `<div class="mem-row"><span${jump}>${esc(bandName(rec, id))}</span>
+    const jump = (e.last_year === null || e.last_year === undefined)
+      ? `<span>${esc(bandName(rec, id))}</span>`
+      : `<button type="button" class="prior-jump" data-prior-year="${e.last_year}">${esc(bandName(rec, id))}</button>`;
+    return `<div class="mem-row">${jump}
       累计 ${nf(e.kcal)} kcal（${py(e.kcal)} 人年口粮）· ${esc(last)}</div>`;
   }).join("");
   return `<h4 class="subh">谁帮助过我</h4>
@@ -708,9 +773,20 @@ function renderRecipCompare(rec, cell) {
 /* ---------------- 侧栏 ---------------- */
 function renderSide() {
   const rec = recNow();
-  $("side-empty").hidden = !!rec;
-  $("side-body").hidden = !rec;
-  if (!rec) return;
+  if (!S.run) {
+    $("side-empty").hidden = false;
+    $("side-empty").textContent = "还没有选中任何运行。";
+    $("side-body").hidden = true;
+    return;
+  }
+  if (!rec) {
+    $("side-empty").hidden = false;
+    $("side-empty").textContent = yearWaitMessage();
+    $("side-body").hidden = true;
+    return;
+  }
+  $("side-empty").hidden = true;
+  $("side-body").hidden = false;
   $("side-year").textContent = S.t;
   const y = rec.year, cum = rec.cum, agg = rec.agg;
   const rows = [
@@ -822,8 +898,14 @@ function renderSide() {
   ${renderAidMemory(b, rec)}
   ${renderRecipCompare(rec, b.cell)}
   <div id="bandmore" class="muted" style="margin-top:8px">正在读取轨迹…</div>`;
-  selWrap.querySelectorAll("[data-prior-year]").forEach((n) =>
-    n.addEventListener("click", (e) => { e.stopPropagation(); gotoYear(+n.dataset.priorYear); }));
+  selWrap.querySelectorAll(".prior-jump").forEach((n) => {
+    n.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const y = +n.dataset.priorYear;
+      if (Number.isFinite(y)) gotoYear(y);
+    });
+    n.addEventListener("pointerdown", (e) => e.stopPropagation());
+  });
   loadBand(b.id);
 }
 
@@ -899,13 +981,20 @@ async function gotoYear(t, opts) {
     let rec;
     try { rec = await api(`/api/runs/${myRun}/year/${t}`); }
     catch (e) {
-      if (!stale(myEpoch, myRun)) flash("读取第 " + t + " 年失败：" + e.message, true);
+      if (stale(myEpoch, myRun)) return;
+      const pending = isPendingYearError(e, t);
+      S.yearWait = { runId: myRun, t: t, pending: pending, status: e.status, message: e.message };
+      if (!pending) flash("读取第 " + t + " 年失败：" + e.message, true);
+      renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents();
       return;
     }
     S.years.set(ykey(myRun, t), rec);
+    delete S.yearMiss[yearMissKey(myRun, t)];
+    S.yearWait = null;
     if (stale(myEpoch, myRun)) return;
   }
   if (stale(myEpoch, myRun)) return;
+  S.yearWait = null;
   renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents(); renderTech();
   setHash({ t: String(t) });
   if (!opts.quiet) renderCharts();
@@ -948,9 +1037,16 @@ async function prefetchYears(runId, tEnd) {
       try {
         const rec = await api(`/api/runs/${runId}/year/${t}`);
         S.years.set(ykey(runId, t), rec);
-      } catch (e) { /* 保留缺口，界面会标明未加载范围 */ }
+        delete S.yearMiss[yearMissKey(runId, t)];
+      } catch (e) { /* 保留缺口；refresh 会在记录可用后补当前年 */ }
     }));
-    if (S.run && S.run.run_id === runId) { renderOverview(); renderEvents(); }
+    if (S.run && S.run.run_id === runId) {
+      renderOverview(); renderEvents();
+      if (S.years.has(ykey(runId, S.t))) {
+        S.yearWait = null;
+        renderMap(); renderSide(); renderTech(); renderStatus();
+      }
+    }
   }
 }
 
@@ -1050,8 +1146,9 @@ function renderEvents() {
   }
   if (S.evScope === "year") {
     if (!rec) {
-      box.innerHTML = `<div class="emptystate">正在读取第 ${S.t} 年…</div>`;
-      if ($("ev-load-note")) $("ev-load-note").textContent = "本年事件清单尚未加载。";
+      box.innerHTML = `<div class="emptystate">${esc(yearWaitMessage())}</div>`;
+      if ($("ev-load-note")) $("ev-load-note").textContent = "本年事件清单尚未加载，不把空清单当成 0 条事件。";
+      if ($("ev-ledger-note")) $("ev-ledger-note").textContent = "";
       return;
     }
     items = (rec.events || []).map((e, i) => Object.assign({}, e, { t: S.t, _i: i }));
@@ -1090,13 +1187,13 @@ function renderEvents() {
         const priors = (e.basis.prior_events || []).map((id) => {
           const y = yearFromEventId(id);
           return y == null ? esc(String(id))
-            : `<span class="link" data-prior-year="${y}" data-prior-id="${esc(id)}">第 ${y} 年原援助</span>`;
-        }).join("、");
+            : `<button type="button" class="prior-jump" data-prior-year="${y}" data-prior-id="${esc(id)}">第 ${y} 年原援助</button>`;
+        }).join("");
         const remY = e.basis.remembered_last_year;
-        basis = `<div class="src">依据：${esc(e.basis.why || "未记录")}` +
+        basis = `<div class="src basis-row">依据：${esc(e.basis.why || "未记录")}` +
           (e.basis.remembered_kcal != null ? ` · 援助前记住 ${nf(e.basis.remembered_kcal)} kcal` : "") +
           (remY == null ? "" : ` · 最近受助于第 ${remY} 年`) +
-          (priors ? ` · 跳转 ${priors}` : " · 先前事件未记录") + `</div>`;
+          (priors ? `<div class="prior-row">跳转 ${priors}</div>` : " · 先前事件未记录") + `</div>`;
       }
       const cls = [e.type, e.repay ? "repay" : "", e.phase === "recip" ? "phase-recip" : ""]
         .filter(Boolean).join(" ");
@@ -1110,7 +1207,7 @@ function renderEvents() {
       </div>`;
     }).join("");
     box.querySelectorAll(".ev").forEach((n) => n.addEventListener("click", (ev) => {
-      if (ev.target.closest("[data-prior-year]")) return;
+      if (ev.target.closest(".prior-jump, .prior-row, [data-prior-year]")) return;
       jumpToEvent({
         t: +n.dataset.t,
         band: n.dataset.band || null,
@@ -1119,11 +1216,18 @@ function renderEvents() {
         cell: n.dataset.cell === "" ? null : +n.dataset.cell,
       });
     }));
-    box.querySelectorAll("[data-prior-year]").forEach((n) =>
-      n.addEventListener("click", (e) => {
+    box.querySelectorAll(".prior-jump").forEach((n) => {
+      const go = (e) => {
+        e.preventDefault();
         e.stopPropagation();
-        gotoYear(+n.dataset.priorYear);
-      }));
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        const y = +n.dataset.priorYear;
+        if (Number.isFinite(y)) gotoYear(y);
+      };
+      n.addEventListener("click", go);
+      n.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
+      n.addEventListener("mousedown", (e) => { e.stopPropagation(); });
+    });
   }
 
   if (rec && $("ev-ledger-note")) {
@@ -1132,7 +1236,7 @@ function renderEvents() {
     if (S.evScope === "year" && ledger !== listed) {
       $("ev-ledger-note").textContent = "模型账本本年迁移 " + ledger +
         " 次；本页可恢复的迁移事件 " + listed + " 条。口径不同，不强行对齐。";
-    } else if (S.evScope === "year") {
+    } else if (S.evScope === "year" && rec.events) {
       $("ev-ledger-note").textContent = "本年账本迁移次数与已记录迁移事件条数一致（" + ledger + "）。出生人数不是事件条数。";
     } else {
       $("ev-ledger-note").textContent = "累计事件只统计当前回放年份及以前。出生人数不等于事件条数。";
@@ -1232,12 +1336,16 @@ async function openRun(id) {
   S.meta = run.meta || null;
   S.years.clear(); S.selBand = null; S.selCell = null; S.band = null;
   S.cam = { x: 0, y: 0, k: 1 }; S.layer = "resource"; S.view = "truth";
+  S.yearWait = { runId: id, t: 0, pending: true };
   S.series = ser.series;
   S.view = "truth";
   if ($("v-truth")) $("v-truth").classList.add("on");
   if ($("v-mem")) $("v-mem").classList.remove("on");
   $("scrub").max = maxT();
   setHash({ run: id, b: "", view: "" });
+  S.t = 0;
+  syncYearWidgets(0);
+  renderOverview(); renderMap(); renderSide(); renderEvents(); renderStatus();
   await gotoYear(0);
   renderRuns(); renderCharts(); renderStatus(); renderOverview();
   prefetchYears(id, maxT());
@@ -1304,16 +1412,39 @@ async function refresh() {
         if (grew) {
           const d2 = await api(`/api/runs/${myRun}/series`);
           if (stale(myEpoch, myRun)) return;
-          S.series = d2.series; renderCharts(); renderOverview();
+          S.series = d2.series; renderCharts();
+        }
+        const wantT = S.t;
+        const hasYear = S.years.has(ykey(myRun, wantT));
+        if (!hasYear && shouldRetryMissingYear(S.run, wantT)) {
+          try {
+            const rec = await api(`/api/runs/${myRun}/year/${wantT}`);
+            if (stale(myEpoch, myRun) || S.t !== wantT) return;
+            S.years.set(ykey(myRun, wantT), rec);
+            delete S.yearMiss[yearMissKey(myRun, wantT)];
+            S.yearWait = null;
+          } catch (e) {
+            if (stale(myEpoch, myRun) || S.t !== wantT) return;
+            const k = yearMissKey(myRun, wantT);
+            S.yearMiss[k] = (S.yearMiss[k] || 0) + 1;
+            const pending = isPendingYearError(e, wantT) && shouldRetryMissingYear(S.run, wantT);
+            S.yearWait = { runId: myRun, t: wantT, pending: pending, status: e.status, message: e.message };
+            if (!pending && e.status !== 404) flash("读取第 " + wantT + " 年失败：" + e.message, true);
+          }
         }
         if (!S.meta) {
           const d3 = await api(`/api/runs/${myRun}`);
           if (stale(myEpoch, myRun)) return;
-          if (d3.meta) { S.meta = d3.meta; renderMap(); renderSide(); }
+          if (d3.meta) S.meta = d3.meta;
         }
       }
     }
     renderRuns(); renderStatus(); renderOverview();
+    if (S.run && S.years.has(ykey(S.run.run_id, S.t))) {
+      renderMap(); renderSide(); renderEvents(); renderTech();
+    } else if (S.run) {
+      renderMap(); renderSide(); renderEvents();
+    }
   } catch (e) {
     $("statusline").innerHTML = `<span class="err">后台读取失败：${esc(e.message)}</span>`;
   }
@@ -1525,7 +1656,7 @@ async function startRun() {
   }
 }
 
-window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot, startRun };
+window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot, startRun, setLayer };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {

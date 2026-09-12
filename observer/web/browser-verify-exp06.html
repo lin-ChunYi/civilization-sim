@@ -70,6 +70,22 @@
         } else {
           ok("I8 依据含可跳转的先前事件 id", false, "basis 未记录");
         }
+        const btn = document.querySelector("#events button.prior-jump");
+        ok("I8b 原援助是可聚焦 button", !!(btn && btn.tagName === "BUTTON" && btn.getAttribute("type") === "button"),
+          btn && btn.outerHTML.slice(0, 180));
+        if (btn) {
+          const y = +btn.dataset.priorYear;
+          const wantKcal = repayEv.basis && repayEv.basis.remembered_kcal;
+          btn.focus();
+          btn.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+          btn.click();
+          await new Promise((r) => setTimeout(r, 700));
+          ok("I9 真实点击/Enter 跳到原援助年", O.S.t === y, "t=" + O.S.t + " expected=" + y);
+          const evTxt = txt("#events").replace(/,/g, "");
+          ok("I10 原援助年看得到依据中的 kcal",
+            wantKcal == null || evTxt.indexOf(String(wantKcal)) >= 0,
+            "kcal=" + wantKcal + " t=" + O.S.t + " " + evTxt.slice(0, 180));
+        }
       }
     } else {
       ok("A0 engines 含 exp06", !!(O.S.cfg.engines && O.S.cfg.engines.exp06));
@@ -101,6 +117,16 @@
       ok("A5 startRun 成功", !!(run && run.run_id), run && run.run_id);
       ok("A6 请求带了 recip_m=1000", run && run.recip_m === 1000 && run.engine === "exp06",
         JSON.stringify(run && { id: run.run_id, engine: run.engine, recip_m: run.recip_m, aid_m: run.aid_m }));
+      let shown = false;
+      for (let i = 0; i < 40; i++) {
+        await O.refresh();
+        const rec = O.S.run && O.S.years.get(O.ykey(O.S.run.run_id, O.S.t));
+        if (rec && rec.agg && rec.agg.pop) { shown = true; break; }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      ok("A7 同一页不重开运行、不手点时间轴，自动显示开局人口",
+        shown && O.S.t === 0 && txt("#ov-pop-value").indexOf("120") >= 0 && !!document.querySelector("#map .cell"),
+        "t=" + O.S.t + " pop=" + txt("#ov-pop-value"));
       out.push("RUN_ID " + ((run && run.run_id) || ""));
     }
   } catch (e) {

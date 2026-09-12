@@ -1,0 +1,16 @@
+G01_R1 开局 404 竞态 + 原援助跳转
+工作目录：/Users/ecool/Desktop/civilization/civilization-sim  branch=main
+
+修复：
+- year/0 首次 404 显示「等待开局记录生成」，不把右栏写成未选中运行
+- refresh 在记录可用后自动加载当前年并 renderMap/Side/Events，不重开运行、不手点时间轴
+- 过期请求仍用 epoch+run_id 丢弃；done 后最多补试 8 次，失败/中断不再打
+- 缺记录时清空账本注释，不写「一致（0）」
+- 原援助改为 type=button.prior-jump（nowrap inline-flex），拦截冒泡；点击/Enter 跳到依据年
+
+测试：
+- browser-verify-year-race.html SUMMARY pass=7 fail=0  RUN_ID=0f328a121f4a
+- browser-verify-exp06.html#inspect=5340a1a8756f I8b/I9/I10：button、跳到 t=83、看到 6457 kcal
+- /selftest/selftest.html 见本轮命令输出
+
+非阻塞登记：NOTES-UX-G02-G06.md（顶栏拥挤、RECIP 依赖 AID_M、档案全历史轨迹 → G04）

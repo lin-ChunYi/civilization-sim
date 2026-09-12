@@ -172,6 +172,15 @@ td.clickable,.link{color:var(--gold);cursor:pointer;text-decoration:underline do
 .recip-presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .subh{margin:12px 0 4px;font-size:12px;letter-spacing:.12em;color:var(--gold)}
 .mem-row,.compare-row{font-size:12.5px;margin:4px 0;color:#e8eadc}
+.prior-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+button.prior-jump{
+  display:inline-flex;align-items:center;justify-content:center;
+  white-space:nowrap;max-width:100%;
+  background:#1a2420;color:var(--gold2);border:1px solid var(--gold);
+  border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer;line-height:1.2;
+}
+button.prior-jump:hover,button.prior-jump:focus{outline:2px solid var(--gold);background:rgba(212,176,106,.16)}
+.basis-row{display:block}
 @media (prefers-reduced-motion: reduce){
   .flow-line,.year-display.pulse{animation:none}
 }

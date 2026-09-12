@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>OBS-01 流向锚在事件格</title>
+<style>body{font:13px/1.5 monospace;background:#111;color:#ddd;padding:8px}#result{white-space:pre-wrap}#mount{max-height:240px;overflow:auto}</style>
+</head>
+<body>
+<pre id="result">running…</pre>
+<div id="mount"></div>
+<script>window.__OBS_MANUAL_BOOT__ = true;</script>
+<script>
+(async () => {
+  const realFetch = window.fetch.bind(window);
+  const out = [];
+  const ok = (name, cond, detail) => out.push((cond ? "PASS" : "FAIL") + " " + name + (detail ? " :: " + detail : ""));
+  try {
+    const html = await realFetch("/static/index.html").then((r) => r.text());
+    const body = html.split("<body>")[1].split("</body>")[0].replace(/<script[\s\S]*?<\/script>/g, "");
+    document.getElementById("mount").innerHTML = body;
+    await new Promise((res, rej) => {
+      const el = document.createElement("script");
+      el.src = "/static/app.js?flow=" + Date.now(); el.onload = res; el.onerror = () => rej(new Error("app.js"));
+      document.head.appendChild(el);
+    });
+    const O = window.__obs;
+    await O.boot();
+    const prefer = ["4033ecaaef73", "5340a1a8756f"];
+    const ids = O.S.runs.map((r) => r.run_id);
+    const rid = prefer.find((id) => ids.indexOf(id) >= 0) || ids.find((id) => {
+      const r = O.S.runs.find((x) => x.run_id === id);
+      return r && r.engine === "exp06" && r.years_recorded > 80;
+    });
+    ok("F0 有可检查的 exp06 运行", !!rid, rid);
+    if (!rid) throw new Error("no run");
+    await O.openRun(rid);
+    let hit = null, hitT = null;
+    const max = O.S.run.years_recorded || 0;
+    const scan = [125, 124, 83];
+    for (let i = 0; i < max; i++) scan.push(i);
+    for (const t of scan) {
+      if (t < 0 || t > max) continue;
+      if (!O.S.years.has(O.ykey(rid, t))) {
+        try { O.S.years.set(O.ykey(rid, t), await O.api("/api/runs/" + rid + "/year/" + t)); }
+        catch (e) { continue; }
+      }
+      const rec = O.S.years.get(O.ykey(rid, t));
+      const ev = ((rec && rec.events) || []).find((e) => {
+        if (e.type !== "share" && e.type !== "aid") return false;
+        if (e.cell == null) return false;
+        const donor = (rec.bands || []).find((b) => String(b.id) === String(e.donor));
+        const recv = (rec.bands || []).find((b) => String(b.id) === String(e.receiver));
+        return donor && recv && donor.cell !== e.cell;
+      });
+      if (ev) { hit = ev; hitT = t; break; }
+    }
+    ok("F1 找到年末格≠事件格的 share/aid", !!hit, hit && ("t=" + hitT + " id=" + hit.id + " e.cell=" + hit.cell));
+    if (hit) {
+      await O.gotoYear(hitT);
+      O.setLayer("flow");
+      const el = document.querySelector('#map [data-event-id="' + hit.id + '"]');
+      ok("F2 标记带事件 id 与格号", !!(el && el.getAttribute("data-event-cell") === String(hit.cell)),
+        el && (el.getAttribute("data-event-id") + " cell=" + el.getAttribute("data-event-cell")));
+      const rec = O.S.years.get(O.ykey(rid, hitT));
+      const donor = (rec.bands || []).find((b) => String(b.id) === String(hit.donor));
+      ok("F3 不把该事件标到年末格",
+        donor && String(donor.cell) !== String(hit.cell) && el.getAttribute("data-event-cell") !== String(donor.cell),
+        "event=" + hit.cell + " yearEnd=" + (donor && donor.cell) + " attr=" + (el && el.getAttribute("data-event-cell")));
+    }
+  } catch (e) {
+    out.push("FAIL 脚本出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
+  }
+  const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
+  out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
+  document.getElementById("result").textContent = out.join("\n");
+})();
+</script>
+</body></html>
