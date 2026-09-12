@@ -179,6 +179,15 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 援助列表直接渲染 `text`，要做统计就用 `aid` 段，**注意把"援助活动次数"和"转移笔数"
 分开显示**，不要相加也不要互相替代。
 
+**给 UI 分支的两条现状说明**（后台不改前端，供你按自己的节奏处理）：
+
+1. obs-1.3 的 `type:"aid"` 事件已经能在现有事件列表里渲染出来（截图
+   `observer/docs/screenshots/11-aid-events.jpg`），但类型标签目前显示的是原始的 `aid`，
+   事件筛选条里也还没有"援助"这一档 —— 你那份 `迁移 / 分裂 / 群体消失 / 信息交换` 的标签表
+   加一项即可。
+2. `showTab()` 遇到未登记的 tab 名（例如旧链接里的 `#tab=events`）会把所有分区都隐藏，
+   页面变成空白。给它一个兜底（未知就回到 `world`）会更稳。这两条都不影响数据正确性。
+
 ## 7. obs-1.2 的变化（EXP-04 接入）
 
 | 变化 | 兼容性 |
