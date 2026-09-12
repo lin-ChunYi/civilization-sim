@@ -872,5 +872,407 @@ class TestReportTypeBoundary(Base):
         self.assertEqual(len(self.envelopes()), 1, '坏队列期间派发了新任务')
 
 
+# ---------------------------------------------------------------- grok-cli 通道
+FAKE_CLI = r"""#!/usr/bin/env python3
+# 测试用的假 CLI：只按提示词里的指令往 stdout 写几行 JSON，不联网、不调任何模型。
+import json, sys, time
+
+args = sys.argv[1:]
+
+
+def val(flag):
+    return args[args.index(flag) + 1] if flag in args else None
+
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+prompt = open(val("--prompt-file"), encoding="utf-8").read()
+emit({"type": "system", "argv": args, "session_id": val("--resume") or "new-session-9"})
+if "SLEEP" in prompt:
+    time.sleep(120)
+if "CANCELLED" in prompt:
+    emit({"type": "result", "stopReason": "cancelled",
+          "cancellationCategory": "PermissionCancelled", "isError": False})
+    sys.exit(0)
+if "QUOTA" in prompt:
+    emit({"type": "result", "error": "usage limit reached for this window"})
+    sys.exit(0)
+if "HALF" in prompt:
+    sys.stdout.write('{"type":"assistant","text":"CIV_RESU')     # 故意写半条
+    sys.stdout.flush()
+    sys.exit(0)
+if "TWOMARK" in prompt:
+    emit({"type": "assistant", "text": "CIV_RESULT_G9 {\"status\":\"done\",\"a\":1}"})
+    emit({"type": "assistant", "text": "CIV_RESULT_G9 {\"status\":\"done\",\"a\":2}"})
+    sys.exit(0)
+if "NOMARK" in prompt:
+    emit({"type": "assistant", "text": "干完了，但是忘了写结果行"})
+    sys.exit(0)
+if "RCFAIL" in prompt:
+    emit({"type": "assistant", "text": "起不来"})
+    sys.exit(7)
+if "DICTTESTS" in prompt:
+    emit({"type": "assistant",
+          "text": 'CIV_RESULT_G9 {"status":"done","tests":{"a":"1 PASS","b":"2 PASS"}}'})
+    sys.exit(0)
+emit({"type": "assistant", "text": 'CIV_RESULT_G9 {"status":"done","commit":"ABC"}'})
+sys.exit(0)
+"""
+
+
+class TestGrokCliTransport(Base):
+    """grok-cli 通道的 fixture 测试。用一个**假 CLI 脚本**，不碰真实 Grok 环境、
+    不联网、不动任何正在跑的真实任务。"""
+
+    def setUp(self):
+        super().setUp()
+        self.cli = self.tmp / 'fake-grok'
+        self.cli.write_text(FAKE_CLI, encoding='utf-8')
+        os.chmod(self.cli, 0o700)
+        self.proj = self.tmp / 'proj'
+        self.proj.mkdir()
+        self.cli_prompt = self.tmp / 'g9.txt'
+
+    def cli_job(self, directive, task='G9', **cli_extra):
+        self.cli_prompt.write_text(
+            '%s\n请做 %s，完成后单行 %s{...}\n' % (directive, task, D.MARKER_PREFIX + task),
+            encoding='utf-8')
+        spec = {'bin': str(self.cli), 'cwd': str(self.proj),
+                'session_id': '041d93f0-5eae-4cff-90b8-f52785f14553',
+                'output_format': 'json', 'permission_mode': 'acceptEdits',
+                'allow': ['Bash(git status*)', 'Edit(observer/web/**)'],
+                'deny': ['Bash(git push*)'], 'max_turns': 100,
+                'extra_args': ['--no-subagents', '--disable-web-search']}
+        spec.update(cli_extra)
+        return {'task_id': task, 'owner': 'grok', 'transport': 'grok-cli',
+                'objective': 'o', 'allowed_paths': ['observer/web/'], 'baseline_sha': 'abc',
+                'dependencies': [], 'acceptance': 'a', 'workdir': str(self.proj),
+                'branch': 'main', 'prompt_file': str(self.cli_prompt), 'cli': spec}
+
+    def submit_cli(self, directive, task='G9', **cli_extra):
+        jf = self.tmp / (task + '.json')
+        jf.write_text(json.dumps(self.cli_job(directive, task, **cli_extra)), encoding='utf-8')
+        self.run_cli('submit', str(jf))
+        return task
+
+    def tick_inproc(self):
+        """在**本进程**里收一轮 —— 和长期守护一样能留住 Popen，因而拿得到退出码。
+        一次性的 `tick` 子进程做不到这一点，那时退出码如实记 null。"""
+        with D.op_lock(self.root):
+            queue, problem = D.load_queue(self.root)
+            self.assertFalse(problem, problem)
+            queue, _ = D.tick_once(self.root, self.hub, queue)
+            queue['updated_at'] = D.now()
+            D.atomic(self.root / 'queue.json', queue)
+            D.render_status(queue, self.root, self.hub)
+        return self.queue()['jobs']
+
+    def settle_inproc(self, task='G9', rounds=60):
+        for _ in range(rounds):
+            jobs = self.tick_inproc()
+            if jobs[task]['status'] in ('review', 'blocked', 'rejected', 'done'):
+                return jobs[task]
+            time.sleep(0.2)
+        return self.queue()['jobs'][task]
+
+    def settle(self, task='G9', rounds=80):
+        for _ in range(rounds):
+            self.run_cli('tick')
+            job = self.queue()['jobs'][task]
+            if job['status'] in ('review', 'blocked', 'rejected', 'done'):
+                return job
+            time.sleep(0.2)
+        return self.queue()['jobs'][task]
+
+    # ---------------- 命令与身份 ----------------
+    def test_R22_explicit_argv_and_resume_are_recorded(self):
+        self.submit_cli('NOMARK')
+        self.run_cli('tick')
+        job = self.queue()['jobs']['G9']
+        argv = job['cli_argv']
+        self.assertEqual(argv[0], str(self.cli))
+        pairs = [argv[i:i + 2] for i in range(len(argv) - 1)]
+        for pair in (['--cwd', str(self.proj)],
+                     ['--resume', '041d93f0-5eae-4cff-90b8-f52785f14553'],
+                     ['--output-format', 'json'],
+                     ['--permission-mode', 'acceptEdits'],
+                     ['--allow', 'Bash(git status*)'],
+                     ['--allow', 'Edit(observer/web/**)'],
+                     ['--deny', 'Bash(git push*)'],
+                     ['--max-turns', '100']):
+            self.assertIn(pair, pairs, '命令数组里缺 %s' % pair)
+        self.assertIn('--no-subagents', argv)
+        self.assertEqual(job['cli_session_mode'], 'resume', '续用会话被当成了新建')
+        self.assertTrue(job['cli_token'] and job['cli_token'] in ' '.join(argv),
+                        '出生身份 token 没有出现在命令行里，重启后认不回来')
+        self.assertTrue(job['journal'] and job['journal_err'])
+        self.assertEqual(oct(Path(job['journal']).stat().st_mode)[-3:], '600')
+        cmd = D.read(self.root / 'logs' / 'G9.command.json')
+        self.assertEqual(cmd['argv'], argv)
+
+    def test_R22b_new_session_is_not_called_a_resume(self):
+        self.submit_cli('NOMARK', session_id=None)
+        self.run_cli('tick')
+        job = self.queue()['jobs']['G9']
+        self.assertEqual(job['cli_session_mode'], 'new')
+        self.assertNotIn('--resume', job['cli_argv'])
+        self.settle()
+        self.assertEqual(self.queue()['jobs']['G9'].get('cli_session_id'), 'new-session-9',
+                         '新建会话报出来的 session id 没有被记下来')
+
+    def test_R22c_blanket_permission_modes_are_refused(self):
+        jf = self.tmp / 'bad.json'
+        jf.write_text(json.dumps(self.cli_job('NOMARK', permission_mode='bypassPermissions')),
+                      encoding='utf-8')
+        out = self.run_cli('submit', str(jf), expect=1)
+        self.assertIn('blanket permission mode', out.stdout + out.stderr)
+
+    # ---------------- 结局判定 ----------------
+    def test_R22d_rc0_with_permission_cancelled_is_not_done(self):
+        """真实踩过的坑：rc=0 但 stopReason=cancelled / PermissionCancelled。
+        既不是完成，也不是"用户放弃了这场马拉松"。"""
+        self.submit_cli('CANCELLED')
+        job = self.settle_inproc()
+        self.assertEqual(job['receipt_state'], 'permission_cancelled')
+        self.assertEqual(job['status'], 'blocked')
+        self.assertNotIn('report', job)
+        self.assertIn('NOT a completed task', job['receipt_detail'])
+        self.assertIn('NOT the user abandoning', job['receipt_detail'])
+        self.assertEqual(job['cli_rc'], 0, 'rc 确实是 0，正是这条的要害')
+
+    def test_R22e_rc0_without_marker_is_not_done(self):
+        """一次性 tick 拿不到退出码（子进程已被 init 接管），判定只能靠日志 ——
+        这正是"rc=0 不等于完成"的另一面：连 rc 都没有，也照样给得出准确状态。"""
+        self.submit_cli('NOMARK')
+        job = self.settle()
+        self.assertIsNone(job['cli_rc'])
+        self.assertIn('exit code unavailable', job['receipt_detail'])
+        self.assertEqual(job['receipt_state'], 'cli_no_unique_result')
+        self.assertEqual(job['status'], 'blocked')
+        self.assertNotIn('report', job)
+
+    def test_R22f_two_conflicting_markers_have_no_unique_result(self):
+        self.submit_cli('TWOMARK')
+        job = self.settle()
+        self.assertEqual(job['receipt_state'], 'cli_no_unique_result')
+        self.assertIn('conflicting', job['receipt_detail'])
+
+    def test_R22g_half_written_journal_is_unknown_not_done(self):
+        self.submit_cli('HALF')
+        job = self.settle()
+        self.assertEqual(job['receipt_state'], 'cli_exited_incomplete')
+        self.assertEqual(job['status'], 'blocked')
+        self.assertIn('no auto-relaunch', job['receipt_detail'])
+
+    def test_R22h_quota_is_its_own_state_and_is_not_retried(self):
+        self.submit_cli('QUOTA')
+        job = self.settle()
+        self.assertEqual(job['receipt_state'], 'quota_blocked')
+        self.assertEqual(job['dispatch_count'], 1, '额度受限时又跑了一遍')
+
+    def test_R22i_nonzero_rc_is_failed_not_done(self):
+        self.submit_cli('RCFAIL')
+        job = self.settle_inproc()
+        self.assertEqual(job['receipt_state'], 'cli_failed')
+        self.assertEqual(job['cli_rc'], 7)
+
+    def test_R22j_self_report_only_reaches_review(self):
+        self.submit_cli('MARK')
+        job = self.settle()
+        self.assertEqual(job['status'], 'review', '自报直接变成了 done')
+        self.assertEqual(job['report']['commit'], 'ABC')
+        self.assertIn('still needs accept', job['receipt_detail'])
+        ev = self.tmp / 'ev.txt'
+        ev.write_text('codex verified', encoding='utf-8')
+        self.run_cli('accept', 'G9', '--evidence', str(ev))
+        self.assertEqual(self.queue()['jobs']['G9']['status'], 'done')
+
+    def test_R22k_report_types_do_not_break_the_summary(self):
+        self.submit_cli('DICTTESTS')
+        job = self.settle()
+        self.assertEqual(job['status'], 'review')
+        self.assertEqual(job['report']['tests'], {'a': '1 PASS', 'b': '2 PASS'})
+        js = json.loads((self.root / 'STATUS.json').read_text(encoding='utf-8'))
+        row = [r for r in js['jobs'] if r['task_id'] == 'G9'][0]
+        self.assertIn('1 PASS', ' | '.join(row['tests']))
+        self.assertEqual(row['transport'], 'grok-cli')
+        md = (self.root / 'STATUS.md').read_text(encoding='utf-8')
+        self.assertIn('- cli: pid=', md)
+        self.assertLess(len(md), 8000, 'STATUS 变成了转录堆')
+
+    # ---------------- 不重复派发 / 重启接管 ----------------
+    def test_R22l_repeated_tick_never_launches_twice(self):
+        self.submit_cli('SLEEP')
+        for _ in range(4):
+            self.run_cli('tick')
+        job = self.queue()['jobs']['G9']
+        self.assertEqual(job['dispatch_count'], 1, '重复 tick 又起了一个进程')
+        self.assertEqual(len(list((self.root / 'prompts').glob('*.txt'))), 1)
+        self.addCleanup(self._kill, job.get('cli_pid'))
+
+    def test_R22m_restart_reclaims_by_token_instead_of_relaunching(self):
+        self.submit_cli('SLEEP')
+        self.run_cli('tick')
+        job = self.queue()['jobs']['G9']
+        real_pid = job['cli_pid']
+        self.addCleanup(self._kill, real_pid)
+        self.assertEqual(D.probe_cli(job), 'alive')
+        # 模拟守护重启：进程内的 Popen 没了，队列里记的 pid 也被弄脏
+        D._CLI_PROCS.clear()
+        q = self.queue()
+        q['jobs']['G9']['cli_pid'] = 999999
+        q['jobs']['G9']['cli_birth'] = ''
+        D.atomic(self.root / 'queue.json', q)
+        self.run_cli('tick')
+        job2 = self.queue()['jobs']['G9']
+        self.assertEqual(job2['cli_pid'], real_pid, '重启后没按 token 把进程认回来')
+        self.assertEqual(job2['dispatch_count'], 1, '重启后又跑了一遍')
+        self.assertEqual(len(list((self.root / 'prompts').glob('*.txt'))), 1)
+
+    def test_R22n_pid_reuse_is_gone_and_never_signalled(self):
+        self.submit_cli('SLEEP')
+        self.run_cli('tick')
+        job = dict(self.queue()['jobs']['G9'])
+        self.addCleanup(self._kill, job['cli_pid'])
+        victim = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+        self.addCleanup(victim.kill)
+        job['cli_pid'] = victim.pid                 # 假装 pid 被复用了
+        self.assertEqual(D.probe_cli(job), 'gone', 'pid 被复用却认成了自己的进程')
+        sent = []
+        real_kill = os.kill
+        os.kill = lambda pid, sig: sent.append(sig) if sig else real_kill(pid, sig)
+        try:
+            D.cli_pause(dict(job, status='running',
+                             cli=dict(job['cli'], graceful_cancel=True)), self.root)
+        finally:
+            os.kill = real_kill
+        self.assertEqual(sent, [], '对身份对不上的 pid 发了信号')
+        time.sleep(0.2)
+        self.assertIsNone(victim.poll(), '无关进程被误杀了')
+
+    def test_R22o_owner_holds_one_live_cli_run(self):
+        self.submit_cli('SLEEP', task='G9')
+        self.run_cli('tick')
+        first = self.queue()['jobs']['G9']
+        self.addCleanup(self._kill, first.get('cli_pid'))
+        self.submit_cli('MARK', task='G10')
+        self.run_cli('tick')
+        second = self.queue()['jobs']['G10']
+        self.assertEqual(second['status'], 'pending', '同一个 owner 同时跑了两个 CLI 任务')
+        self.assertIsNone(second.get('cli_pid'))
+
+    def test_R22p_same_prompt_on_same_session_is_refused(self):
+        self.submit_cli('SLEEP')
+        dup_text = self.cli_prompt.read_text(encoding='utf-8')
+        self.run_cli('tick')
+        self.addCleanup(self._kill, self.queue()['jobs']['G9'].get('cli_pid'))
+        job = self.cli_job('SLEEP', task='G11')
+        job['prompt_file'] = str(self.cli_prompt)
+        self.cli_prompt.write_text(dup_text, encoding='utf-8')   # 同一份字节
+        jf = self.tmp / 'dup.json'
+        jf.write_text(json.dumps(job), encoding='utf-8')
+        out = self.run_cli('submit', str(jf), expect=1)
+        self.assertIn('does not re-run a task', out.stdout + out.stderr)
+
+    # ---------------- 暂停 ----------------
+    def test_R22q_pause_never_injects_and_never_signals_by_default(self):
+        self.submit_cli('SLEEP')
+        self.run_cli('tick')
+        job = self.queue()['jobs']['G9']
+        self.addCleanup(self._kill, job.get('cli_pid'))
+        before = len(list((self.hub / 'outbox').glob('*')))
+        sent = []
+        real_kill = os.kill
+        os.kill = lambda pid, sig: sent.append(sig) if sig else real_kill(pid, sig)
+        try:
+            self.run_cli('pause')
+            self.run_cli('tick')
+        finally:
+            os.kill = real_kill
+        after = len(list((self.hub / 'outbox').glob('*')))
+        self.assertEqual(after, before, 'headless CLI 的任务被 reply_inject 了')
+        self.assertEqual(sent, [], '默认暂停就给 CLI 发了信号')
+        paused = self.queue()['jobs']['G9']
+        self.assertIn('NOT interrupted', paused['pause_note'])
+        self.assertIn('no further rounds', paused['pause_note'])
+        self.assertEqual(paused['status'], 'running', '暂停把没结束的任务判成别的了')
+
+    def test_R22r_graceful_cancel_only_targets_our_verified_pid(self):
+        self.submit_cli('SLEEP', graceful_cancel=True)
+        self.run_cli('tick')
+        job = self.queue()['jobs']['G9']
+        pid = job['cli_pid']
+        self.addCleanup(self._kill, pid)
+        self.run_cli('pause')
+        self.run_cli('tick')
+        paused = self.queue()['jobs']['G9']
+        self.assertEqual(paused.get('pause_signal'), 'SIGINT')
+        self.assertIn('our own verified pid', paused['pause_note'])
+        self.assertTrue(Path(paused['journal']).exists(), '暂停把日志弄丢了')
+        # 接管观察的任务：即使开了 graceful_cancel 也一个信号都不发
+        adopted = dict(job, task_id='G12', owns_process=False, pause_notice_sent=False,
+                       cli=dict(job['cli'], graceful_cancel=True))
+        sent = []
+        real_kill = os.kill
+        os.kill = lambda p_, sig: sent.append(sig) if sig else real_kill(p_, sig)
+        try:
+            D.cli_pause(adopted, self.root)
+        finally:
+            os.kill = real_kill
+        self.assertEqual(sent, [], '对接管观察的进程发了信号')
+        self.assertIn('NOT interrupted', adopted['pause_note'])
+
+    def test_R22s_adopted_run_is_observed_never_signalled(self):
+        holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+        self.addCleanup(holder.kill)
+        journal = self.tmp / 'foreign.jsonl'
+        journal.write_text(json.dumps({'type': 'assistant', 'text': 'still working'}) + '\n',
+                           encoding='utf-8')
+        job = self.cli_job('MARK', task='G13')
+        job['cli']['adopt'] = {'pid': holder.pid, 'journal': str(journal),
+                               'session_id': '041d93f0-5eae-4cff-90b8-f52785f14553'}
+        job['cli']['session_id'] = None
+        jf = self.tmp / 'adopt.json'
+        jf.write_text(json.dumps(job), encoding='utf-8')
+        self.run_cli('submit', str(jf))
+        self.run_cli('tick')
+        row = self.queue()['jobs']['G13']
+        self.assertEqual(row['receipt_state'], 'cli_observing')
+        self.assertFalse(row['owns_process'])
+        self.assertIsNone(row.get('cli_argv'), '接管观察的任务不该被启动')
+        self.assertEqual(row['cli_session_mode'], 'adopted')
+        time.sleep(0.2)
+        self.assertIsNone(holder.poll(), '接管观察却把别人的进程弄死了')
+
+    # ---------------- 原生终端回执 ----------------
+    def test_R22t_native_terminal_unknown_prefix_is_unknown_not_failed(self):
+        """真实回执：[delivery state=unknown retry=none] ... native terminal unsafe ...
+        以前被归成 failed。它不是失败，是**不知道** —— 继续观察，绝不自动重发。"""
+        job = self.submit_and_dispatch()          # Cockpit 通道，与 CLI 无关
+        corr = job['corr_id']
+        (self.hub / 'outbox' / (corr + '.result.json')).write_text(json.dumps(
+            {'ok': False,
+             'error': '[delivery state=unknown retry=none] native terminal unsafe; '
+                      'no injection performed'}), encoding='utf-8')
+        self.run_cli('tick')
+        row = self.queue()['jobs']['T1']
+        self.assertEqual(row['receipt_state'], 'unknown', '原生终端的未知回执被当成了失败')
+        self.assertFalse(row['receipt_safe_requeue'], '未知却被标成可以安全重排')
+        out = self.run_cli('requeue', 'T1', expect=1)
+        self.assertIn('acknowledge', (out.stdout + out.stderr).lower())
+        self.assertEqual(self.queue()['jobs']['T1']['dispatch_count'], 1, '未知的任务被重发了')
+
+    def _kill(self, pid):
+        if not pid:
+            return
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except OSError:
+            pass
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
