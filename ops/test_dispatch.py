@@ -911,6 +911,43 @@ if "TWOMARK" in prompt:
 if "NOMARK" in prompt:
     emit({"type": "assistant", "text": "干完了，但是忘了写结果行"})
     sys.exit(0)
+if "QWORD" in prompt:
+    # 正文里**提到**额度，但这一轮其实成功了 —— 不许被当成额度受限
+    emit({"type": "assistant",
+          "text": '\u672a\u89e6\u53d1\u989d\u5ea6\u9650\u5236\u3002'
+                  'CIV_RESULT_G9 {"status":"done","commit":"QW","tests":["quota \u989d\u5ea6 ok"]}'})
+    emit({"text": "done", "stopReason": "end_turn", "sessionId": "041d", "num_turns": 3})
+    sys.exit(0)
+if "HARDLIMIT" in prompt:
+    emit({"type": "assistant", "text": "开始干活"})
+    emit({"text": "", "stopReason": "error", "error": "usage limit reached for this window",
+          "sessionId": "041d"})
+    sys.exit(0)
+if "CANCELMARK" in prompt:
+    emit({"type": "assistant", "text": 'CIV_RESULT_G9 {"status":"done","commit":"EARLY"}'})
+    emit({"text": "", "stopReason": "cancelled",
+          "cancellationCategory": "PermissionCancelled", "sessionId": "041d"})
+    sys.exit(0)
+if "GENCANCEL" in prompt:
+    emit({"type": "assistant", "text": 'CIV_RESULT_G9 {"status":"done","commit":"EARLY"}'})
+    emit({"text": "", "stopReason": "cancelled", "sessionId": "041d"})
+    sys.exit(0)
+if "USERCANCEL" in prompt:
+    emit({"text": "", "stopReason": "cancelled",
+          "cancellationCategory": "UserCancelled", "sessionId": "041d"})
+    sys.exit(0)
+if "HISTERR" in prompt:
+    # resume 的日志里带着**早先那一轮**的失败，这一轮正常完成
+    emit({"type": "result", "stopReason": "cancelled",
+          "cancellationCategory": "PermissionCancelled"})
+    emit({"type": "assistant", "text": 'CIV_RESULT_G9 {"status":"done","commit":"LATER"}'})
+    emit({"text": "ok", "stopReason": "end_turn", "sessionId": "041d"})
+    sys.exit(0)
+if "THOUGHT" in prompt:
+    emit({"type": "assistant", "thought": "要不要取消？会不会 PermissionCancelled 或者额度不够",
+          "text": 'CIV_RESULT_G9 {"status":"done","commit":"TH"}'})
+    emit({"text": "ok", "stopReason": "end_turn", "sessionId": "041d"})
+    sys.exit(0)
 if "RCFAIL" in prompt:
     emit({"type": "assistant", "text": "起不来"})
     sys.exit(7)
@@ -923,8 +960,8 @@ sys.exit(0)
 """
 
 
-class TestGrokCliTransport(Base):
-    """grok-cli 通道的 fixture 测试。用一个**假 CLI 脚本**，不碰真实 Grok 环境、
+class CliBase(Base):
+    """grok-cli 通道的公共装置：一个**假 CLI 脚本**，不碰真实 Grok 环境、
     不联网、不动任何正在跑的真实任务。"""
 
     def setUp(self):
@@ -987,6 +1024,16 @@ class TestGrokCliTransport(Base):
             time.sleep(0.2)
         return self.queue()['jobs'][task]
 
+    def _kill(self, pid):
+        if not pid:
+            return
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except OSError:
+            pass
+
+
+class TestGrokCliTransport(CliBase):
     # ---------------- 命令与身份 ----------------
     def test_R22_explicit_argv_and_resume_are_recorded(self):
         self.submit_cli('NOMARK')
@@ -1265,13 +1312,182 @@ class TestGrokCliTransport(Base):
         self.assertIn('acknowledge', (out.stdout + out.stderr).lower())
         self.assertEqual(self.queue()['jobs']['T1']['dispatch_count'], 1, '未知的任务被重发了')
 
-    def _kill(self, pid):
-        if not pid:
-            return
+
+# ------------------------------- C06_R1：三处边界（独立复审在 59650b3 上实证）
+class TestCliBoundaries(CliBase):
+    """1) token 落盘、pid 还没写回来的崩溃窗口；
+    2) 正文里提到"额度"被误判成额度受限；
+    3) 当前这一轮的终态取消必须盖过此前出现过的标记。"""
+
+    def mem_job(self, records, **extra):
+        """直接拿原函数造场景 —— 这三条就是这么被复现出来的。"""
+        jpath = self.tmp / ('mem-%d.jsonl' % len(list(self.tmp.glob('mem-*.jsonl'))))
+        jpath.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in records),
+                         encoding='utf-8')
+        job = {'task_id': 'G9', 'owner': 'grok', 'transport': 'grok-cli', 'status': 'running',
+               'owns_process': True, 'cli_pid': None, 'cli_token': None, 'cli_rc': 0,
+               'journal': str(jpath), 'dependencies': [], 'created_at': D.now()}
+        job.update(extra)
+        return job
+
+    # ---------- 1. 崩溃窗口 ----------
+    def test_R23_claim_without_pid_is_unknown_not_gone(self):
+        job = self.mem_job([{'type': 'assistant',
+                             'text': 'CIV_RESULT_G9 {"status":"done","commit":"X"}'}],
+                           cli_token='ciltok-G9-deadbeef')
+        real = D.find_by_token
+        D.find_by_token = lambda t: 'unknown'
         try:
-            os.kill(int(pid), signal.SIGKILL)
-        except OSError:
-            pass
+            D.collect_cli(job, self.root)
+        finally:
+            D.find_by_token = real
+        self.assertEqual(job['cli_probe'], 'unknown', '没有 pid 被当成了进程已死')
+        self.assertEqual(job['receipt_state'], 'unknown')
+        self.assertEqual(job['status'], 'blocked')
+        self.assertNotIn('report', job, '进程状态未知却认了自报结果')
+        self.assertIn('not dead', job['receipt_detail'])
+        self.assertTrue(D.cli_unresolved(job), '结局未定却被当成已有结论')
+
+    def test_R23b_unresolved_cli_does_not_free_the_owner_for_rework(self):
+        """进程**看不见**（pid 没了、日志也空）但结局未定时，最容易被当成"已有结论"
+        而放行返工 —— 那个进程可能还活着，只是我们此刻看不见它。"""
+        self.submit_cli('SLEEP')
+        self.run_cli('tick')
+        live = self.queue()['jobs']['G9']
+        self.addCleanup(self._kill, live.get('cli_pid'))
+        self._kill(live.get('cli_pid'))
+        Path(live['journal']).write_text('', encoding='utf-8')
+        q = self.queue()
+        q['jobs']['G9'].update(status='blocked', cli_pid=None, cli_birth='',
+                               receipt_state='cli_no_launch_record',
+                               blocking_reason='outcome unknown')
+        D.atomic(self.root / 'queue.json', q)
+        rw = self.cli_job('MARK', task='G9_R1')
+        rw['rework_of'] = 'G9'
+        jf = self.tmp / 'rw.json'
+        jf.write_text(json.dumps(rw), encoding='utf-8')
+        self.run_cli('submit', str(jf))
+        self.run_cli('tick')
+        self.assertEqual(self.queue()['jobs']['G9_R1']['status'], 'pending',
+                         '结局未定的 CLI 任务放行了同 owner 的返工')
+
+    def test_R23c_unknown_recovers_on_a_later_tick(self):
+        """ps 恢复正常之后，下一轮必须还能把它认回来 —— 不能永远卡在未知上。"""
+        self.submit_cli('SLEEP')
+        self.run_cli('tick')
+        job = self.queue()['jobs']['G9']
+        real_pid = job['cli_pid']
+        self.addCleanup(self._kill, real_pid)
+        q = self.queue()
+        q['jobs']['G9'].update(cli_pid=None, cli_birth='', status='blocked',
+                               receipt_state='unknown', blocking_reason='ps unavailable')
+        D.atomic(self.root / 'queue.json', q)
+        jobs = self.tick_inproc()                  # ps 正常了
+        self.assertEqual(jobs['G9']['cli_pid'], real_pid, '下一轮没能重新认领')
+        self.assertEqual(jobs['G9']['status'], 'running')
+        self.assertEqual(jobs['G9']['dispatch_count'], 1, '重新认领时又跑了一遍')
+
+    def test_R23d_no_launch_record_is_its_own_state(self):
+        """没有 pid、进程表里没有、日志也是空的：**说不清有没有启动过**。
+        这和"确实停了"不是一回事，不能靠没有 pid 推断死亡。"""
+        empty = self.tmp / 'empty.jsonl'
+        empty.write_text('', encoding='utf-8')
+        job = self.mem_job([], cli_token='ciltok-G9-nothing')
+        job['journal'] = str(empty)
+        real = D.find_by_token
+        D.find_by_token = lambda t: None
+        try:
+            D.collect_cli(job, self.root)
+        finally:
+            D.find_by_token = real
+        self.assertEqual(job['receipt_state'], 'cli_no_launch_record')
+        self.assertEqual(job['status'], 'blocked')
+        self.assertIn('cannot tell whether the CLI ever started', job['receipt_detail'])
+        self.assertTrue(D.cli_unresolved(job))
+
+    def test_R23e_no_pid_but_journal_output_means_it_really_ran(self):
+        job = self.mem_job([{'type': 'assistant',
+                             'text': 'CIV_RESULT_G9 {"status":"done","commit":"R"}'},
+                            {'text': 'ok', 'stopReason': 'end_turn'}],
+                           cli_token='ciltok-G9-ran')
+        real = D.find_by_token
+        D.find_by_token = lambda t: None
+        try:
+            D.collect_cli(job, self.root)
+        finally:
+            D.find_by_token = real
+        self.assertEqual(job['cli_probe'], 'gone')
+        self.assertEqual(job['status'], 'review', '有日志、有终态、有唯一标记，却没进 review')
+
+    # ---------- 2. "额度"是说话还是信号 ----------
+    def test_R23f_prose_mentioning_quota_is_not_a_quota_block(self):
+        self.submit_cli('QWORD')
+        job = self.settle()
+        self.assertEqual(job['receipt_state'], 'durable_ok',
+                         '正文里提到额度就被判成了额度受限：%s' % job['receipt_detail'][:80])
+        self.assertEqual(job['status'], 'review')
+        self.assertEqual(job['report']['commit'], 'QW')
+
+    def test_R23g_real_quota_in_the_terminal_record_still_blocks(self):
+        self.submit_cli('HARDLIMIT')
+        job = self.settle()
+        self.assertEqual(job['receipt_state'], 'quota_blocked')
+        self.assertEqual(job['status'], 'blocked')
+        self.assertEqual(job['dispatch_count'], 1, '额度受限时又重派了')
+        self.run_cli('tick')
+        self.assertEqual(self.queue()['jobs']['G9']['dispatch_count'], 1)
+
+    def test_R23h_private_thought_is_not_evidence_and_not_reported(self):
+        self.submit_cli('THOUGHT')
+        job = self.settle()
+        self.assertEqual(job['status'], 'review',
+                         '私有思考里的"取消/额度"被当成了信号：%s' % job['receipt_detail'][:80])
+        self.assertEqual(job['report']['commit'], 'TH')
+        self.assertNotIn('要不要取消', json.dumps(job.get('report'), ensure_ascii=False))
+
+    # ---------- 3. 终态取消盖过此前的标记 ----------
+    def test_R23i_permission_cancel_outranks_an_earlier_marker(self):
+        self.submit_cli('CANCELMARK')
+        job = self.settle()
+        self.assertEqual(job['receipt_state'], 'permission_cancelled')
+        self.assertEqual(job['status'], 'blocked')
+        self.assertNotIn('report', job, '这一轮被取消了，早前的标记却被当成完成')
+        self.assertIn('does NOT count as a completed task', job['receipt_detail'])
+        self.assertEqual(job['cli_cancel_category'], 'PermissionCancelled')
+
+    def test_R23j_generic_cancel_is_not_no_unique_result(self):
+        self.submit_cli('GENCANCEL')
+        job = self.settle()
+        self.assertEqual(job['receipt_state'], 'cli_cancelled',
+                         '只有 stopReason=cancelled 被误判成了"没有唯一结果"')
+        self.assertEqual(job['cli_stop_reason'], 'cancelled')
+        self.assertEqual(job['cli_cancel_category'], '')
+
+    def test_R23k_user_cancel_is_distinguished_from_permission_cancel(self):
+        self.submit_cli('USERCANCEL')
+        job = self.settle()
+        self.assertEqual(job['receipt_state'], 'cli_user_cancelled')
+        self.assertIn('cancelled by a person', job['receipt_detail'])
+        self.assertNotEqual(job['receipt_state'], 'permission_cancelled')
+
+    def test_R23l_history_failure_does_not_poison_this_turn(self):
+        """resume 的日志里带着早先那一轮的权限取消，这一轮正常完成 —— 结果就是完成。"""
+        self.submit_cli('HISTERR')
+        job = self.settle()
+        self.assertEqual(job['status'], 'review',
+                         '把历史里的失败带进了这一轮：%s' % job['receipt_detail'][:80])
+        self.assertEqual(job['report']['commit'], 'LATER')
+        self.assertEqual(job['cli_stop_reason'], 'end_turn')
+
+    def test_R23m_acp_meta_cancellation_is_read(self):
+        """原生 stream 的 ACP turn_completed 把 cancellationCategory 放在 _meta 里。"""
+        job = self.mem_job([{'type': 'assistant',
+                             'text': 'CIV_RESULT_G9 {"status":"done","commit":"E"}'},
+                            {'type': 'turn_completed',
+                             '_meta': {'cancellationCategory': 'PermissionCancelled'}}])
+        D.collect_cli(job, self.root)
+        self.assertEqual(job['receipt_state'], 'permission_cancelled')
+        self.assertNotIn('report', job)
 
 
 if __name__ == '__main__':

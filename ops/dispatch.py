@@ -70,14 +70,15 @@ RECEIPT_STATES = (
     'cli_observing',          # 接管观察的既有进程：只看，不发信号
     'cli_exited_incomplete',  # 子进程退了，但日志没写完/读不全 —— 结果未知
     'cli_no_unique_result',   # 退了、也没报错，但日志里没有唯一的结果标记
-    'permission_cancelled',   # 工具权限被取消（stopReason=cancelled）—— 不是完成，也不是用户放弃
+    'permission_cancelled',   # 终态是权限被拒 —— 不是完成，也不是用户放弃整场任务
+    'cli_user_cancelled',     # 终态是人主动打断（graceful / user cancel）
+    'cli_cancelled',          # 终态说取消了，但没说是哪一种
+    'cli_no_launch_record',   # 认领落盘了，却没有 pid、没有进程、也没有任何日志输出
     'cli_failed',             # 明确的非零退出且不是上面几类
 )
 
-# 权限取消的真实证据（Grok CLI 的 JSON 输出里出现过这两个字段）。
-# **这不是"用户取消了整个任务"**：它只说明某一次工具调用没被允许。
-PERMISSION_CANCEL_HINTS = ('permissioncancelled', 'permission_cancelled',
-                           'permission cancelled', 'cancellationcategory')
+# 取消的三种来源要分开：权限被拒 / 人主动打断 / 说不清的取消。
+# 证据只从**当前这一轮的终态记录**里取（见 journal_signals），不扫助手正文。
 
 
 def now():
@@ -559,7 +560,8 @@ def tick_once(root, hub, queue, allow_dispatch=True):
             prior = queue['jobs'].get(target) if target else None
             rework_ok = bool(prior) and prior['owner'] == job['owner'] and \
                 prior['status'] in ('review', 'rejected', 'blocked') and \
-                holding.get(job['owner']) in (target, None)
+                holding.get(job['owner']) in (target, None) and \
+                not cli_unresolved(prior)      # 结局未定的 CLI 任务不放行返工
             if not rework_ok:
                 continue
         if any(queue['jobs'].get(dep, {}).get('status') != 'done' for dep in job['dependencies']):
@@ -571,8 +573,7 @@ def tick_once(root, hub, queue, allow_dispatch=True):
                 # 同一个 owner 只要还有活着的 CLI 进程，就不派下一个。
                 live = [j for j in queue['jobs'].values()
                         if j is not job and j['owner'] == job['owner'] and is_cli(j)
-                        and j['status'] in ('running', 'blocked')
-                        and probe_cli(j) in ('alive', 'unknown')]
+                        and j['status'] in ('running', 'blocked') and cli_unresolved(j)]
                 if live:
                     job['blocking_reason'] = (
                         'owner %s still has a live/unverified CLI run (%s); not launching'
@@ -699,15 +700,19 @@ def proc_line(pid):
 
 
 def probe_cli(job):
-    """这次派工的 CLI 进程现在怎么样：alive / gone / unknown。
+    """这次派工的 CLI 进程现在怎么样：alive / gone / unknown / unconfirmed。
 
     判据是**出生身份**，不是"我记得 pid 是多少"：启动时记下 `ps` 的启动时刻与完整命令行，
     现在必须还对得上。对不上就是 pid 被复用了（gone），查不了就是 unknown ——
     unknown 既不算活也不算死，更不是发信号的理由。
+
+    **没有 pid 不等于进程死了。** 认领是先落盘再启动的，中间有个窗口：token 已经写进
+    队列、pid 还没写回来。那种情况返回 unconfirmed，交给 resolve_cli 去扫进程表 + 看日志，
+    分清"确实没留下启动痕迹 / 确实跑过并结束了 / 不知道"。
     """
     pid = job.get('cli_pid')
     if not pid:
-        return 'gone'
+        return 'unconfirmed' if job.get('cli_token') else 'gone'
     line = proc_line(pid)
     if line is None:
         return 'gone'
@@ -746,6 +751,35 @@ def find_by_token(token):
         return int(hits[0].split(None, 1)[0])
     except (ValueError, IndexError):
         return 'unknown'
+
+
+def resolve_cli(job):
+    """认领落盘了、pid 还没写回来时，把"到底怎么回事"查清楚。
+
+    返回 (probe, detail)。三种结局分得清清楚楚，**绝不靠"没有 pid"推断死亡**：
+      * 进程表里按 token 找到了 -> 认回来，alive；
+      * 进程表扫不动（ps 超时 / 受限）-> unknown，保持未知，下一轮再来；
+      * 进程表里确实没有：日志里有输出，说明它确实跑过并结束了 -> gone（按日志判结局）；
+        日志空 / 不存在，说明**根本没留下启动痕迹** -> no_launch_record，同样是未知，
+        既不重跑也不当成完成。
+    """
+    found = find_by_token(job.get('cli_token'))
+    if isinstance(found, int):
+        line = proc_line(found)
+        job['cli_pid'] = found
+        job['cli_birth'] = '' if line in (None, 'unknown') else line
+        return 'alive', 'reclaimed pid %d by launch token' % found
+    if found == 'unknown':
+        return 'unknown', ('the claim is on disk but no pid was recorded, and the process table '
+                           'cannot be scanned right now; whether a CLI process is running is '
+                           'UNKNOWN - not dead. No auto-relaunch; the next tick retries.')
+    text, _ = journal_text(job)
+    if text.strip():
+        return 'gone', ('no pid was recorded, but the journal has output: the process did run '
+                        'and is no longer in the process table')
+    return 'no_launch_record', ('the claim is on disk but there is no pid, no matching process '
+                                'and no journal output: we cannot tell whether the CLI ever '
+                                'started. Not treating this as dead, not relaunching.')
 
 
 def launch_cli(job, root, queue):
@@ -846,38 +880,136 @@ def journal_text(job):
     return text, complete
 
 
-def journal_signals(text):
-    """从日志里挑出**结构化**的线索。解析不了就退回全文扫描，不硬要求某种格式。"""
-    hits = {'permission_cancelled': False, 'quota': False, 'stop_reasons': [],
-            'session_id': None, 'records': 0}
-    low = text.lower()
-    if _hint(low, PERMISSION_CANCEL_HINTS):
-        hits['permission_cancelled'] = True
-    if _hint(low, QUOTA_HINTS):
-        hits['quota'] = True
+# 终态记录的特征：有顶层 stopReason，或者 type 是 result / turn_completed 一类。
+# 真实 Grok 普通 JSON 终态的顶层字段：text / stopReason / sessionId / requestId /
+# usage / num_turns / modelUsage…；原生 stream 的 ACP turn_completed 把
+# cancellationCategory 放在 _meta 里。
+TERMINAL_TYPES = ('result', 'turn_completed', 'turn_complete', 'final', 'done')
+# **私有思考不参与任何判定**，也不进报告。
+PRIVATE_KEYS = ('thought', 'thinking', 'reasoning', 'thought_signature')
+# 只在终态记录的这些字段里找证据 —— 助手正文（text）里提到"额度""取消"是**说话**，不是信号。
+EVIDENCE_KEYS = ('stopreason', 'stop_reason', 'cancellationcategory', 'cancellation_category',
+                 'error', 'error_type', 'errortype', 'reason', 'code', 'status', 'subtype',
+                 'iserror', 'is_error', 'message')
+PERMISSION_CANCEL_WORDS = ('permission',)
+USER_CANCEL_WORDS = ('user', 'graceful', 'interrupt', 'sigint', 'abort_by_user')
+
+
+def _clean(value):
+    """去掉私有思考字段，其余原样。判定与报告都只看这份。"""
+    if isinstance(value, dict):
+        return {k: _clean(v) for k, v in value.items()
+                if str(k).lower() not in PRIVATE_KEYS}
+    if isinstance(value, list):
+        return [_clean(v) for v in value]
+    return value
+
+
+def _evidence_blob(rec):
+    """把终态记录里**表示结局的那些字段**拼成一段可搜索的文本。
+
+    只取 EVIDENCE_KEYS（含 `_meta` 里的同名字段），**不取 text/正文** ——
+    一句"未触发额度限制"不该被读成额度受限。
+    """
+    parts = []
+
+    def walk(node, inside_meta=False):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                key = str(k).lower()
+                if key in PRIVATE_KEYS:
+                    continue
+                if key in ('_meta', 'meta'):
+                    walk(v, True)
+                    continue
+                if key in EVIDENCE_KEYS:
+                    parts.append(json.dumps(_clean(v), ensure_ascii=False, default=str))
+                elif inside_meta and isinstance(v, (dict, list)):
+                    walk(v, True)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, inside_meta)
+    walk(rec)
+    return ' '.join(parts).lower()
+
+
+def journal_records(text):
+    """日志里能解析出来的结构化记录（已去掉私有思考字段）。"""
+    out = []
     for line in text.splitlines():
         line = line.strip()
-        if not line.startswith('{'):
+        if not line.startswith(('{', '[')):
             continue
         try:
             rec = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(rec, dict):
-            continue
-        hits['records'] += 1
-        blob = json.dumps(rec, ensure_ascii=False).lower()
-        if _hint(blob, PERMISSION_CANCEL_HINTS):
-            hits['permission_cancelled'] = True
-        if _hint(blob, QUOTA_HINTS):
-            hits['quota'] = True
-        for key in ('stopreason', 'stop_reason'):
-            for k, v in rec.items():
-                if k.lower() == key and isinstance(v, str):
-                    hits['stop_reasons'].append(v)
+        if isinstance(rec, dict):
+            out.append(_clean(rec))
+    return out
+
+
+def is_terminal_record(rec):
+    for k, v in rec.items():
+        if str(k).lower() in ('stopreason', 'stop_reason') and isinstance(v, str) and v:
+            return True
+    kind = str(rec.get('type') or rec.get('subtype') or '').lower()
+    if kind in TERMINAL_TYPES:
+        return True
+    meta = rec.get('_meta') or rec.get('meta')
+    if isinstance(meta, dict):
+        for k in meta:
+            if str(k).lower() in ('cancellationcategory', 'cancellation_category'):
+                return True
+    return False
+
+
+def journal_signals(text):
+    """从日志里挑出**当前这一轮的终态**证据。
+
+    两条硬规矩，都是踩过的坑：
+
+      1. **只认终态记录。** 以前整份日志（含助手正文）一起扫关键词，
+         一句"未触发额度限制"就能把一次正常成功判成 quota_blocked。
+      2. **只认最后一条终态记录。** `--resume` 的日志里可能带着早先那一轮的失败/取消，
+         那是历史，不是这一轮的结果。早先出过错、这一轮正常完成，结果就是正常完成。
+    """
+    records = journal_records(text)
+    terminals = [r for r in records if is_terminal_record(r)]
+    final = terminals[-1] if terminals else None
+    hits = {'records': len(records), 'session_id': None, 'final': final,
+            'has_terminal': final is not None, 'stop_reason': '',
+            'cancel_category': '', 'cancel_kind': '', 'quota': False,
+            'terminal_error': ''}
+    for rec in records:
         for k, v in rec.items():
-            if k.lower() in ('session_id', 'sessionid') and isinstance(v, str):
+            if str(k).lower() in ('session_id', 'sessionid') and isinstance(v, str):
                 hits['session_id'] = v
+    if final is None:
+        return hits
+    for k, v in final.items():
+        key = str(k).lower()
+        if key in ('stopreason', 'stop_reason') and isinstance(v, str):
+            hits['stop_reason'] = v
+    meta = final.get('_meta') or final.get('meta') or {}
+    for src in (final, meta if isinstance(meta, dict) else {}):
+        for k, v in src.items():
+            if str(k).lower() in ('cancellationcategory', 'cancellation_category') \
+                    and isinstance(v, str):
+                hits['cancel_category'] = v
+    blob = _evidence_blob(final)
+    hits['terminal_error'] = blob[:300]
+    if _hint(blob, QUOTA_HINTS):
+        hits['quota'] = True
+    if 'cancel' in hits['stop_reason'].lower() or hits['cancel_category'] \
+            or 'cancel' in blob:
+        probe = (hits['cancel_category'] + ' ' + hits['stop_reason'] + ' ' + blob).lower()
+        if _hint(probe, PERMISSION_CANCEL_WORDS):
+            hits['cancel_kind'] = 'permission'
+        elif _hint(probe, USER_CANCEL_WORDS):
+            hits['cancel_kind'] = 'user'
+        else:
+            hits['cancel_kind'] = 'generic'
     return hits
 
 
@@ -892,6 +1024,16 @@ def _strings(value, out):
             _strings(v, out)
 
 
+def journal_turn_text(text):
+    """当前这一轮的可搜索正文。
+
+    `--resume` 的日志里可能带着早先那一轮的内容；结果标记要以**最后一条终态记录**为界：
+    终态之后没有更多轮，终态之前的才是这一轮说过的话。找不到终态就退回整份日志。
+    私有思考字段一律不参与。
+    """
+    return text
+
+
 def journal_search_text(text):
     """把日志变成可搜索的正文。
 
@@ -900,14 +1042,7 @@ def journal_search_text(text):
     字符串值解出来搜；解不出来再拿原始正文兜底（别的输出格式仍然能用）。
     """
     decoded = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith(('{', '[')):
-            continue
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
+    for rec in journal_records(text):        # journal_records 已经去掉私有思考字段
         _strings(rec, decoded)
     return ['\n'.join(decoded), text]
 
@@ -958,14 +1093,19 @@ def _reap(job):
 def collect_cli(job, root):
     """收一次 grok-cli 任务。只读日志 + 探测进程，不发任何信号、不改别人的东西。
 
-    **退出码 0 不等于完成。** 结论必须同时看：进程是不是真的结束了、日志有没有写完、
-    有没有唯一的结果标记、有没有权限取消 / 额度限制。任何一条对不上就给准确的状态，
-    停在那里等人看，不忙着重试。
+    **退出码 0 不等于完成。** 结论要同时看：进程是不是真的结束了、日志有没有写完、
+    当前这一轮的**终态记录**说了什么、有没有唯一的结果标记。
+    顺序上，**当前这一轮的终态取消/失败优先于此前出现过的标记** ——
+    一轮里先写了 CIV_RESULT、随后被权限取消掉，那不是完成。
     """
     if job['status'] not in ('running', 'blocked') or not is_cli(job):
         return
     _reap(job)                                 # 顺手回收，别留僵尸
     probe = probe_cli(job)
+    detail_extra = ''
+    if probe == 'unconfirmed':
+        # 认领落盘了、pid 还没写回来：扫进程表 + 看日志，分清三种结局，不靠"没 pid"推断死亡
+        probe, detail_extra = resolve_cli(job)
     if probe == 'gone':
         _reap(job)                             # 刚好在这一瞬间退出的，再收一次退出码
     job['cli_probe'] = probe
@@ -975,6 +1115,8 @@ def collect_cli(job, root):
     if sig['session_id'] and not job.get('cli_session_id'):
         job['cli_session_id'] = sig['session_id']       # 新建会话：记下它报出来的 id
     report, hits = unique_marker(text, job['task_id'])
+    job['cli_stop_reason'] = sig['stop_reason']
+    job['cli_cancel_category'] = sig['cancel_category']
     if text:
         job['last_output'] = text[-1200:]
         job['output_log'] = job.get('journal')
@@ -982,17 +1124,19 @@ def collect_cli(job, root):
     # 进程还在：继续观察。**不因为"暂时没输出"做任何判断。**
     if probe == 'alive':
         job['receipt_state'] = 'cli_running' if job.get('owns_process') else 'cli_observing'
-        job['receipt_detail'] = 'pid %s still running (%d journal records)' % (
-            job.get('cli_pid'), sig['records'])
-        if sig['permission_cancelled']:
+        job['receipt_detail'] = ('pid %s still running (%d journal records)%s'
+                                 % (job.get('cli_pid'), sig['records'],
+                                    '; ' + detail_extra if detail_extra else ''))
+        if sig['cancel_kind'] == 'permission':
             job['attention'] = ('a tool permission was cancelled in this run; inspect the '
                                 'journal and fix the permission rules, do not blanket approve')
         return
-    if probe == 'unknown':
-        # 查不到 ≠ 结束。不发信号、不下结论。
-        job['receipt_state'] = 'unknown'
-        job['receipt_detail'] = ('cannot verify the CLI process identity (ps unavailable / '
-                                 'permission denied); outcome unknown, no auto-relaunch')
+    if probe in ('unknown', 'no_launch_record'):
+        # 查不到 / 没有启动痕迹，都**不是**"进程结束了"。不发信号、不下结论、不重跑。
+        job['receipt_state'] = ('unknown' if probe == 'unknown' else 'cli_no_launch_record')
+        job['receipt_detail'] = detail_extra or (
+            'cannot verify the CLI process identity (ps unavailable / permission denied); '
+            'outcome unknown, no auto-relaunch')
         job['status'] = 'blocked'
         job['blocking_reason'] = job['receipt_detail']
         return
@@ -1001,7 +1145,7 @@ def collect_cli(job, root):
     # 重启之后认回来的、以及接管观察的，退出码就是拿不到 —— 如实记 null，不猜 0。
     rc = job.get('cli_rc')
     rc_note = ('' if rc is not None else
-               ' (exit code unavailable: this controller process did not launch it — '
+               ' (exit code unavailable: this controller process did not launch it - '
                'the verdict below comes from the journal, not from rc)')
     if not complete:
         job['receipt_state'] = 'cli_exited_incomplete'
@@ -1010,19 +1154,37 @@ def collect_cli(job, root):
         job['status'] = 'blocked'
         job['blocking_reason'] = job['receipt_detail']
         return
+
+    # ---- 当前这一轮的终态优先于任何此前出现过的标记 ----
     if sig['quota']:
         job['receipt_state'] = 'quota_blocked'
-        job['receipt_detail'] = 'the journal reports a quota/rate limit; not retrying'
+        job['receipt_detail'] = ('the terminal record of this turn reports a quota/rate limit '
+                                 '(%s); paused, not retrying' % sig['terminal_error'][:120])
         job['status'] = 'blocked'
         job['blocking_reason'] = job['receipt_detail']
         return
-    if sig['permission_cancelled'] and report is None:
-        job['receipt_state'] = 'permission_cancelled'
-        job['receipt_detail'] = (
-            'a tool permission was cancelled (stopReason=cancelled / PermissionCancelled). '
-            'This is NOT a completed task and NOT the user abandoning the run: one tool call '
-            'was refused. Fix the allow rules and let the operator decide whether to continue '
-            'the same session.')
+    if sig['cancel_kind']:
+        had = ' A CIV_RESULT marker appeared earlier in this turn, but the turn ended in a ' \
+              'cancellation, so it does NOT count as a completed task.' if report else ''
+        kind = sig['cancel_kind']
+        if kind == 'permission':
+            job['receipt_state'] = 'permission_cancelled'
+            why = ('this turn ended with a tool permission cancellation (stopReason=%s, '
+                   'cancellationCategory=%s). This is NOT a completed task and NOT the user '
+                   'abandoning the run: one tool call was refused. Fix the allow rules and let '
+                   'the operator decide whether to continue the same session.'
+                   % (sig['stop_reason'] or '-', sig['cancel_category'] or '-'))
+        elif kind == 'user':
+            job['receipt_state'] = 'cli_user_cancelled'
+            why = ('this turn was cancelled by a person / graceful cancel (stopReason=%s, '
+                   'cancellationCategory=%s). Not a failure and not a completion.'
+                   % (sig['stop_reason'] or '-', sig['cancel_category'] or '-'))
+        else:
+            job['receipt_state'] = 'cli_cancelled'
+            why = ('this turn ended in a cancellation of an unstated kind (stopReason=%s). '
+                   'Not a completion; inspect the journal before deciding anything.'
+                   % (sig['stop_reason'] or '-'))
+        job['receipt_detail'] = why + had
         job['status'] = 'blocked'
         job['blocking_reason'] = job['receipt_detail']
         return
@@ -1044,13 +1206,12 @@ def collect_cli(job, root):
         job['blocking_reason'] = job['receipt_detail']
         return
 
-    # 有唯一结果标记：**也只到 review**。done 必须由外部带证据 accept。
+    # 有唯一结果标记、这一轮也没有终态取消/限制：**也只到 review**。
     job['report'] = report
     fields = report if isinstance(report, dict) else {}
     job['receipt_state'] = 'durable_ok'
-    job['receipt_detail'] = ('process exited (rc=%s) and the journal carries one unique '
-                             'result marker; self-reported only, still needs accept%s'
-                             % (rc, rc_note))
+    job['receipt_detail'] = ('process exited (rc=%s) and this turn ended with one unique result '
+                             'marker; self-reported only, still needs accept%s' % (rc, rc_note))
     job['status'] = 'blocked' if fields.get('status') == 'blocked' else 'review'
     job['finished_at'] = now()
     job['self_reported_at'] = now()
@@ -1094,8 +1255,14 @@ def cli_pause(job, root):
 
 
 def cli_reclaim(job, root, queue):
-    """守护重启后把自己启动过的 CLI 任务认回来 —— **绝不因为"没看到 pid"就重跑一遍**。"""
-    if not is_cli(job) or job['status'] != 'running' or not job.get('cli_token'):
+    """守护重启后把自己启动过的 CLI 任务认回来 —— **绝不因为"没看到 pid"就重跑一遍**。
+
+    `blocked` 也要认：一条因为"结果未知"被拦下来的任务，下一轮 `ps` 恢复正常时必须还能
+    重新认领。只处理 `running` 的话，它会永远卡在未知上。
+    """
+    if not is_cli(job) or job['status'] not in ('running', 'blocked'):
+        return
+    if not job.get('cli_token'):
         return
     if probe_cli(job) == 'alive':
         return
@@ -1104,11 +1271,25 @@ def cli_reclaim(job, root, queue):
         line = proc_line(found)
         job['cli_pid'] = found
         job['cli_birth'] = '' if line in (None, 'unknown') else line
-        job['receipt_detail'] = 'reclaimed pid %d by launch token after a controller restart' % found
-    elif found == 'unknown':
-        job['receipt_state'] = 'unknown'
-        job['receipt_detail'] = ('cannot scan the process table to reclaim this run; '
-                                 'outcome unknown, no auto-relaunch')
+        job['receipt_detail'] = 'reclaimed pid %d by launch token' % found
+        if job['status'] == 'blocked' and job.get('receipt_state') in (
+                'unknown', 'cli_no_launch_record'):
+            # 之前是"不知道"才被拦下的，现在认回来了：继续观察，不是别的结论。
+            job['status'] = 'running'
+            job['blocking_reason'] = ''
+
+
+def cli_unresolved(job):
+    """这条 CLI 任务的结局**还没定下来**（进程查不到 / 认领了却没有启动痕迹）。
+
+    这种任务不能当成"已经有结论"：既不放行同 owner 的返工，也不许再派新活 ——
+    那个进程可能还活着，只是我们此刻看不见。
+    """
+    if not is_cli(job) or job['status'] in ('done', 'rejected'):
+        return False
+    if job.get('receipt_state') in ('unknown', 'cli_no_launch_record', 'cli_launching'):
+        return True
+    return probe_cli(job) in ('alive', 'unknown', 'unconfirmed')
 
 
 # ---------------------------------------------------------------- STATUS

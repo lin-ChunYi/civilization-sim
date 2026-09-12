@@ -208,6 +208,14 @@ python3 ops/dispatch.py submit ops/jobs/G01_R1.json
 按官方文档，`Edit` 的规则是按工具传入的 path glob 匹配的，绝对与相对都该覆盖，
 没有 `//` 或 `~/` 那种锚定语义。所以：**不要把 `acceptEdits` 当成够用**，
 最终的权限表由主控实测之后登记。
+
+实测登记到目前为止（由主控核实，规则会继续长）：
+`git status` / `git diff` / `git log` / `git rev-parse` / `git show`、
+`git add observer/web`（目录本身）及其子文件、`git commit`（**必须单行 literal `-m`**，
+禁止 `$(cat ...)` 这类嵌套 shell）、`node --check observer/web/*` 与直接跑 web 脚本
+（**不用 `node -e`**）、`rg`、`ls observer/web*`；`git push` 一律 deny。
+复合命令（`pwd` / `ps` / `lsof` 加管道拼在一起那种）匹配不上任何一条 allow，
+结果是 `PermissionCancelled`，那**不是完成**，也**不是用户放弃**。
 带宽泛授权的模式（`bypassPermissions` / `alwaysApprove` 之类）会被 `submit` 直接拒绝。
 
 ### 结局怎么判（**退出码 0 不等于完成**）
@@ -224,8 +232,25 @@ python3 ops/dispatch.py submit ops/jobs/G01_R1.json
 | `permission_cancelled` | `stopReason=cancelled` / `PermissionCancelled`。**既不是完成，也不是"用户放弃了这场马拉松"** —— 只是某一次工具调用没被允许 |
 | `quota_blocked` | 日志里明说额度/限流。不重试、不切付费通道 |
 | `cli_failed` | 非零退出且没有结果标记 |
+| `cli_user_cancelled` | 终态是人主动打断（graceful / user cancel）。不是失败也不是完成 |
+| `cli_cancelled` | 终态说取消了，但没说是哪一种 |
+| `cli_no_launch_record` | 认领落盘了，却没有 pid、没有匹配进程、日志也是空的 —— **说不清有没有启动过**，不当成死了 |
 | `unknown` | 进程身份查不出来。不发信号、不下结论、不自动重跑 |
 | `durable_ok` | 进程结束 + 日志完整 + 唯一结果标记。**也只进 `review`**，`done` 仍要外部带证据 `accept` |
+
+**证据只从当前这一轮的终态记录里取。** 终态记录就是日志里最后一条带 `stopReason`、
+或 `type` 是 `result` / `turn_completed` 的结构化记录（ACP 的 `cancellationCategory`
+可能在 `_meta` 里）。两条硬规矩，都是踩过的坑：
+
+1. **不扫助手正文。** 一句"未触发额度限制"不该被读成额度受限；测试名里的"额度"也一样。
+   只看 `stopReason` / `cancellationCategory` / `error` 这类**表示结局**的字段。
+2. **只认最后一条终态记录。** `--resume` 的日志里可能带着早先那一轮的失败或权限取消，
+   那是历史。早先出过错、这一轮正常完成，结果就是正常完成。
+
+**当前这一轮的终态取消/失败优先于此前出现过的标记**：一轮里先写了 `CIV_RESULT`、
+随后被权限取消掉，那不是完成 —— 说明里会写清楚"标记出现过，但这一轮以取消收场"。
+
+私有的 `thought` / `thinking` 字段**既不参与判定，也不进报告**。
 
 退出码只有"**本进程这一趟启动的**"才拿得到（长期守护是这样）。一次性的 `tick`
 起完进程就退了，子进程被 init 接管，退出码就是拿不到 —— 那时如实记 `null` 并在说明里写清楚，
@@ -239,6 +264,13 @@ python3 ops/dispatch.py submit ops/jobs/G01_R1.json
   而不是"没看到 pid 就再跑一遍"。扫不动进程表就记 `unknown`，仍然不重跑。
 - 身份核验看的是**出生身份**（启动时刻 + 完整命令行），不是"我记得 pid 是多少"。
   pid 被复用 → `gone`；`ps` 不可用 → `unknown`。
+- **没有 pid 不等于进程死了。** 认领先落盘、再启动，中间有个崩溃窗口：token 已经写进队列、
+  pid 还没写回来。那种情况会去扫进程表 + 看日志，分成三种结局：按 token 找到了 → 认回来；
+  扫不动 → `unknown`（保持未知，下一轮再来）；确实没有进程、日志里却有输出 → 它确实跑过并
+  结束了，按日志判结局；确实没有进程、日志也是空的 → `cli_no_launch_record`。
+- 结局未定（`unknown` / `cli_no_launch_record` / 进程还活着）的 CLI 任务
+  **既不放行同 owner 的返工，也不许再派新活**；`ps` 恢复正常之后，下一轮还能重新认领
+  （`blocked` 的也认，否则会永远卡在未知上）。
 - 同一个 owner 只要还有活着（或身份未确认）的 CLI 进程，就不派下一个。
 - 同一个会话 + 同一份提示词还没验收完，`submit` 会直接拒绝：
   `--resume` 是**接着聊**，它不恢复代码快照，也不该被当成"再跑一次任务"。
@@ -268,7 +300,7 @@ Cockpit 通道另外要 `device_id`、`session_id`、`session_cwd`；
 ## 测试
 
 ```bash
-python3 ops/test_dispatch.py      # 55 项，全部在临时目录里造假 hub / 假 CLI
+python3 ops/test_dispatch.py      # 68 项，全部在临时目录里造假 hub / 假 CLI
 ```
 
 不碰本机任何真实会话与真实 outbox（PID 复用那条也只拿测试自己起的 `sleep` 当靶子）。
@@ -289,14 +321,20 @@ python3 ops/test_dispatch.py      # 55 项，全部在临时目录里造假 hub 
 重复 `tick` 不重起进程、重启按 token 认回而不是重跑、pid 复用判 gone 且不发信号、
 一个 owner 只跑一个、同会话同提示词被拒、暂停不注入也不发信号、
 `graceful_cancel` 只打自己核验过的 pid、接管观察的进程一个信号都不发、
-原生终端的 `[delivery state=unknown retry=none]` 判 unknown 而不是 failed）。
+原生终端的 `[delivery state=unknown retry=none]` 判 unknown 而不是 failed）、
+CLI 的三处边界（R23 组：token 落盘但没有 pid 时判未知而不是死亡、结局未定不放行返工、
+没有启动痕迹自成一类、下一轮能重新认领、正文里提到"额度"不算额度受限、
+终态里的真额度照样拦、私有 thought 不作证据也不进报告、
+终态权限取消盖过此前的标记、只有 `stopReason=cancelled` 不算"没有唯一结果"、
+用户打断与权限取消分开、历史里的失败不带进这一轮、ACP `_meta` 里的取消也认）。
 `grok-cli` 那组用的是一个**假 CLI 脚本**，不联网、不碰真实 Grok 环境、
 不接管任何正在跑的真实任务；发出去的信号只打测试自己起的子进程。
 
 每条都验证过"把对应防护去掉就会红"：把这 35 项拿去跑 `aff0ed5` 会红 13 项，
 跑 `3abe009` 会红 3 项（跨 chunk 的 tag、同 tick 两份返工、running 被返工插队），
 跑 `4168356`（C04 之前）会红 15 项（3 failures + 12 errors），
-跑 `dac9004`（C06 之前）R22 那 20 项**全红**。
+跑 `dac9004`（C06 之前）R22 那 20 项**全红**，
+跑 `59650b3`（C06_R1 之前）R23 那 13 项红 11 项（R22 全绿，说明本轮没有回退旧边界）。
 
 ## 边界（写明，别指望）
 
