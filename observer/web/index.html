@@ -36,6 +36,7 @@
 <nav class="modes" id="tabs">
   <button data-tab="world" class="on">沙盘</button>
   <button data-tab="network">关系网</button>
+  <button data-tab="compare">双世界</button>
   <button data-tab="metrics">情报分析</button>
   <button data-tab="runs">创世 / 运行</button>
   <button data-tab="progress">开发路线</button>
@@ -248,6 +249,23 @@
     <details class="tech-details"><summary>原始字段与 64 位 id</summary>
       <pre id="net-raw" class="muted" style="white-space:pre-wrap"></pre>
     </details>
+  </div>
+</section>
+
+<section id="tab-compare" hidden>
+  <div class="panel glass">
+    <div class="panel-kicker">TWO WORLDS · SAME YEAR</div>
+    <h3>同年对照</h3>
+    <p class="muted">选两个已有运行、同一个年份。一方没有该年记录就标「缺失」，不会改成终年。数字不同不自动解释成因。</p>
+    <div class="net-toolbar">
+      <label>世界 A <select id="cmp-a"></select></label>
+      <label>世界 B <select id="cmp-b"></select></label>
+      <label>第 <input id="cmp-year" type="number" min="0" step="1" value="0"> 年</label>
+      <button type="button" class="btn small" id="cmp-use-play">用回放年</button>
+      <button type="button" class="btn primary" id="cmp-go">对照</button>
+    </div>
+    <p class="muted" id="cmp-cfg">配置差异会列在这里。</p>
+    <div class="tablewrap"><table id="cmp-table"></table></div>
   </div>
 </section>
 

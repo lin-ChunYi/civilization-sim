@@ -1,5 +1,10 @@
 # 连续开发进度
 
+## G05 双世界同年对照
+- 缺年标缺失，不夹终年；recip_m 差异如实列出
+- tests：g05-compare-test 6/6；g05-cdp 4/4
+- next：G06 创世向导
+
 ## G04 按年档案 / 关系网
 - commit：见本阶段 git
 - `/band?at_year` 与 `/relations?at_year` 默认不含未来；全档案需点「全档案」

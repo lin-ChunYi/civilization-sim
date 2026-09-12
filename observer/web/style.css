@@ -232,6 +232,8 @@ footer{color:var(--muted);font-size:12px;padding:12px 24px 28px;text-align:cente
 .year-display.pulse{animation:yearpulse .35s ease}
 
 .cell.hover{stroke:#f3deaa;stroke-width:2}
+#cmp-table td.diff{background:rgba(212,176,106,.14);color:var(--gold2)}
+#cmp-table td.miss{background:rgba(196,92,82,.12);color:#f0b8b2}
 .net-panel{margin:10px 12px}
 .net-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0}
 .net-toolbar input{width:72px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:#0c1410;color:var(--ink)}

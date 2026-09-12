@@ -37,6 +37,7 @@ const S = {
   relReqGen: 0,
   relCache: new Map(),
   relSel: null,
+  cmp: { a: "", b: "", t: 0 },
 };
 const PLAY_PENDING_MS = 700;
 function navResult(kind, extra) {
@@ -447,6 +448,33 @@ const NetworkLogic = {
   },
 };
 window.NetworkLogic = NetworkLogic;
+
+const CompareLogic = {
+  row(label, a, b, missA, missB) {
+    return {
+      label: label,
+      a: missA ? null : a,
+      b: missB ? null : b,
+      missA: !!missA,
+      missB: !!missB,
+      diff: !missA && !missB && a !== b,
+    };
+  },
+  configDiff(runA, runB) {
+    const keys = ["engine", "seed", "sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m", "years"];
+    const out = [];
+    (keys).forEach((k) => {
+      const va = runA ? runA[k] : null, vb = runB ? runB[k] : null;
+      if (String(va) !== String(vb)) out.push({ key: k, a: va, b: vb });
+    });
+    return out;
+  },
+  stockSum(rec) {
+    if (!rec || !rec.stock) return null;
+    return rec.stock.reduce((s, x) => s + (x || 0), 0);
+  },
+};
+window.CompareLogic = CompareLogic;
 
 function hashParams() {
   const out = {};
@@ -2392,6 +2420,71 @@ function jumpToEvent(ev) {
   focusEvent(ev);
 }
 
+function fillCompareSelects() {
+  const opts = (S.runs || []).map((r) =>
+    `<option value="${esc(r.run_id)}">${esc(r.label || r.run_id)} · ${esc(r.engine || "")} · 已算${r.years_recorded}</option>`).join("");
+  ["cmp-a", "cmp-b"].forEach((id, i) => {
+    const el = $(id); if (!el) return;
+    const keep = el.value || (S.cmp && (i ? S.cmp.b : S.cmp.a)) || "";
+    el.innerHTML = `<option value="">选择…</option>` + opts;
+    if (keep) el.value = keep;
+  });
+  if ($("cmp-year") && document.activeElement !== $("cmp-year")) $("cmp-year").value = String(S.cmp.t || S.t || 0);
+}
+async function fetchYearOrMiss(runId, t) {
+  try {
+    const rec = await api(`/api/runs/${runId}/year/${t}`);
+    return { rec: rec, missing: false };
+  } catch (e) {
+    return { rec: null, missing: true, error: e.message, status: e.status };
+  }
+}
+function renderCompare(pack) {
+  const { runA, runB, t, a, b } = pack;
+  const diffs = CompareLogic.configDiff(runA, runB);
+  if ($("cmp-cfg")) {
+    $("cmp-cfg").textContent = diffs.length
+      ? ("真实配置不同：" + diffs.map((d) => d.key + " " + d.a + " / " + d.b).join(" · "))
+      : "这两次运行的引擎与参数字段相同（仍可能是不同 seed 的另一次）。不同不解释成因。";
+  }
+  const missA = !a.rec, missB = !b.rec;
+  const recA = a.rec, recB = b.rec;
+  const rows = [
+    CompareLogic.row("人口", recA && recA.agg ? recA.agg.pop : null, recB && recB.agg ? recB.agg.pop : null, missA, missB),
+    CompareLogic.row("群体数", recA && recA.agg ? recA.agg.bands : null, recB && recB.agg ? recB.agg.bands : null, missA, missB),
+    CompareLogic.row("野外存量合计 kcal", CompareLogic.stockSum(recA), CompareLogic.stockSum(recB), missA, missB),
+    CompareLogic.row("本年缺粮", recA && recA.year ? recA.year.deficit_cum : null, recB && recB.year ? recB.year.deficit_cum : null, missA, missB),
+    CompareLogic.row("可核实事件条数", recA && recA.events ? recA.events.length : null, recB && recB.events ? recB.events.length : null, missA, missB),
+    CompareLogic.row("援助转移笔数", recA && recA.aid ? recA.aid.transfers : "未记录", recB && recB.aid ? recB.aid.transfers : "未记录", missA, missB),
+    CompareLogic.row("援助食物 kcal", recA && recA.aid ? recA.aid.kcal : "未记录", recB && recB.aid ? recB.aid.kcal : "未记录", missA, missB),
+    CompareLogic.row("回助笔数", recA && recA.recip ? recA.recip.repay_transfers : "未记录", recB && recB.recip ? recB.recip.repay_transfers : "未记录", missA, missB),
+    CompareLogic.row("分配改变（格×年）", recA && recA.recip ? recA.recip.changed : "未记录", recB && recB.recip ? recB.recip.changed : "未记录", missA, missB),
+  ];
+  const cell = (side, row) => {
+    if (row["miss" + side]) return `<td class="miss">第 ${t} 年缺失</td>`;
+    const v = row[side === "A" ? "a" : "b"];
+    return `<td class="${row.diff ? "diff" : ""}">${v == null ? "未记录" : esc(String(v))}</td>`;
+  };
+  if ($("cmp-table")) {
+    $("cmp-table").innerHTML = `<tr><th>指标</th><th>${esc((runA && (runA.label || runA.run_id)) || "A")}</th><th>${esc((runB && (runB.label || runB.run_id)) || "B")}</th></tr>` +
+      rows.map((row) => `<tr><td>${esc(row.label)}</td>${cell("A", row)}${cell("B", row)}</tr>`).join("");
+  }
+}
+async function loadCompare() {
+  const aId = ($("cmp-a") && $("cmp-a").value) || S.cmp.a;
+  const bId = ($("cmp-b") && $("cmp-b").value) || S.cmp.b;
+  const parsed = OverviewLogic.parseStrictInt(($("cmp-year") && $("cmp-year").value) || S.cmp.t, { name: "对照年份", min: 0 });
+  if (!parsed.ok) { flash(parsed.error, true); return { ok: false }; }
+  const t = parsed.value;
+  S.cmp = { a: aId, b: bId, t: t };
+  if (!aId || !bId) { flash("请选两个已有运行。", true); return { ok: false }; }
+  const runA = (S.runs || []).find((r) => r.run_id === aId);
+  const runB = (S.runs || []).find((r) => r.run_id === bId);
+  const [a, b] = await Promise.all([fetchYearOrMiss(aId, t), fetchYearOrMiss(bId, t)]);
+  renderCompare({ runA, runB, t, a, b });
+  return { ok: true, a: a, b: b, t: t };
+}
+
 /* ---------------- 运行记录 ---------------- */
 function renderRuns() {
   const head = `<tr><th>运行</th><th>状态</th><th>引擎</th><th>seed</th><th>年数</th><th>SIGMA_M</th>
@@ -2431,6 +2524,7 @@ function renderRuns() {
     sw.innerHTML = `<option value="">选择世界…</option>` + S.runs.map((r) =>
       `<option value="${esc(r.run_id)}"${r.run_id === cur ? " selected" : ""}>${esc(r.label || r.run_id)} · ${esc(r.engine || "")} · ${r.years_recorded}/${r.years}</option>`).join("");
   }
+  fillCompareSelects();
 }
 
 async function openRun(id) {
@@ -2516,8 +2610,8 @@ function showTab(name) {
     name = "world";
     setTimeout(() => { const p = $("events"); if (p) p.scrollIntoView({ block: "start" }); }, 0);
   }
-  if (["world", "network", "metrics", "runs", "progress"].indexOf(name) < 0) name = "world";
-  ["world", "network", "metrics", "events", "runs", "progress"].forEach((t) => {
+  if (["world", "network", "compare", "metrics", "runs", "progress"].indexOf(name) < 0) name = "world";
+  ["world", "network", "compare", "metrics", "events", "runs", "progress"].forEach((t) => {
     const el = $("tab-" + t); if (el) el.hidden = t !== name;
   });
   document.querySelectorAll("#tabs button, .hud-actions [data-tab]").forEach((b) =>
@@ -2525,6 +2619,7 @@ function showTab(name) {
   setHash({ tab: name });
   if (name === "metrics") renderCharts();
   if (name === "network") loadRelations();
+  if (name === "compare") { fillCompareSelects(); }
   if (name === "progress") renderMilestones().catch((e) => flash(e.message, true));
 }
 
@@ -2650,6 +2745,11 @@ async function boot() {
   if ($("net-use-play")) $("net-use-play").addEventListener("click", () => {
     if ($("net-year")) $("net-year").value = String(S.t);
     loadRelations();
+  });
+  if ($("cmp-go")) $("cmp-go").addEventListener("click", () => loadCompare());
+  if ($("cmp-use-play")) $("cmp-use-play").addEventListener("click", () => {
+    if ($("cmp-year")) $("cmp-year").value = String(S.t);
+    loadCompare();
   });
   if ($("net-year")) $("net-year").addEventListener("change", () => {
     const parsed = OverviewLogic.parseStrictInt($("net-year").value, { name: "年份", min: 0 });
@@ -2927,7 +3027,8 @@ window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, rend
   setPlayMode, focusEvent, cancelFx, loadBand, gotoEventYear, stepEventYear, findEventByKey,
   bumpOp, opAlive, bandAccept, bandCacheKey, applyBandDossier, setPlaying, tickEvents, tick,
   navResult, beginYearLoad, endYearLoad, afterPlayStep, retryYear, reapNavUi, renderYearFailBar,
-  pendingCurrentYear, PLAY_PENDING_MS, loadRelations, renderRelations, NetworkLogic };
+  pendingCurrentYear, PLAY_PENDING_MS, loadRelations, renderRelations, NetworkLogic,
+  loadCompare, CompareLogic, fillCompareSelects, showTab, showRail };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {
