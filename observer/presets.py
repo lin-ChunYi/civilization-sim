@@ -35,8 +35,15 @@ def install_presets() -> int:
             # 以前这里无条件跳过，结果更新了预置数据、库里还是旧的一份。
             # 摘要相同还不够：引擎代码变了（engine_sha256 变了）也要刷新，
             # 否则界面上标的"引擎身份"会停留在旧版本。
+            # 摘要与引擎都没变，还要看**记录文件本身**是否一样：
+            # 记录层加了新字段（模型结果不变）时摘要照旧相同，只比摘要会漏刷。
+            same_files = all(
+                (src / nm).exists() and (store.run_dir(run_id) / nm).exists()
+                and (src / nm).read_bytes() == (store.run_dir(run_id) / nm).read_bytes()
+                for nm in ("years.jsonl", "meta.json"))
             if (old["full_digest"] == info["full_digest"]
-                    and old["engine_sha256"] == info["engine_sha256"]):
+                    and old["engine_sha256"] == info["engine_sha256"]
+                    and same_files):
                 continue
             with store.connect() as conn:
                 conn.execute("DELETE FROM runs WHERE run_id=?", (run_id,))

@@ -81,7 +81,7 @@ WRITE_RATE_LIMIT = int(os.environ.get("OBSERVER_WRITE_RATE", "12"))  # 每 IP �
 QUEUE_GRACE_SEC = float(os.environ.get("OBSERVER_QUEUE_GRACE", "20"))
 
 # API 契约版本。新增字段递增小版本；删改字段必须先改契约文档再动代码。
-API_VERSION = "obs-1.5"
+API_VERSION = "obs-1.6"
 
 # --- 访问保护 ---
 # 设了 OBSERVER_TOKEN：所有 /api 请求都要带令牌（服务端校验，前端不硬编码）。

@@ -3,7 +3,7 @@
 **这份文件是两边的唯一约定来源。** 后台（Python）与 UI 分支（`observer/web/`）分头改，
 靠它对齐；不各自实现一套数据格式。
 
-契约版本 **`obs-1.5`**，由 `GET /api/config` 的 `api_version` 字段给出。
+契约版本 **`obs-1.6`**，由 `GET /api/config` 的 `api_version` 字段给出。
 **新增字段 → 小版本 +1；删除或改变已有字段的含义 → 必须先改这份文件并知会对方，再动代码。**
 
 ---
@@ -39,7 +39,8 @@
 | `GET /api/runs/{id}` | 单条 run，**多一个 `meta`** 字段（可能是 `null`，见 §4） |
 | `GET /api/runs/{id}/series` | `{run_id, series[]}`，元素 = `{t, agg, year, cum, integrity, events}`（`events` 是**当年事件条数**，不是列表） |
 | `GET /api/runs/{id}/year/{t}` | 某一年的完整记录，见下 |
-| `GET /api/runs/{id}/band/{band_id}` | 某个群体的可记录轨迹 |
+| `GET /api/runs/{id}/band/{band_id}` | 某个群体的历史卷宗；**obs-1.6 起支持 `?at_year=N`**，只用第 0..N 年的记录 |
+| `GET /api/runs/{id}/relations` | **obs-1.6 新增**：这次运行里真实发生过的援助往来汇总；同样支持 `?at_year=N` |
 
 写接口（令牌 + 每 IP 每分钟 `write_rate_per_min` 次）：
 
@@ -172,12 +173,90 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 1. 需要新增或改字段 → 在这份文件里写清：字段名、类型、含义、是否可为空、谁来产出。
 2. 后台实现 → `api_version` +0.1 → 在 `observer/TESTS.txt` 里留下回归结果。
 3. UI 适配 → 双方分支完成后**统一集成验收**：
-   `python3 observer/run_tests.py`（后台 71 项 + 浏览器回归）+ 页面实跑 + 截图。
+   `python3 observer/run_tests.py`（后台 161 项 + 浏览器回归）+ 页面实跑 + 截图。
 4. 冲突时以这份文件为准；没写进来的字段一律视为**不保证**，不要依赖。
 
 ---
 
-## 6. obs-1.5 的变化（供游戏界面直接使用的数据）
+## 6. obs-1.6 的变化（历史卷宗与按年关系网）
+
+**实操版交接说明（真实 curl / 真实响应 / 截至 83、124、125 年与全档案的差异）见
+[`OBS-01-HANDOFF-HISTORY.md`](OBS-01-HANDOFF-HISTORY.md)。**
+
+起因是回放时的两处真实错位：回放到第 124 年，群体档案里已经列着第 125 / 131 年的迁移；
+`aid_memory.last_year` 与 `basis.remembered_last_year` 是**引擎内部 tick**，
+记录里写第 83 年的那笔援助，它们显示成第 82 年。
+
+### 6.1 `GET /api/runs/{id}/band/{band_id}?at_year=N`
+
+`at_year` **可选**。省略 = 全档案，行为与 obs-1.5 完全一致（老调用不用改）。
+带上 `N` 时，**只读第 0..N 年已保存的记录**：第 N 年之后的迁移、分裂、消失、援助一律不出现。
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `history_scope` | 对象 | `{mode:"full"\|"as_of_year", at_year, years_recorded, note}`，口径写在响应里 |
+| `alive_at_year` | 布尔 | 截断那一年这个群体是否还在记录里（全档案时 = 最后一年是否还在） |
+| `state_at_year` | 对象或 `null` | `{year, cell, size, store}`，截断年它最后一次被记到的样子 |
+| `aid_given` / `aid_received` | 对象 | `{kcal, transfers, events[]}`；`events[]` 元素带 `{id, year, 对方 id, kcal, phase, repay}` |
+| `aid_memory` | 对象或 `null` | 键是**施援方 id 字符串**；值见 6.3。旧引擎没有这一段时为 `null` |
+
+原有字段（`trajectory` / `sizes` / `children` / `born_at` / `extinct_at` / `parent` / `origin`）
+语义不变，只是按 `at_year` 截断。
+
+**错误响应**：`at_year` 越界或为负 → `400`，提示里写明这次运行**实际存了多少年**
+（例：`at_year=999 越界：这次运行已保存 0..150 年`）；非整数 → `422`；
+群体在该年之前还没出生 → `404`（不返回空壳档案）。
+
+### 6.2 `GET /api/runs/{id}/relations?at_year=N`
+
+只把**已保存的逐笔援助事件**聚合起来。这里**没有**盟友、国家、联盟这类东西，
+只有"谁给过谁多少 kcal"。
+
+```
+{
+  "run_id": "...", "history_scope": {...}, "as_of_record_year": 83,
+  "nodes": [{"id": "字符串", "name": "...", "alive_at_year": true,
+             "cell": 1, "last_seen_year": 83}],
+  "edges": [{"donor": "...", "receiver": "...", "kcal": 6457, "transfers": 1,
+             "last_year": 83, "last_event_id": "t83-aid-3",
+             "phase_counts": {"recip": 0, "normal": 1},
+             "repay_transfers": 0, "event_ids": ["t83-aid-3"]}],
+  "totals": {"nodes": 9, "edges": 2, "transfers": 2, "kcal": 423541},
+  "diagnostics": {"recip_changed_cellyears": 2, "note": "..."},
+  "source": "..."
+}
+```
+
+- 边是**有向的**：A→B 与 B→A 是两条，不合并成一条无向关系。
+- `last_year` / `event_ids` 用的是**事件年份**（与 `/year/{t}` 的 `t` 同一口径），可直接跳转。
+- **`recip.changed` 不属于任何一条边。** 它是"格 × 年"的诊断计数，只在 `diagnostics`
+  里给一个运行级合计；也**不能**用 `repay_transfers` 代替它 —— `RECIP_M=0` 时照样会发生回助，
+  那是碰巧撞上，不是优先机制起作用。
+- 旧引擎（`exp03`/`exp04`）的运行照常返回 `200`，`edges` 为空，`totals` 全 0，不报错也不编造。
+
+### 6.3 展示年份 vs 内部 tick（`aid_memory` 与 `basis`）
+
+`last_year` / `remembered_last_year` 的**原语义保持不变**：引擎内部 tick，比记录年份小 1。
+不要拿它显示。新增的展示字段来自**真实事件记录**：
+
+| 字段 | 含义 |
+|---|---|
+| `last_year_display` / `remembered_last_year_display` | 该笔援助在记录里的年份，可直接拿去跳 `/year/{t}` |
+| `last_event_id` / `remembered_last_event_id` | 对应事件的 `id`，可在那一年的 `events[]` 里找到 |
+| `display_source` / `year_note` | 这个年份是从哪来的；找不到出处时写"未记录：…"，**不猜** |
+
+找不到出处的情形是真实存在的：构造场景里预置的历史、或本次运行记录之外发生的援助。
+这时 `last_year_display` 与 `last_event_id` 一律为 `null`，不填一个看起来合理的年份。
+带 `at_year=N` 时，展示年份由第 0..N 年的事件推出，**不会**指向第 N 年之后的事件。
+
+### 6.4 其他
+
+- 预置案例 `preset-exp06-recip0` / `preset-exp06-recip1000` 的记录已按新记录层重新生成。
+  模型结果未变：`model_run_id` 与 `full_digest` 与重算前**逐字节相同**，变的只有记录层字段。
+- 全部为新增字段，没有删改任何现有字段；`at_year` 省略时响应与 obs-1.5 一致。
+
+
+## 7. obs-1.5 的变化（供游戏界面直接使用的数据）
 
 **实操版交接说明（真实请求 / 真实响应 / 可回放的运行编号与年份）见
 [`OBS-01-HANDOFF-EXP06.md`](OBS-01-HANDOFF-EXP06.md)。**
@@ -196,7 +275,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 同一对群体、同样总额、只是被拆成优先 + 普通两笔，不再算作分配改变。
 7 种子 300 年下计数由 118 降为 47（`SIGMA=0, RECIP=1000`）。请用 `changed`，不要自己数笔数。
 
-## 7. obs-1.4 的变化（EXP-06 接入）
+## 8. obs-1.4 的变化（EXP-06 接入）
 
 | 变化 | 兼容性 |
 |---|---|
@@ -215,7 +294,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 `observer/docs/screenshots/12-recip-aid.jpg`，第 128 年那条）。还没有做的是
 `aid_memory` 的关系展示与 `recip` 段的年度统计 —— 这两块的数据都已经在接口里了。
 
-## 8. obs-1.3 的变化（EXP-05 接入）
+## 9. obs-1.3 的变化（EXP-05 接入）
 
 | 变化 | 兼容性 |
 |---|---|
@@ -237,7 +316,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 2. `showTab()` 遇到未登记的 tab 名（例如旧链接里的 `#tab=events`）会把所有分区都隐藏，
    页面变成空白。给它一个兜底（未知就回到 `world`）会更稳。这两条都不影响数据正确性。
 
-## 9. obs-1.2 的变化（EXP-04 接入）
+## 10. obs-1.2 的变化（EXP-04 接入）
 
 | 变化 | 兼容性 |
 |---|---|
@@ -255,7 +334,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 `exp03/verify3.py`。正确的来源是该次运行自己的 `run.engine` / `run.engine_path` /
 `run.engine_sha256`（早就在 run 行里，obs-1.0 就有）。
 
-## 10. 更早（obs-1.1）的变化
+## 11. 更早（obs-1.1）的变化
 
 | 变化 | 兼容性 |
 |---|---|

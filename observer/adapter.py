@@ -159,6 +159,17 @@ class Recorder:
         self._birth_year: Dict[str, int] = {}
 
     # -- 只读抽取 ------------------------------------------------------
+    def _display_year(self, donor, receiver) -> Dict[str, Any]:
+        """把"谁帮过我"换算成**可展示**的年份：取这一对之间最后一笔真实援助事件。
+        找不到（例如构造场景里预置的历史、或本次运行之前发生的）就如实给 null。"""
+        ids = self._aid_by_pair.get((int(donor), int(receiver)))
+        if not ids:
+            return {"last_year_display": None, "last_event_id": None,
+                    "display_source": "未记录：本次运行的已保存记录里没有这一对的援助事件"}
+        last = ids[-1]
+        return {"last_year_display": int(last.split('-')[0][1:]), "last_event_id": last,
+                "display_source": "本次运行的援助事件 " + last}
+
     def _name(self, sid: str, bid: int) -> str:
         n = self._names.get(sid)
         if n is None:
@@ -174,12 +185,20 @@ class Recorder:
         cell_ids = sorted(st["stock"])
         stock = [st["stock"][i] for i in cell_ids]
 
-        bands: List[Dict[str, Any]] = []
+        # 先做一遍轻量预处理：登记显示名与所在格，然后**先收事件**。
+        # 顺序很要紧：aid_memory 的展示口径字段要引用"本年这笔援助事件"的 id 与 year，
+        # 事件收在后面的话，当年更新的那条记忆就只能拿到 null。
         cells_now: Dict[str, int] = {}
         for bid, b in sorted(st["bands"].items()):
             sid = str(bid)                      # 64 位 id 一律以字符串下发，避免 JS 精度丢失
             cells_now[sid] = b["cell"]
             self._birth_year.setdefault(sid, t)
+            self._name(sid, bid)
+        events = self._events(st, t, cells_now)
+
+        bands: List[Dict[str, Any]] = []
+        for bid, b in sorted(st["bands"].items()):
+            sid = str(bid)
             bands.append({
                 "id": sid,
                 "name": self._name(sid, bid),
@@ -191,9 +210,15 @@ class Recorder:
                 "dacc": b["dacc"],
                 "mem": {str(c): [b["mem"][c], b["memt"].get(c)] for c in sorted(b["mem"])},
                 # EXP-06：援助记忆（谁实际援助过我）。只由实际转移累加，来源见 source 字段。
-                **({"aid_memory": {str(k): {"kcal": b["amem"][k][0],
-                                            "last_year": b["amem"][k][1]}
-                                   for k in sorted(b["amem"])}}
+                # last_year 是**引擎内部 tick**，保持原语义不动；
+                # last_year_display / last_event_id 是**展示口径**，由本次运行里那笔
+                # 真实援助事件的 year 与稳定事件 id 推出。没有对应记录就给 null，
+                # 绝不在不认识的引擎版本上猜 ±1。
+                **({"aid_memory": {
+                        str(k): dict({"kcal": b["amem"][k][0],
+                                      "last_year": b["amem"][k][1]},
+                                     **self._display_year(k, bid))
+                        for k in sorted(b["amem"])}}
                    if "amem" in b else {}),
             })
 
@@ -221,7 +246,6 @@ class Recorder:
             integrity["aid_ledger_error"] = v3.aid_ledger_error(st)
         if "aid_memory_error" in dir(v3):
             integrity["aid_memory_error"] = v3.aid_memory_error(st)
-        events = self._events(st, t, cells_now)
         rec = {"t": t, "stock": stock, "bands": bands, "cum": cum, "year": year,
                "agg": agg, "integrity": integrity, "events": events}
         if "share_log" in st:                       # EXP-04：信息交换的当年统计
@@ -340,11 +364,20 @@ class Recorder:
                     # 依据：对方**以前**实际援助过我的那几笔（事件 id 可直接跳转），
                     # 以及供给方在援助前记住的累计量与最近年份。
                     mem = amem_pre.get(donor, {}).get(recv)
+                    prior = list(self._aid_by_pair.get((recv, donor), []))
                     ev["basis"] = {
                         "why": "供给方的援助记忆里有接收方，且该记忆只由实际转移累加",
                         "remembered_kcal": mem[0] if mem else None,
+                        # 原语义保留：这是引擎内部 tick
                         "remembered_last_year": mem[1] if mem else None,
-                        "prior_events": list(self._aid_by_pair.get((recv, donor), [])),
+                        # 展示口径：最后一笔作为依据的真实事件的年份与 id（找不到则 null）
+                        "remembered_last_year_display": (int(prior[-1].split('-')[0][1:])
+                                                         if prior else None),
+                        "remembered_last_event_id": prior[-1] if prior else None,
+                        "prior_events": prior,
+                        "year_note": ("remembered_last_year 是引擎内部 tick；"
+                                      "要显示或跳转请用 remembered_last_year_display / "
+                                      "remembered_last_event_id，它们来自真实事件记录"),
                         "source": "模型状态 band['amem'] 的援助前快照 + 本次运行的援助日志",
                     }
                 out.append(ev)

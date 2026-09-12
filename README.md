@@ -152,6 +152,7 @@ python3 -m uvicorn observer.app:app --host 127.0.0.1 --port 8765
 `recip_changed`（分配改变）才是"优先规则真的改变了分配"的直接计数。
 观察台已提供**同状态分配对照**（开/关优先各算一遍的逐对总额）与**回助事件的历史依据链接**，
 另附两条真实的开/关对照运行供界面直接回放，见 [`docs/OBS-01-HANDOFF-EXP06.md`](docs/OBS-01-HANDOFF-EXP06.md)。
+截至某一年的群体卷宗与援助关系网（obs-1.6）见 [`docs/OBS-01-HANDOFF-HISTORY.md`](docs/OBS-01-HANDOFF-HISTORY.md)。
 
 ## EXP-05 — 同格食物援助（已实现并运行，待审）
 
