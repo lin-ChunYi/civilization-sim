@@ -1,3 +1,13 @@
+G03_R3
+pending404 绑原目标年：拿到记录前不 tick 到 t+1 / 下一事件年。暂停/切 run 不自动复活。
+受控响应测试，不是后台真实 404。旧 da22 会请求 126/130；新版 850ms 内只重试 125。
+
+node observer/web/g03-r3-pending-test.mjs  pass=20 fail=0
+node observer/web/g03-r2-nav-test.mjs      pass=12 fail=0
+node observer/web/g03-race-test.mjs        pass=12 fail=0
+node observer/web/director-logic-test.mjs  pass=18 fail=0
+node observer/web/g03-r3-smoke-cdp.mjs     pass=7 fail=0 模式切换/t83-aid-3/split/390
+
 G03_R2
 导航收尾契约：success / stale / pending404 / failed。遮罩归 loadGen 所有。
 失败年 t=URL=slider=重试目标，清空上一年 chips；pending404 保留 G01 有界等待。

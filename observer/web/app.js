@@ -32,7 +32,9 @@ const S = {
   loadGen: 0,
   loadOverlay: null,
   lastOkT: 0,
+  playWait: null,
 };
+const PLAY_PENDING_MS = 700;
 function navResult(kind, extra) {
   const ok = kind === "success";
   return Object.assign({ ok: ok, kind: kind, reason: kind }, extra || {});
@@ -59,6 +61,7 @@ function reapNavUi() {
   if (S.loadOverlay && !opAlive(S.loadOverlay.op)) {
     endYearLoad(S.loadOverlay.gen);
   }
+  if (S.playWait && !opAlive(S.playWait.op)) S.playWait = null;
   renderYearFailBar();
 }
 function bumpOp() {
@@ -1326,18 +1329,39 @@ function commitYear(t, wait) {
 function yearNavAlive(myEpoch, myRun, myOp) {
   return opAlive(myOp) && !stale(myEpoch, myRun);
 }
+function pendingCurrentYear() {
+  if (!S.run) return false;
+  if (S.years.has(ykey(S.run.run_id, S.t))) return false;
+  if (S.playWait && S.playWait.t === S.t && opAlive(S.playWait.op)) return true;
+  if (S.yearWait && S.yearWait.pending && S.yearWait.t === S.t) return true;
+  return false;
+}
+function schedulePlayTimer(myOp, ms, fn) {
+  if (!S.playing || !opAlive(myOp)) return;
+  clearTimeout(S.timer);
+  S.timer = setTimeout(() => {
+    if (!S.playing || !opAlive(myOp)) return;
+    fn();
+  }, ms);
+}
 function afterPlayStep(gy, myOp) {
   if (!opAlive(myOp)) return false;
   if (!gy || gy.kind === "stale") return false;
   if (gy.kind === "pending404") {
-    if ($("tl-note")) $("tl-note").textContent = yearWaitMessage();
-    if (S.playing && opAlive(myOp)) S.timer = setTimeout(tick, 700);
+    const waitT = gy.t != null ? gy.t : S.t;
+    S.playWait = { t: waitT, op: myOp, runId: S.run ? S.run.run_id : null };
+    if ($("tl-note")) {
+      $("tl-note").textContent = "等待第 " + waitT + " 年落盘，拿到记录前不进入下一年。";
+    }
+    schedulePlayTimer(myOp, PLAY_PENDING_MS, tick);
     return false;
   }
   if (!gy.ok || gy.kind === "failed") {
+    S.playWait = null;
     if (S.playing && opAlive(myOp)) setPlaying(false);
     return false;
   }
+  if (S.playWait && (gy.t == null || S.playWait.t === gy.t)) S.playWait = null;
   return true;
 }
 function retryYear() {
@@ -1415,6 +1439,19 @@ function playDelay() {
 function tick() {
   if (!S.playing) return;
   const myOp = S.opGen;
+  if (pendingCurrentYear()) {
+    gotoYear(S.t, { quiet: true, opGen: myOp }).then((gy) => {
+      if (!afterPlayStep(gy, myOp)) return;
+      if (!S.playing || !opAlive(myOp)) return;
+      if (S.playMode === "events") {
+        tickEvents();
+        return;
+      }
+      renderCharts();
+      schedulePlayTimer(myOp, playDelay(), tick);
+    });
+    return;
+  }
   if (S.playMode === "events") {
     tickEvents();
     return;
@@ -1422,7 +1459,8 @@ function tick() {
   if (S.t >= maxT()) {
     if (S.run && (S.run.status === "running" || S.run.status === "queued")) {
       $("tl-note").textContent = "已经放到最新算出来的一年，等后台继续计算…";
-      S.timer = setTimeout(tick, 700); return;
+      schedulePlayTimer(myOp, PLAY_PENDING_MS, tick);
+      return;
     }
     setPlaying(false); return;
   }
@@ -1430,7 +1468,7 @@ function tick() {
     if (!afterPlayStep(gy, myOp)) return;
     renderCharts();
     if (!opAlive(myOp) || !S.playing) return;
-    S.timer = setTimeout(tick, playDelay());
+    schedulePlayTimer(myOp, playDelay(), tick);
   });
 }
 function setPlaying(v) {
@@ -1973,6 +2011,10 @@ async function stepEventYear(dir) {
 async function tickEvents() {
   if (!S.playing) return;
   const myOp = S.opGen;
+  if (pendingCurrentYear()) {
+    tick();
+    return;
+  }
   const years = DirectorLogic.eventYearsFromSeries(S.series);
   const rec0 = recNow();
   const st = DirectorLogic.eventModeStatus({
@@ -1992,14 +2034,14 @@ async function tickEvents() {
       const fe = await focusEvent(items[0], { fromPlay: true, skipMap: mapIsCurrent(), opGen: myOp });
       if (!afterPlayStep(fe, myOp)) return;
       if (!S.playing || !opAlive(myOp)) return;
-      S.timer = setTimeout(tick, playDelay());
+      schedulePlayTimer(myOp, playDelay(), tick);
       return;
     }
     if (idx + 1 < items.length) {
       const fe = await focusEvent(items[idx + 1], { fromPlay: true, skipMap: mapIsCurrent(), opGen: myOp });
       if (!afterPlayStep(fe, myOp)) return;
       if (!S.playing || !opAlive(myOp)) return;
-      S.timer = setTimeout(tick, playDelay());
+      schedulePlayTimer(myOp, playDelay(), tick);
       return;
     }
   }
@@ -2007,7 +2049,7 @@ async function tickEvents() {
   if (ny == null) {
     if (S.run && (S.run.status === "running" || S.run.status === "queued")) {
       if ($("tl-note")) $("tl-note").textContent = "已经放到最新有记录的事件年，等后台继续计算…";
-      S.timer = setTimeout(tick, 700);
+      schedulePlayTimer(myOp, PLAY_PENDING_MS, tick);
       return;
     }
     setPlaying(false);
@@ -2018,18 +2060,19 @@ async function tickEvents() {
   const rec2 = recNow();
   if (!rec2) {
     if ($("tl-note")) $("tl-note").textContent = "第 " + ny + " 年的记录尚未加载，不把空清单当成 0 条事件。";
-    if (S.playing && opAlive(myOp)) S.timer = setTimeout(tick, 700);
+    S.playWait = { t: ny, op: myOp, runId: S.run ? S.run.run_id : null };
+    schedulePlayTimer(myOp, PLAY_PENDING_MS, tick);
     return;
   }
   if (!rec2.events || !rec2.events.length) {
     if ($("tl-note")) $("tl-note").textContent = "第 " + ny + " 年曲线记有事件，但事件清单缺失。不补编。";
-    if (S.playing && opAlive(myOp)) S.timer = setTimeout(tick, playDelay());
+    schedulePlayTimer(myOp, playDelay(), tick);
     return;
   }
   const fe = await focusEvent(Object.assign({}, rec2.events[0], { t: ny, _i: 0 }), { fromPlay: true, opGen: myOp });
   if (!afterPlayStep(fe, myOp)) return;
   if (!S.playing || !opAlive(myOp)) return;
-  S.timer = setTimeout(tick, playDelay());
+  schedulePlayTimer(myOp, playDelay(), tick);
 }
 async function focusEvent(ev, opts) {
   opts = opts || {};
@@ -2605,7 +2648,8 @@ async function startRun() {
 window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot, startRun, setLayer,
   setPlayMode, focusEvent, cancelFx, loadBand, gotoEventYear, stepEventYear, findEventByKey,
   bumpOp, opAlive, bandAccept, bandCacheKey, applyBandDossier, setPlaying, tickEvents, tick,
-  navResult, beginYearLoad, endYearLoad, afterPlayStep, retryYear, reapNavUi, renderYearFailBar };
+  navResult, beginYearLoad, endYearLoad, afterPlayStep, retryYear, reapNavUi, renderYearFailBar,
+  pendingCurrentYear, PLAY_PENDING_MS };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {
