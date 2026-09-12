@@ -1,5 +1,12 @@
 # 连续开发进度
 
+## GROK_BUILD_007 检查点
+- 闭环本波剩余：390 选中卡片改为贴在播放条上方，不再叠住播放；采集者选中/给予用 15 状态图；选中环改为描边椭圆（原 PNG 内孔是实心白底）。
+- 03 八方向是另一套斗篷人物，不混进六名群体代表。行走仍是两帧近似姿势 + 程序摆动，不是已验证循环。
+- 试玩：http://127.0.0.1:8788/static/index.html#tab=world&run=preset-exp06-recip1000&t=0
+- tests：run_tests 213/0/1uncov（O28m）；c07 16/0；c08 51/0；game-v2-unit 22/0；game-v2-cdp 21/0（V8 sheetAbove mapH=384 dockH=84）；engines-cdp 7/0；c08-wizard 6/0；g04-fix 6/0；g05 11/0；g06 5/0；g07 5/0；director-logic 18/0
+- 本波后停下。Codex 尚未试玩。8765/8772 未动。
+
 ## GROK_BUILD_006 检查点
 - ART-PACK-001 选 variant-01，去底/裁切/对齐写入 `observer/web/assets/sprites/`（源目录只读）。未把白底 JPG 整张贴上地图。
 - 人物/地块/头像已接入；援助/信息用 pair 图锚事件格；迁移两帧近似走姿+程序摆动（不是已验证循环）；创世页用 menu-bg；随身包袱只作装饰。

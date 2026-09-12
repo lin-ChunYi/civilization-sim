@@ -12,3 +12,5 @@ White JPG sheets are not used on the map. These PNGs are flood-knocked, cropped,
 - `menu-bg.jpg` is the 创世/运行 tab illustration, not the replay map.
 - `prop-*` are decorative camp props, not cities or buildings.
 - Event pair images still anchor `e.cell`. Split still has no map locate.
+- `state-wave` / `state-give` only apply when the group representative is the gatherer silhouette. Other bands keep their own idle sprite.
+- `face-east` / `face-west` are a different hooded figure and are not mixed into the six group identities. Walk facing uses a horizontal flip of the two scout poses.

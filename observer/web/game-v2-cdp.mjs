@@ -12,7 +12,7 @@ mkdirSync(SHOT, { recursive: true });
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9341;
 const RUN = "preset-exp06-recip1000";
-const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v7#tab=world&run=" + RUN + "&t=0";
+const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v8#tab=world&run=" + RUN + "&t=0";
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
   `--remote-debugging-port=${PORT}`,
@@ -132,15 +132,21 @@ try {
   })()`);
   const sheet = await ev(`(function(){
     var s=document.getElementById('sel-sheet');
-    return {hidden: !s || s.hidden, text: s ? s.textContent : '', inView: (function(){
-      if(!s || s.hidden) return false; var r=s.getBoundingClientRect();
-      return r.top>=0 && r.bottom<=window.innerHeight+4;
-    })()};
+    var img=s && s.querySelector('.sel-port');
+    var d=document.getElementById('play-dock');
+    var sr=s?s.getBoundingClientRect():null, dr=d?d.getBoundingClientRect():null;
+    return {hidden: !s || s.hidden, text: s ? s.textContent : '',
+      hasPort: !!(img && (img.getAttribute('src')||'').indexOf('/static/assets/sprites/port-')>=0),
+      inView: (function(){
+        if(!s || s.hidden) return false; var r=s.getBoundingClientRect();
+        return r.top>=0 && r.bottom<=window.innerHeight+4;
+      })(),
+      aboveDock: !!(sr && dr && sr.bottom<=dr.top+6)};
   })()`);
   ok("V2 真实鼠标选中群体代表并打开档案",
     clicked && sel && sel.selBand === firstBand && sel.selected && sel.pose === "select",
     JSON.stringify({ firstBand, clicked, sel }));
-  ok("V2b 选中后群体卡片在视口内", sheet && sheet.hidden === false && sheet.inView, JSON.stringify(sheet));
+  ok("V2b 选中后群体卡片在视口内", sheet && sheet.hidden === false && sheet.inView && sheet.hasPort && sheet.aboveDock, JSON.stringify(sheet));
   await shot("desktop-select-unit.png");
 
   const mig = await ev(`(async function(){
@@ -260,15 +266,20 @@ try {
     var dock=document.getElementById('play-dock');
     var dr=dock?dock.getBoundingClientRect():null;
     var dockIn= !!(dr && dr.bottom<=window.innerHeight+8 && dr.top>=0);
+    var sheet=document.getElementById('sel-sheet');
+    var sr=sheet?sheet.getBoundingClientRect():null;
+    var sheetAbove= !sheet || sheet.hidden || !!(sr && dr && sr.bottom<=dr.top+6);
     return {units:units, hud:Math.round(hr), vw:window.innerWidth,
       chip: chip && !chip.hidden && /迁移/.test(chip.textContent||''),
       eid: chip && chip.getAttribute('data-eid'),
       onMap:onMap, chipH: cr?Math.round(cr.height):0,
-      dockIn:dockIn, mapH: mr?Math.round(mr.height):0};
+      dockIn:dockIn, mapH: mr?Math.round(mr.height):0,
+      sheetAbove:sheetAbove, dockH: dr?Math.round(dr.height):0,
+      pad: document.getElementById('tab-world') && document.getElementById('tab-world').style.paddingBottom};
   })()`);
   ok("V8 390 宽地图上能看见事件条且人物仍在",
     mobile && mobile.units > 0 && mobile.vw <= 400 && mobile.hud <= 120
-    && mobile.chip && mobile.onMap && mobile.dockIn && mobile.mapH > 140,
+    && mobile.chip && mobile.onMap && mobile.dockIn && mobile.mapH > 140 && mobile.sheetAbove,
     JSON.stringify(mobile));
   await shot("mobile-390-units.png");
 

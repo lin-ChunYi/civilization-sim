@@ -103,6 +103,15 @@ ok("U19 six silhouettes and sprite href stay distinct",
   && /walk-b/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" }))
   && /approx-poses/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" }))
   && f0 !== f1 && f1 !== f2 && f2 !== f3);
+let gatherId = null;
+for (let i = 0; i < 4000 && !gatherId; i++) {
+  if (U.silhouetteName(U.variant(String(i))) === "gather") gatherId = String(i);
+}
+ok("U19b gather select/give use state sprites of the same role",
+  gatherId
+  && /state-wave/.test(U.poseHref(gatherId, "select"))
+  && /state-give/.test(U.poseHref(gatherId, "give"))
+  && /char-gather/.test(U.poseHref(gatherId, "idle")));
 const palGap = [idA, idB, "1", "2", "3", "99"].every((id) => {
   const p = U.palette(id);
   return U.luma(p.skin) - U.luma(p.cloth) >= 70;

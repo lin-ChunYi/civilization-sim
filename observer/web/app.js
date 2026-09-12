@@ -461,6 +461,12 @@ const UnitArt = {
   portraitHref(id) {
     return this.spriteHref("port-" + this.silhouetteName(this.variant(id)));
   },
+  poseHref(id, pose) {
+    const sil = this.silhouetteName(this.variant(id));
+    if (sil === "gather" && pose === "select") return this.spriteHref("state-wave");
+    if (sil === "gather" && (pose === "give" || pose === "talk")) return this.spriteHref("state-give");
+    return this.charHref(id);
+  },
   luma(hex) {
     const h = String(hex || "").replace("#", "");
     if (h.length < 6) return 0;
@@ -600,7 +606,7 @@ const UnitArt = {
     const nParty = opts.party != null ? opts.party : this.partyCount(b && b.size);
     const sil = this.silhouetteName(v);
     const campRx = (7.2 + nParty * 2.2).toFixed(1);
-    const ring = on ? `<image class="unit-sel-ring unit-ring" href="${this.spriteHref("sel-ring")}" x="-22" y="2" width="44" height="22" preserveAspectRatio="none" pointer-events="none"/>` : "";
+    const ring = on ? `<ellipse class="unit-sel-ring unit-ring" cx="0" cy="14" rx="16" ry="6" fill="none" stroke="${pal.accent}" stroke-width="1.7" pointer-events="none"/>` : "";
     const prop = `<image class="unit-prop-art" href="${this.spriteHref(v % 2 ? "prop-pack" : "prop-bedroll")}" x="-7" y="10" width="12" height="9" preserveAspectRatio="xMidYMid meet" pointer-events="none"/>`;
     const spr = 'x="-20" y="-46" width="40" height="56" preserveAspectRatio="xMidYMax meet"';
     let body;
@@ -611,7 +617,7 @@ const UnitArt = {
       </g>`;
     } else {
       body = `<g class="unit-body unit-${esc(pose)}">
-        <image class="unit-sprite unit-head unit-tunic" href="${this.charHref(b && b.id)}" ${spr}/>
+        <image class="unit-sprite unit-head unit-tunic" href="${this.poseHref(b && b.id, pose)}" ${spr}/>
       </g>`;
     }
     return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-silhouette="${sil}" data-pose="${esc(pose)}" data-art="sprite" data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
@@ -1443,6 +1449,7 @@ function renderMap() {
       ? "拖动平移，用 +/− 缩放。"
       : "滚轮或 +/− 缩放，拖拽平移。") + (keys[layer] || "");
   }
+  layoutPlayDock();
 }
 
 function bandName(rec, id) {
@@ -2183,6 +2190,21 @@ async function gotoYear(t, opts) {
 function compactPlay() {
   return typeof window !== "undefined" && window.innerWidth <= 900;
 }
+function layoutPlayDock() {
+  const dock = $("play-dock");
+  const world = $("tab-world");
+  const rail = $("rail");
+  if (!dock || !world) return;
+  if (!compactPlay()) {
+    world.style.paddingBottom = "";
+    if (rail) rail.style.bottom = "";
+    return;
+  }
+  const h = Math.max(52, Math.ceil(dock.getBoundingClientRect().height));
+  world.style.paddingBottom = h + "px";
+  document.documentElement.style.setProperty("--play-dock-h", h + "px");
+  if (rail) rail.style.bottom = (h + 8) + "px";
+}
 function playDelay() {
   return Math.max(80, (S.playMode === "events" ? 1600 : 720) / Math.max(S.speed || 1, 0.25));
 }
@@ -2852,6 +2874,7 @@ function fillSelSheet() {
       <div class="sel-act">${esc(act)}</div>
     </div>`;
   sheet.hidden = false;
+  layoutPlayDock();
 }
 function closeSheets() {
   const sheet = $("sel-sheet");
@@ -3420,7 +3443,11 @@ async function boot() {
     if (rail && rail.classList.contains("open")) closeSheets();
     else showRail("chronicle");
   });
-  window.addEventListener("resize", () => { if (compactPlay()) closeSheets(); });
+  window.addEventListener("resize", () => {
+    layoutPlayDock();
+    if (compactPlay()) closeSheets();
+  });
+  layoutPlayDock();
   if ($("b-motion")) $("b-motion").addEventListener("click", () => {
     S.reduceMotion = !S.reduceMotion;
     $("b-motion").textContent = S.reduceMotion ? "动效关" : "动效开";
@@ -3828,7 +3855,7 @@ window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, rend
   collectRunDraft, applyForgePreset, confirmStartRun, LibraryLogic, renderLibrary,
   pinCurrentYear, pinCurrentEvent, exportCurrentRecord, jumpToRecordedEvent,
   clearRelEdgeCard, fillRelEdgeCard, UnitArt, paintDirectorFx, OverviewLogic, DirectorLogic,
-  syncEngineForm, engineHasParam };
+  syncEngineForm, engineHasParam, layoutPlayDock, compactPlay };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {
