@@ -1,0 +1,6 @@
+G02_R1
+指针：mapbox 不再于 pointerdown 立即 capture，也不在未过阈值时 renderMap。
+拖拽只改 viewBox；点击用真实指针命中 data-band/data-cell；拖后 ignore 仅 80ms。
+CDP Input.dispatchMouseEvent 于 946a58d28b05 t=124 同格三棋子均可选，URL 带 b=，档案有 aid_memory。
+摘要压成短句 + 活动/转移/回助/分配改变 chips；定义在口径 tab。
+375×812 PNG 实像素 375×812。

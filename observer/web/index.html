@@ -115,6 +115,7 @@
           <div class="panel-kicker">WORLD CHRONICLE</div>
           <h3>这一年发生了什么</h3>
           <p class="year-summary" id="year-summary">打开一次运行后，这里会用账本增量填写本年摘要。</p>
+          <div class="year-metrics" id="year-metrics"></div>
           <div class="event-head">
             <h3>事件卷宗 <small>第 <span id="ev-year">0</span> 年</small></h3>
             <div class="seg" id="ev-scope" role="tablist" aria-label="事件范围">
@@ -161,6 +162,8 @@
           <p class="unit-note">1 人年口粮 = 模型标准下 1 人一年的食物量。格子颜色只表示相对存量，不能据此说某个群体一定能活多少年。</p>
           <p class="muted">64 格、六邻接、A/B 被不可通行屏障列隔开。屏障只表示不可通行，不是山脉、国界或城市。</p>
           <p class="muted">缩放：缩小时只保留棋子；放大后显示人口与名称。流向层锚定事件记录的格子，不是年末位置。</p>
+          <p class="muted">援助<strong>活动</strong>次数 = 格×年（一次多人援助算 1）。<strong>转移</strong> = 一个供给方给一个接收方算 1 笔。
+            <strong>回助</strong>笔数含碰巧，不代表规则起作用。<strong>分配改变</strong>是 recip.changed（格×年），与 repay 不是同一计数。不要把这些数相加。</p>
           <div class="hud-params" id="hud-params"></div>
         </div>
       </div>
