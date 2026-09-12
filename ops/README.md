@@ -238,6 +238,34 @@ python3 ops/dispatch.py submit ops/jobs/G01_R1.json
 | `unknown` | 进程身份查不出来。不发信号、不下结论、不自动重跑 |
 | `durable_ok` | 进程结束 + 日志完整 + 唯一结果标记。**也只进 `review`**，`done` 仍要外部带证据 `accept` |
 
+### 日志格式（三种真实输出都要认）
+
+归一化只有一个入口 `parse_journal()`，返回 `(记录, 有没有写完)`：
+
+| 输出格式 | 长什么样 | 助手正文在哪 |
+|---|---|---|
+| `--output-format json` | **整份 stdout 就是一个缩进的 JSON 对象**（顶层 `text` / `stopReason` / `sessionId` / `requestId` / `usage` / …） | 顶层 `text` |
+| NDJSON | 一行一条记录 | 记录里的 `text` |
+| `--output-format streaming-json` | 一行一条，正文**逐片段**：`{"type":"text","data":"G"}`、下一条接着 `"CIV"`… | 按顺序拼起来的 `data` |
+| ACP（原生 stream） | `agent_message_chunk` / `agent_thought_chunk` | `content.text`（thought 那条不算） |
+
+踩过的坑：整份 pretty JSON 逐行 `json.loads` 一条都解析不出来，于是
+"确认结束 + rc=0 + 真实 `end_turn` + 唯一标记"被判成 `cli_no_unique_result`。
+
+- **找结果标记只看助手正文，而且原样拼接、一个换行都不加** —— streaming-json 的标记会跨片段，
+  中间插东西就拆坏了。
+- **整条排除**：`thought`（正文在 `data` 里，只删 `thought` 键没用）、`tool_call` /
+  `tool_call_update` / `tool_result`、`available_commands`、`usage`、用户模板。
+  私有思考与工具入参里出现的"结果标记"一律不算数，也**不会进 STATUS 或任何可读报告**。
+- **半个对象不猜完成**：整份像个 JSON 对象却解析不了，或 NDJSON 里有解析不了的行，
+  一律 `cli_exited_incomplete`（结果未知），哪怕标记本身已经写全了。
+- 只有连 JSON 记录都解析不出来（根本不是 JSON 的输出格式）时，才退回搜索原始正文。
+
+**终态记录的识别范围是写死的，没有臆造**：带顶层 `stopReason`、或 `type` 是
+`result` / `turn_completed` 一类、或 `_meta` 里有 `cancellationCategory`。
+streaming-json 的终态记录长什么样**尚未在官方 formatter 源码里核实过**；
+认不出终态时不会假装有，而是在说明里写明"这一轮没有识别到终态记录，判定只靠唯一标记"。
+
 **证据只从当前这一轮的终态记录里取。** 终态记录就是日志里最后一条带 `stopReason`、
 或 `type` 是 `result` / `turn_completed` 的结构化记录（ACP 的 `cancellationCategory`
 可能在 `_meta` 里）。两条硬规矩，都是踩过的坑：
@@ -315,7 +343,7 @@ Cockpit 通道另外要 `device_id`、`session_id`、`session_cwd`；
 ## 测试
 
 ```bash
-python3 ops/test_dispatch.py      # 87 项，全部在临时目录里造假 hub / 假 CLI
+python3 ops/test_dispatch.py      # 97 项，全部在临时目录里造假 hub / 假 CLI
 ```
 
 不碰本机任何真实会话与真实 outbox（PID 复用那条也只拿测试自己起的 `sleep` 当靶子）。
@@ -350,7 +378,12 @@ CLI 的三处边界（R23 组：token 落盘但没有 pid 时判未知而不是�
 候选确认（R25 组：扫到候选后二次读取变成 `tail` / 读不到 / 读不了 / 仍是同一个 CLI，
 **两个认领入口跑同一份用例**，只有最后一种才认领，前三种零信号且不写错误的出生身份；
 已记录的出生身份两个入口都洗不掉；认领身份的写入只允许存在于 `claim_candidate` 一处；
-真实 Grok argv 里带空格的 `Bash(...)` / `Edit(...)` 规则不影响结构核对）。
+真实 Grok argv 里带空格的 `Bash(...)` / `Edit(...)` 规则不影响结构核对）、
+日志格式（R26 组：真实的整份 pretty JSON 判成完成、私有思考不进 STATUS/报告、
+截断的 pretty JSON 保持未知、streaming-json 分片原样拼接后标记成立、
+`thought.data` 与工具入参里的假标记不算数、普通正文里的"额度"仍不误判、
+真实终态取消仍然优先、ACP 与 NDJSON 两种老格式不受影响、
+`parse_journal` 对"写没写完"的判断）。
 `grok-cli` 那组用的是一个**假 CLI 脚本**，不联网、不碰真实 Grok 环境、
 不接管任何正在跑的真实任务；发出去的信号只打测试自己起的子进程。
 
@@ -360,7 +393,8 @@ CLI 的三处边界（R23 组：token 落盘但没有 pid 时判未知而不是�
 跑 `dac9004`（C06 之前）R22 那 20 项**全红**，
 跑 `59650b3`（C06_R1 之前）R23 那 13 项红 11 项，
 跑 `046bf1c`（C06_R2 之前）R24 那 12 项红 9 项，
-跑 `ac5fb43`（C06_R3 之前）R25 那 7 项红 6 项 —— 每一轮里此前各组都保持全绿，
+跑 `ac5fb43`（C06_R3 之前）R25 那 7 项红 6 项，
+跑 `1fcaad8`（C06_R4 之前）R26 那 10 项红 8 项 —— 每一轮里此前各组都保持全绿，
 说明没有回退任何已通过的边界。
 
 ## 边界（写明，别指望）

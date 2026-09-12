@@ -989,10 +989,10 @@ def adopt_cli(job, root, queue):
 
 
 def journal_text(job):
-    """读日志正文。返回 (text, complete)。
+    """读日志正文。返回 (raw_text, complete)。
 
-    `complete=False` 表示最后一行是半条（进程正在写、或写到一半就退了）——
-    半条一律不参与判定，宁可报"日志没写完"。
+    `complete=False` 表示这份日志**没写完**（半条 NDJSON、或一个还没闭合的缩进 JSON 对象）。
+    没写完一律不参与"完成"判定 —— 宁可报"日志没写完"，也不对半个对象猜完成。
     """
     path = job.get('journal')
     if not path:
@@ -1003,11 +1003,8 @@ def journal_text(job):
         return '', False
     if not raw:
         return '', True
-    complete = raw.endswith(b'\n')
     text = raw.decode('utf-8', errors='replace')
-    if not complete:
-        text = text[:text.rfind('\n') + 1]
-    return text, complete
+    return text, parse_journal(text)[1]
 
 
 # 终态记录的特征：有顶层 stopReason，或者 type 是 result / turn_completed 一类。
@@ -1063,20 +1060,100 @@ def _evidence_blob(rec):
     return ' '.join(parts).lower()
 
 
-def journal_records(text):
-    """日志里能解析出来的结构化记录（已去掉私有思考字段）。"""
-    out = []
-    for line in text.splitlines():
+# 整条排除的记录类型。**thought 的正文在 `data` 里、不是 `thought` 键**，
+# 所以只删键没用，必须整条不要。工具调用的入参同理：里面出现"结果标记"不算数。
+EXCLUDED_RECORD_TYPES = ('thought', 'thinking', 'reasoning',
+                         'tool_call', 'tool_call_update', 'tool_result', 'tool_use',
+                         'available_commands', 'usage', 'user', 'user_message',
+                         'user_message_chunk', 'system')
+
+
+def parse_journal(text):
+    """把日志正文归一成 (records, complete)。**这是唯一的格式归一化入口。**
+
+    实测存在三种真实输出，都要认：
+
+      1. `--output-format json`：整份 stdout 就是**一个缩进的 JSON 对象**
+         （顶层 text / stopReason / sessionId / requestId / usage / …）。
+         逐行 `json.loads` 一条都解析不出来，于是真实的成功被判成"没有唯一结果"。
+      2. NDJSON：一行一条记录（我们自己的假 CLI 与旧格式都是这样）。
+      3. `--output-format streaming-json`：一行一条，助手正文是
+         `{"type":"text","data":"片段"}` 的**逐片段**输出。
+
+    没写完的不猜：整份像个 JSON 对象却解析不了 -> complete=False；
+    NDJSON 里有解析不了的行 -> complete=False。
+    """
+    stripped = (text or '').strip()
+    if not stripped:
+        return [], True
+    try:
+        whole = json.loads(stripped)
+    except ValueError:
+        whole = None
+    if whole is not None:
+        items = whole if isinstance(whole, list) else [whole]
+        return [_clean(r) for r in items if isinstance(r, dict)], True
+    out, broken, structured = [], False, False
+    for line in stripped.splitlines():
         line = line.strip()
-        if not line.startswith(('{', '[')):
+        if not line:
             continue
+        if not line.startswith(('{', '[')):
+            continue                       # 纯文本行：跳过，但不算"坏"
+        structured = True
         try:
             rec = json.loads(line)
         except ValueError:
+            broken = True                  # 半条 / 写坏了
             continue
         if isinstance(rec, dict):
             out.append(_clean(rec))
-    return out
+        elif isinstance(rec, list):
+            out.extend(_clean(r) for r in rec if isinstance(r, dict))
+    if not out and stripped.startswith(('{', '[')):
+        # 像是一个写到一半的缩进 JSON 对象：既不是完整对象，也解析不出任何一行
+        return [], False
+    return out, not (broken and structured)
+
+
+def journal_records(text):
+    """日志里能解析出来的结构化记录（已去掉私有思考字段）。"""
+    return parse_journal(text)[0]
+
+
+def assistant_fragments(records):
+    """只取**真正的助手正文**，按出现顺序**原样拼接**（不加换行）。
+
+    streaming-json 是逐片段的：`{"type":"text","data":"G"}`、下一条接着 `"CIV"`…
+    中间插一个换行就会把跨片段的结果标记拆坏。所以这里一个字符都不加。
+
+    整条排除：thought / tool_call / tool_call_update / available_commands / usage /
+    用户模板等（见 EXCLUDED_RECORD_TYPES）。工具入参与私有思考里出现的"结果标记"不算数，
+    也不会进 STATUS 或任何可读报告。
+    """
+    parts = []
+    for rec in records:
+        kind = str(rec.get('type') or rec.get('event') or '').lower()
+        if kind in EXCLUDED_RECORD_TYPES:
+            continue
+        # ACP：agent_message_chunk 是助手正文，agent_thought_chunk 不是
+        update = ((rec.get('params') or {}).get('update')
+                  if isinstance(rec.get('params'), dict) else None)
+        if isinstance(update, dict):
+            su = str(update.get('sessionUpdate') or '').lower()
+            if 'thought' in su or 'user_message' in su:
+                continue
+            if su == 'agent_message_chunk':
+                content = update.get('content')
+                if isinstance(content, dict) and isinstance(content.get('text'), str):
+                    parts.append(content['text'])
+            continue
+        if kind == 'text' and isinstance(rec.get('data'), str):
+            parts.append(rec['data'])           # streaming-json 的正文片段
+            continue
+        if isinstance(rec.get('text'), str):
+            parts.append(rec['text'])           # 普通 JSON 终态 / 旧的 assistant 记录
+    return ''.join(parts)
 
 
 def is_terminal_record(rec):
@@ -1154,16 +1231,6 @@ def _strings(value, out):
             _strings(v, out)
 
 
-def journal_turn_text(text):
-    """当前这一轮的可搜索正文。
-
-    `--resume` 的日志里可能带着早先那一轮的内容；结果标记要以**最后一条终态记录**为界：
-    终态之后没有更多轮，终态之前的才是这一轮说过的话。找不到终态就退回整份日志。
-    私有思考字段一律不参与。
-    """
-    return text
-
-
 def journal_search_text(text):
     """把日志变成可搜索的正文。
 
@@ -1171,10 +1238,11 @@ def journal_search_text(text):
     找 `CIV_RESULT_X {...}` 会捞到一串 `\"` 根本解析不了。所以先把每条 JSON 记录里的
     字符串值解出来搜；解不出来再拿原始正文兜底（别的输出格式仍然能用）。
     """
-    decoded = []
-    for rec in journal_records(text):        # journal_records 已经去掉私有思考字段
-        _strings(rec, decoded)
-    return ['\n'.join(decoded), text]
+    records = journal_records(text)
+    if records:
+        # 解析得出记录时，**只搜助手正文**：私有思考与工具入参里出现的"结果标记"不算数。
+        return [assistant_fragments(records)]
+    return [text]        # 根本不是 JSON（别的输出格式）：只能退回原始正文
 
 
 def _markers_in(text, task_id):
@@ -1247,8 +1315,10 @@ def collect_cli(job, root):
     report, hits = unique_marker(text, job['task_id'])
     job['cli_stop_reason'] = sig['stop_reason']
     job['cli_cancel_category'] = sig['cancel_category']
-    if text:
-        job['last_output'] = text[-1200:]
+    visible = assistant_fragments(journal_records(text)) if text else ''
+    if visible or text:
+        # STATUS / 可读报告里只放**助手正文**：私有思考、工具入参一个字都不进来。
+        job['last_output'] = (visible or '')[-1200:]
         job['output_log'] = job.get('journal')
 
     # 进程还在：继续观察。**不因为"暂时没输出"做任何判断。**
@@ -1340,8 +1410,12 @@ def collect_cli(job, root):
     job['report'] = report
     fields = report if isinstance(report, dict) else {}
     job['receipt_state'] = 'durable_ok'
+    term_note = ('' if sig['has_terminal'] else
+                 ' NOTE: no terminal record was recognised in this journal format, so the '
+                 'verdict rests on the unique marker alone - not on a stopReason.')
     job['receipt_detail'] = ('process exited (rc=%s) and this turn ended with one unique result '
-                             'marker; self-reported only, still needs accept%s' % (rc, rc_note))
+                             'marker; self-reported only, still needs accept%s%s'
+                             % (rc, rc_note, term_note))
     job['status'] = 'blocked' if fields.get('status') == 'blocked' else 'review'
     job['finished_at'] = now()
     job['self_reported_at'] = now()

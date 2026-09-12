@@ -1814,5 +1814,152 @@ class TestCandidateConfirmation(CliBase):
         self.assertFalse(D.cli_command_matches(job, '/bin/cat ' + prompt))
 
 
+# ---------------- C06_R4：真实输出格式（整份 pretty JSON / streaming-json 分片）
+REAL_PRETTY = json.dumps({
+    "text": ("只修 pending404 跳年：等待绑在原目标年，记录到齐前不进入 126/130。\n\n"
+             "受控状态测试（**不是**后台真实 404）：旧 da22 在 850ms 内会请求 126 和 130。\n\n"
+             'CIV_RESULT_G03_R3 {"status":"done","branch":"main",'
+             '"commit":"659b7261211f00e0e7cd244b2155b189bed72b3a",'
+             '"tests":["node --check observer/web/app.js",'
+             '"node observer/web/g03-r3-pending-test.mjs pass=20 fail=0"],'
+             '"screenshots":["observer/web/screenshots/g03/r3-aid-83.png"],'
+             '"blocking_reason":""}'),
+    "stopReason": "end_turn",
+    "sessionId": "fixture-session",
+    "requestId": "fixture-request",
+    "thought": "PRIVATE_THOUGHT_MUST_NOT_LEAK",
+}, ensure_ascii=False, indent=2)
+
+
+class TestJournalFormats(CliBase):
+    """主控实测：`--output-format json` 的 stdout 是**整份一个缩进 JSON 对象**，
+    逐行 `json.loads` 一条都解析不出来，于是"确认结束 + rc0 + 真实 end_turn + 唯一标记"
+    被判成 `cli_no_unique_result`。`streaming-json` 又是另一回事：正文按
+    `{"type":"text","data":"片段"}` 逐片段来，中间插换行会把跨片段的标记拆坏，
+    而且 `type=thought` 的正文在 `data` 里、工具入参也可能带着假标记。
+    """
+
+    def judge(self, body, task='G03_R3', name=None):
+        jp = self.tmp / ((name or task) + '.json')
+        jp.write_text(body, encoding='utf-8')
+        job = {'task_id': task, 'owner': 'grok', 'transport': 'grok-cli', 'status': 'running',
+               'owns_process': True, 'cli_pid': None, 'cli_token': None, 'cli_rc': 0,
+               'journal': str(jp), 'dependencies': [], 'created_at': D.now()}
+        D.collect_cli(job, self.root)
+        return job
+
+    def frag(self, pieces, extra=()):
+        lines = [json.dumps({'type': 'text', 'data': p}, ensure_ascii=False) for p in pieces]
+        lines += [json.dumps(x, ensure_ascii=False) for x in extra]
+        return '\n'.join(lines) + '\n'
+
+    def test_R26_real_pretty_json_object_is_a_completed_turn(self):
+        job = self.judge(REAL_PRETTY)
+        self.assertEqual(job['status'], 'review',
+                         '真实 pretty JSON 被判成了：%s' % job['receipt_detail'][:90])
+        self.assertEqual(job['receipt_state'], 'durable_ok')
+        self.assertEqual(job['report']['commit'],
+                         '659b7261211f00e0e7cd244b2155b189bed72b3a')
+        self.assertEqual(job['cli_stop_reason'], 'end_turn')
+        self.assertEqual(job['cli_session_id'], 'fixture-session')
+        self.assertEqual(job['report']['tests'][0], 'node --check observer/web/app.js')
+
+    def test_R26b_private_thought_never_reaches_status_or_report(self):
+        job = self.judge(REAL_PRETTY, name='thought')
+        self.assertNotIn('PRIVATE_THOUGHT', job.get('last_output') or '')
+        self.assertNotIn('PRIVATE_THOUGHT', json.dumps(job.get('report'), ensure_ascii=False))
+        row = D.status_row(job)
+        self.assertNotIn('PRIVATE_THOUGHT', json.dumps(row, ensure_ascii=False))
+
+    def test_R26c_truncated_pretty_json_stays_unknown(self):
+        """半个对象**不猜完成**：既不是完整对象，也解析不出任何一行。"""
+        job = self.judge(REAL_PRETTY[:len(REAL_PRETTY) // 2], name='trunc')
+        self.assertEqual(job['receipt_state'], 'cli_exited_incomplete')
+        self.assertEqual(job['status'], 'blocked')
+        self.assertNotIn('report', job)
+        # 连标记都写全了、只是对象没闭合 —— 仍然不算完成
+        job2 = self.judge(REAL_PRETTY[:-2], name='trunc2')
+        self.assertEqual(job2['receipt_state'], 'cli_exited_incomplete')
+
+    def test_R26d_streaming_fragments_are_joined_verbatim(self):
+        body = self.frag(['干完了。', 'CIV_RESU', 'LT_G9 {"sta', 'tus":"done",',
+                          '"commit":"FRAG"}'])
+        job = self.judge(body, task='G9', name='frag')
+        self.assertEqual(job['status'], 'review',
+                         '跨片段的标记被拆坏了：%s' % job['receipt_detail'][:90])
+        self.assertEqual(job['report']['commit'], 'FRAG')
+        self.assertIn('no terminal record was recognised', job['receipt_detail'],
+                      '没有终态记录时应当如实说明判定只靠标记')
+
+    def test_R26e_fake_marker_in_thought_does_not_count(self):
+        body = self.frag(['正在想办法。'], extra=[
+            {'type': 'thought',
+             'data': 'CIV_RESULT_G9 {"status":"done","commit":"FROM_THOUGHT"}'}])
+        job = self.judge(body, task='G9', name='thought-marker')
+        self.assertEqual(job['receipt_state'], 'cli_no_unique_result',
+                         '私有思考里的假标记被当成了结果')
+        self.assertNotIn('report', job)
+        self.assertNotIn('FROM_THOUGHT', job.get('last_output') or '')
+
+    def test_R26f_marker_in_tool_input_does_not_count(self):
+        body = self.frag(['开始调用工具。'], extra=[
+            {'type': 'tool_call', 'name': 'Bash',
+             'data': {'command': 'echo CIV_RESULT_G9 {"status":"done","commit":"FROM_TOOL"}'}},
+            {'type': 'tool_call_update', 'status': 'completed'},
+            {'type': 'available_commands', 'data': ['/help']},
+            {'type': 'usage', 'data': {'input_tokens': 10}}])
+        job = self.judge(body, task='G9', name='tool-marker')
+        self.assertEqual(job['receipt_state'], 'cli_no_unique_result',
+                         '工具入参里的标记被当成了结果')
+        self.assertNotIn('FROM_TOOL', job.get('last_output') or '')
+
+    def test_R26g_prose_quota_word_still_not_a_quota_block(self):
+        body = self.frag(['未触发额度限制。', 'CIV_RESULT_G9 {"status":"done","commit":"QP"}'],
+                         extra=[{'text': '', 'stopReason': 'end_turn', 'sessionId': 's1'}])
+        job = self.judge(body, task='G9', name='quota-prose')
+        self.assertEqual(job['status'], 'review')
+        self.assertEqual(job['report']['commit'], 'QP')
+
+    def test_R26h_real_terminal_cancel_still_outranks_the_marker(self):
+        body = self.frag(['CIV_RESULT_G9 {"status":"done","commit":"EARLY"}'],
+                         extra=[{'text': '', 'stopReason': 'cancelled',
+                                 'cancellationCategory': 'PermissionCancelled',
+                                 'sessionId': 's1'}])
+        job = self.judge(body, task='G9', name='cancel-frag')
+        self.assertEqual(job['receipt_state'], 'permission_cancelled')
+        self.assertNotIn('report', job)
+        pretty_cancel = json.dumps({'text': 'CIV_RESULT_G9 {"status":"done","commit":"E2"}',
+                                    'stopReason': 'cancelled',
+                                    'cancellationCategory': 'PermissionCancelled'},
+                                   ensure_ascii=False, indent=1)
+        job2 = self.judge(pretty_cancel, task='G9', name='cancel-pretty')
+        self.assertEqual(job2['receipt_state'], 'permission_cancelled')
+        self.assertNotIn('report', job2)
+
+    def test_R26i_acp_chunks_and_ndjson_still_work(self):
+        """已有的两种格式不能因为这次兼容而失效。"""
+        acp = '\n'.join(json.dumps({'params': {'update': {
+            'sessionUpdate': 'agent_message_chunk', 'content': {'text': t}}}},
+            ensure_ascii=False) for t in ['CIV_RESULT_G9 {"sta', 'tus":"done","commit":"ACP"}'])
+        acp += '\n' + json.dumps({'params': {'update': {
+            'sessionUpdate': 'agent_thought_chunk',
+            'content': {'text': 'CIV_RESULT_G9 {"status":"done","commit":"ACPTHOUGHT"}'}}}}) + '\n'
+        job = self.judge(acp, task='G9', name='acp')
+        self.assertEqual(job['report']['commit'], 'ACP')
+        nd = json.dumps({'type': 'assistant',
+                         'text': 'CIV_RESULT_G9 {"status":"done","commit":"ND"}'}) + '\n'
+        job2 = self.judge(nd, task='G9', name='nd')
+        self.assertEqual(job2['report']['commit'], 'ND')
+
+    def test_R26j_parse_journal_reports_completeness_honestly(self):
+        self.assertEqual(D.parse_journal('')[1], True)
+        self.assertEqual(D.parse_journal(REAL_PRETTY)[1], True)
+        self.assertEqual(D.parse_journal(REAL_PRETTY[:80])[1], False)
+        self.assertEqual(D.parse_journal('{"a":1}\n{"b":2}\n')[1], True)
+        self.assertEqual(D.parse_journal('{"a":1}\n{"b":')[1], False)
+        self.assertEqual(len(D.parse_journal(REAL_PRETTY)[0]), 1)
+        self.assertEqual(len(D.parse_journal('{"a":1}\n{"b":2}\n')[0]), 2)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
