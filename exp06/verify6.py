@@ -230,9 +230,12 @@ def settle_cell(members, pre_avail, pre_need, am, recip_m, amem_pre, P, order=No
             targets = [r for r in sorted(receivers) if r in mem and left_g[r] > 0]
             if not targets:
                 continue
-            w = {r: max(mem[r][0], 1) for r in targets}       # 权重 = 记得对方帮过我的累计量
+            # 权重 = 记得对方帮过我的累计量，**只决定相对份额，不是额度上限**。
+            # 这里必须用 proportional_share：用 largest_remainder 会让"够分时各拿全额"
+            # 把历史受助量变成回助上限（本轮修掉的缺陷）。
+            w = {r: max(mem[r][0], 1) for r in targets}
             total = min(pb, sum(left_g[r] for r in targets))
-            alloc = largest_remainder(targets, w, total)
+            alloc = proportional_share(targets, w, total)
             for r in targets:
                 a = alloc[r] if 'recipover' in P else min(alloc[r], left_g[r])
                 if a > 0:
@@ -295,6 +298,27 @@ def mutual_pair_count(st) -> int:
     for rec in st['aid_log']:
         seen.add((rec[2], rec[3]))
     return sum(1 for (a, b) in seen if (b, a) in seen and a < b)
+
+
+def proportional_share(keys, weight, total):
+    """按 weight 的**相对比例**把 total 整数分完：取整商 + 余数（余数降序、band_id 升序）。
+
+    与 `largest_remainder` 的区别，是本轮修掉的那个缺陷的要害：
+      * `largest_remainder` 里 weight 是**上限**（预算 / 缺口），所以"够分时各拿全额"是对的；
+      * 这里 weight 只是**相对优先权重**（记得对方帮过自己的累计量），**不是上限**。
+        用前者会让"历史受助量"意外变成本轮回助额度的天花板 —— 历史是排序依据，不是债务额度。
+    因此本函数**永远把 total 分完**（受 total 与权重是否为 0 约束），不看 total 与权重和的大小关系。
+    """
+    ks = sorted(keys)
+    W = sum(weight[k] for k in ks)
+    if W <= 0 or total <= 0:
+        return {k: 0 for k in ks}
+    base = {k: weight[k] * total // W for k in ks}
+    rem = total - sum(base.values())
+    rank = sorted(ks, key=lambda k: (-(weight[k] * total % W), k))
+    for i in range(rem):
+        base[rank[i % len(rank)]] += 1
+    return base
 
 
 def make_world(seed: int, poison: str = "", sigma_m: int = 0, move_mort_m: int = 0,

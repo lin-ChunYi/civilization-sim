@@ -10,10 +10,10 @@
  "share_m": 1000,
  "aid_m": 1000,
  "recip_m": 1000,
- "created_at": 1789190090.905115,
- "engine_sha256": "83cc083323d3f5ad4cf31446c8431be5100c147f4e7ced47c6dc58aee64e085c",
- "engine_path": "exp03/verify3.py",
- "baseline_commit": "6b6af4f",
+ "created_at": 1789191240.377517,
+ "engine_sha256": "43c9338551a23d6d7065f657394a25d5be041e63724ab12a23350bde53e5d186",
+ "engine_path": "exp06/verify6.py",
+ "baseline_commit": "本轮实现（待审）",
  "model_run_id": "a14b919b2fda95f1a54a2a107a0f05c0",
- "full_digest": "a14b919b2fda95f1a54a2a107a0f05c0/d51f7a77e70a050ac6909dff0fac94ed"
+ "full_digest": "a14b919b2fda95f1a54a2a107a0f05c0/f5fa4cdccb716ccfc96077f49a14faa3"
 }

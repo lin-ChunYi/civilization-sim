@@ -720,6 +720,12 @@ with TestClient(app) as c9:
           and runs[pair[1]]["recip_m"] == 1000,
           str([(k, runs[k]["recip_m"]) for k in pair if k in runs]))
 
+    # 预置案例必须记**自己那个引擎**的代码版本（曾经错记成默认引擎的，本轮修）
+    eng_sha = {n: adapter.engine_info(n)["engine_sha256"] for n in ("exp03", "exp06")}
+    bad_id = [k for k in pair if runs.get(k, {}).get("engine_sha256") != eng_sha["exp06"]]
+    check("O27c2 预置案例记的是自己引擎的 sha256，不是默认引擎的",
+          not bad_id, str([(k, runs[k]["engine_sha256"][:12]) for k in pair if k in runs]))
+
     detail = c9.get(f"/api/runs/{pair[1]}").json()
     pu = {x["name"]: x for x in detail.get("params_used", [])}
     check("O27d 单条运行返回实际引擎/参数/代码版本/状态",
