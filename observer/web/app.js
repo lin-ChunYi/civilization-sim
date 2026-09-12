@@ -467,6 +467,17 @@ const UnitArt = {
     if (sil === "gather" && (pose === "give" || pose === "talk")) return this.spriteHref("state-give");
     return this.charHref(id);
   },
+  faceName(dx, dy) {
+    const ang = Math.atan2(Number(dy) || 0, Number(dx) || 0);
+    const deg = ((ang * 180 / Math.PI) + 360) % 360;
+    const i = Math.round(deg / 45) % 8;
+    return ["e", "se", "s", "sw", "w", "nw", "n", "ne"][i];
+  },
+  faceHref(face) {
+    const key = String(face || "e");
+    const ok = { e: 1, se: 1, s: 1, sw: 1, w: 1, nw: 1, n: 1, ne: 1 };
+    return this.spriteHref("face-" + (ok[key] ? key : "e"));
+  },
   luma(hex) {
     const h = String(hex || "").replace("#", "");
     if (h.length < 6) return 0;
@@ -598,7 +609,8 @@ const UnitArt = {
     const pose = opts.pose || (on ? "select" : "idle");
     const v = this.variant(b && b.id);
     const ghost = opts.ghost ? " unit-ghost" : "";
-    const facing = opts.facing === "left" ? -1 : 1;
+    const face = opts.face ? String(opts.face) : "";
+    const facing = (!face && opts.facing === "left") ? -1 : 1;
     const name = (b && b.name) || "群体";
     const size = (b && b.size) != null ? b.size : "";
     const bid = b && b.id != null ? String(b.id) : "";
@@ -610,18 +622,24 @@ const UnitArt = {
     const prop = `<image class="unit-prop-art" href="${this.spriteHref(v % 2 ? "prop-pack" : "prop-bedroll")}" x="-7" y="10" width="12" height="9" preserveAspectRatio="xMidYMid meet" pointer-events="none"/>`;
     const spr = 'x="-20" y="-46" width="40" height="56" preserveAspectRatio="xMidYMax meet"';
     let body;
-    if (pose === "walk") {
+    if (face) {
+      body = `<g class="unit-body unit-${esc(pose)}" data-walk="approx-poses">
+        <image class="unit-sprite unit-head unit-tunic" href="${this.faceHref(face)}" ${spr}/>
+      </g>`;
+    } else if (pose === "walk") {
       body = `<g class="unit-body unit-walk" data-walk="approx-poses">
         <image class="unit-sprite unit-walk-a unit-head unit-tunic" href="${this.spriteHref("walk-a")}" ${spr}/>
         <image class="unit-sprite unit-walk-b" href="${this.spriteHref("walk-b")}" ${spr}/>
+        <image class="unit-sprite unit-walk-c" href="${this.spriteHref("walk-c")}" ${spr}/>
+        <image class="unit-sprite unit-walk-d" href="${this.spriteHref("walk-d")}" ${spr}/>
       </g>`;
     } else {
       body = `<g class="unit-body unit-${esc(pose)}">
         <image class="unit-sprite unit-head unit-tunic" href="${this.poseHref(b && b.id, pose)}" ${spr}/>
       </g>`;
     }
-    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-silhouette="${sil}" data-pose="${esc(pose)}" data-art="sprite" data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
-      <title>${esc(name)} · 群体代表（${sil}）· ${size}人。这是群体的可视替身，不是独立个人生平。行走为两帧近似姿势加程序摆动，不是已验证循环。</title>
+    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-silhouette="${sil}" data-pose="${esc(pose)}" data-art="sprite"${face ? ` data-face="${esc(face)}"` : ""} data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
+      <title>${esc(name)} · 群体代表（${sil}）· ${size}人。这是群体的可视替身，不是独立个人生平。行走为近似姿势加程序摆动，不是已验证循环。迁徙八方向是行路姿态，不是新的群体身份。</title>
       <path class="unit-camp" d="M0,16 L${campRx},12 L0,8 L-${campRx},12 Z" fill="${pal.cloth}" fill-opacity="0.45" stroke="#2a1810" stroke-width="1.1"/>
       ${prop}
       ${ring}
@@ -2696,7 +2714,7 @@ function paintMigrateAction(overlay, ev, plan, reduced) {
   walker.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
   walker.innerHTML = UnitArt.markup(band, 0, 0, {
     pose: reduced ? "idle" : "walk", selected: true, hit: false, skin: S.skin, showPop: false,
-    facing: b[0] < a[0] ? "left" : "right",
+    face: UnitArt.faceName(b[0] - a[0], b[1] - a[1]),
   });
   overlay.appendChild(walker);
   fxCaption(overlay, (a[0] + b[0]) / 2, Math.min(a[1], b[1]) - 22,

@@ -12,7 +12,7 @@ mkdirSync(SHOT, { recursive: true });
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9341;
 const RUN = "preset-exp06-recip1000";
-const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v8#tab=world&run=" + RUN + "&t=0";
+const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v9#tab=world&run=" + RUN + "&t=0";
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
   `--remote-debugging-port=${PORT}`,
@@ -161,15 +161,17 @@ try {
     var line=document.querySelector('#fx-overlay line.fx-endpoint-line');
     var from=document.querySelector('#fx-overlay .fx-endpoint-from');
     var to=document.querySelector('#fx-overlay .fx-endpoint-to');
+    var unit=w && w.querySelector('.unit');
     return {ok: !!(fe && fe.ok), t:O.S.t, eid:e.id, from:e.from, to:e.to,
       walker: !!(w && w.getAttribute('data-path')==='endpoints-only'),
       stage: w && w.getAttribute('data-stage'),
+      face: unit && unit.getAttribute('data-face'),
       linePath: line && line.getAttribute('data-path'),
       endpoints: !!(from && to), caption: (document.querySelector('#fx-overlay .fx-caption')||{}).textContent||''};
   })()`);
   ok("V3 迁移有端点人物动作且不编中间格子",
     mig && mig.ok && mig.t === 4 && mig.walker && mig.linePath === "endpoints-only" && mig.endpoints
-    && /路线未记录/.test(mig.caption) && mig.stage,
+    && /路线未记录/.test(mig.caption) && mig.stage && mig.face,
     JSON.stringify(mig));
   await shot("desktop-migrate-walk.png");
   await sleep(500);

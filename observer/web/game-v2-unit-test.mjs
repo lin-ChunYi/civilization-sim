@@ -117,6 +117,14 @@ const palGap = [idA, idB, "1", "2", "3", "99"].every((id) => {
   return U.luma(p.skin) - U.luma(p.cloth) >= 70;
 });
 ok("U20 skin is lighter than cloth for camp contrast", palGap && /port-/.test(U.portraitHref(idA)));
+ok("U21 eight facings map from endpoint delta",
+  U.faceName(10, 0) === "e" && U.faceName(-10, 0) === "w"
+  && U.faceName(0, 10) === "s" && U.faceName(0, -10) === "n"
+  && /face-e/.test(U.faceHref("e")) && /face-nw/.test(U.faceHref("nw")));
+const mkFace = U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk", face: "ne" });
+ok("U22 migrate walker uses 8-dir travel pose without claiming a loop",
+  /data-face="ne"/.test(mkFace) && /face-ne/.test(mkFace) && /approx-poses/.test(mkFace)
+  && /walk-c/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" })));
 
 const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
 out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);

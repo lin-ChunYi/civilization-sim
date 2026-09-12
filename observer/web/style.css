@@ -247,9 +247,10 @@ button.prior-jump:hover,button.prior-jump:focus{outline:2px solid var(--gold);ba
   .flow-line,.year-display.pulse,.fx-pulse,.fx-token,
   .unit-body.unit-idle,.unit-body.unit-walk,
   .unit-body.unit-walk .unit-walk-a,.unit-body.unit-walk .unit-walk-b,
+  .unit-body.unit-walk .unit-walk-c,.unit-body.unit-walk .unit-walk-d,
   .unit-body.unit-walk .unit-leg-l,.unit-body.unit-walk .unit-leg-r{animation:none}
   .fx-pulse{opacity:1;transform:none}
-  .unit-body.unit-walk .unit-walk-b{opacity:0}
+  .unit-body.unit-walk .unit-walk-b,.unit-body.unit-walk .unit-walk-c,.unit-body.unit-walk .unit-walk-d{opacity:0}
 }
 .ev .src{color:var(--muted);font-size:11.5px;margin-top:2px}
 .ev .when{font-weight:700;margin-right:8px;color:var(--gold);font-variant-numeric:tabular-nums}
@@ -270,12 +271,16 @@ footer{color:var(--muted);font-size:12px;padding:12px 24px 28px;text-align:cente
 .unit-camp{filter:blur(.1px)}
 .unit-body.unit-idle{transform-box:fill-box;transform-origin:center bottom;animation:unit-bob 2.05s ease-in-out infinite}
 .unit-body.unit-walk{transform-box:fill-box;transform-origin:center bottom;animation:unit-bob .42s ease-in-out infinite}
-.unit-body.unit-walk .unit-walk-a{animation:unit-pose-a .48s steps(1) infinite}
-.unit-body.unit-walk .unit-walk-b{animation:unit-pose-b .48s steps(1) infinite}
+.unit-body.unit-walk .unit-walk-a{animation:unit-walk-a .96s steps(1) infinite}
+.unit-body.unit-walk .unit-walk-b{animation:unit-walk-b .96s steps(1) infinite}
+.unit-body.unit-walk .unit-walk-c{animation:unit-walk-c .96s steps(1) infinite}
+.unit-body.unit-walk .unit-walk-d{animation:unit-walk-d .96s steps(1) infinite}
 .unit.selected .unit-ring,.unit.selected .unit-sel-ring{filter:drop-shadow(0 0 4px rgba(243,222,170,.7))}
 @keyframes unit-bob{0%,100%{transform:translate(0,0)}50%{transform:translate(0,-2.2px)}}
-@keyframes unit-pose-a{0%,49%{opacity:1}50%,100%{opacity:0}}
-@keyframes unit-pose-b{0%,49%{opacity:0}50%,100%{opacity:1}}
+@keyframes unit-walk-a{0%,24%{opacity:1}25%,100%{opacity:0}}
+@keyframes unit-walk-b{0%,24%{opacity:0}25%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes unit-walk-c{0%,49%{opacity:0}50%,74%{opacity:1}75%,100%{opacity:0}}
+@keyframes unit-walk-d{0%,74%{opacity:0}75%,100%{opacity:1}}
 .hex-art{mix-blend-mode:multiply;opacity:.9}
 .hex-art-plain{mix-blend-mode:normal;opacity:1}
 .unit-sprite{pointer-events:none}

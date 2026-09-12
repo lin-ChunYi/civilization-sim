@@ -924,18 +924,55 @@ with TestClient(app) as c10:
     check("O28l 截至第 N 年的卷宗里没有 N 年之后的出生 / 分裂 / 消失 / 援助",
           not leak, str(leak[:2]))
 
-    # 消失：全档案里灭绝的群体，截到它还活着的年份时不能写成已消失
+    # 消失：预置 150 年里可能没有灭绝。没有就写一份隔离短记录承重同一条口径，不改预置包。
     gone = [n["id"] for n in full_all["nodes"]
             if band(n["id"]).json().get("extinct_at") is not None]
-    if not gone:
-        uncov("O28m 灭绝年份的截断", "这条预置案例里没有群体消失，前提缺失")
-    else:
+    if gone:
         g = gone[0]
         gy = band(g).json()["extinct_at"]
         early = band(g, gy - 1).json()
         check("O28m 消失那年之前查，卷宗写还活着，不预告消失",
               early["extinct_at"] is None and early["alive_at_year"] is True,
               f"{g} 第 {gy} 年消失")
+    else:
+        EXT = "o28m-extinct"
+        LIVE28 = "9223372036854775783"
+        GONE28 = "18446744073709551557"
+        store.run_dir(EXT).mkdir(parents=True, exist_ok=True)
+
+        def _o28b(bid, cell, size):
+            return {"id": bid, "name": "群体-" + bid[:4], "cell": cell, "size": size, "store": 100}
+
+        def _o28r(t, bands, events):
+            return {"t": t, "stock": [1], "bands": bands, "cum": {}, "year": {},
+                    "agg": {"pop": sum(b["size"] for b in bands)}, "integrity": {},
+                    "events": events}
+
+        o28_years = [
+            _o28r(0, [_o28b(LIVE28, 0, 10), _o28b(GONE28, 1, 4)], []),
+            _o28r(1, [_o28b(LIVE28, 0, 10), _o28b(GONE28, 1, 2)], []),
+            _o28r(2, [_o28b(LIVE28, 0, 10)],
+                  [{"id": "t2-extinct-0", "year": 2, "type": "extinct",
+                    "band": GONE28, "source": "模型日志"}]),
+        ]
+        store.years_path(EXT).write_text(
+            "\n".join(json.dumps(r, ensure_ascii=False, separators=(",", ":"))
+                      for r in o28_years) + "\n",
+            encoding="utf-8")
+        with store.connect() as _c:
+            _c.execute("DELETE FROM runs WHERE run_id=?", (EXT,))
+            _c.execute(
+                "INSERT INTO runs (run_id,label,kind,status,created_at,seed,years,"
+                "sigma_m,move_mort_m,share_m,aid_m,recip_m,engine,arm,years_done) "
+                "VALUES (?,?,'preset','interrupted',?,1,3,0,0,0,0,0,'exp03','memory',3)",
+                (EXT, "O28m 隔离消失记录", time.time()))
+        early = c10.get(f"/api/runs/{EXT}/band/{GONE28}?at_year=1").json()
+        gone_full = c10.get(f"/api/runs/{EXT}/band/{GONE28}").json()
+        check("O28m 消失那年之前查，卷宗写还活着，不预告消失",
+              gone_full.get("extinct_at") == 2
+              and early.get("extinct_at") is None
+              and early.get("alive_at_year") is True,
+              f"{GONE28} 第 2 年消失；隔离记录，预置案例无消失")
 
     # 展示年份：必须来自真实事件，且不晚于截断年
     mem_ok, mem_bad, mem_seen = True, [], 0
