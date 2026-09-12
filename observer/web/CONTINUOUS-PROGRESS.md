@@ -1,5 +1,17 @@
 # 连续开发进度
 
+反馈版本：GROK-REVIEW.md（G04 三项 + G05 四项 + G07 两项；C08 未到）。本检查点已修这些项。
+
+## G04 返工
+- 边卡绑定 run|year|scope，换年/换run清空
+- jumpToRecordedEvent 捕获 run/op，stale 不跨 run
+- 双向曲线控制点分离；文字标签与边旋钮可真实鼠标点
+- 表用群体名称为主，id 次级字符串
+- tests：g04-fix-test 6/6；g04-fix-cdp 8/8 真鼠标
+- next：G05/G07 反馈修复后的旅程 QA
+
+# 连续开发进度（历史）
+
 ## G09 旅程复审
 - t1 116/6/0；t4 18→10；t52 split 无格；t83-aid-3 6457；t124 回助 kcal 1011984 / changed 0；t125 share 格 0
 - 导出无令牌；URL 可恢复

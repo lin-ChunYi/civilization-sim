@@ -34,6 +34,7 @@ const payload = L.exportRecord({ run_id: "runA", engine: "exp06", engine_sha256:
 ok("L2 白名单含版本参数年份来源", payload.run_id === "runA" && payload.year === 83 && payload.engine_sha256 === "abc" && payload.events[0].id === "t83-aid-3");
 ok("L3 不含令牌与私人路径", !L.hasForbidden(payload) && payload.token == null);
 ok("L4 禁止字段检测", L.hasForbidden({ token: "x", path: "/Users/ecool/secret" }));
+ok("L5 jumpToRecordedEvent 已导出", typeof ctx.window.__obs.jumpToRecordedEvent === "function");
 const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
 out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
 process.stdout.write(out.join("\n") + "\n");

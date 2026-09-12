@@ -37,7 +37,9 @@ const S = {
   relReqGen: 0,
   relCache: new Map(),
   relSel: null,
-  cmp: { a: "", b: "", t: 0 },
+  relCardKey: "",
+  cmp: { a: "", b: "", t: null },
+  cmpReqGen: 0,
 };
 const PLAY_PENDING_MS = 700;
 function navResult(kind, extra) {
@@ -446,6 +448,23 @@ const NetworkLogic = {
     }
     return out;
   },
+  quadControl(ax, ay, bx, by, sign, mag) {
+    const mx = (ax + bx) / 2, my = (ay + by) / 2;
+    let dx = bx - ax, dy = by - ay;
+    if (dx < 0 || (dx === 0 && dy < 0)) { dx = -dx; dy = -dy; }
+    const len = Math.hypot(dx, dy) || 1;
+    const m = mag == null ? 36 : mag;
+    const s = sign == null ? 1 : sign;
+    return { x: mx + (-dy / len) * m * s, y: my + (dx / len) * m * s };
+  },
+  edgeBendSign(edges, donor, receiver) {
+    if (this.pairKind(edges, donor, receiver) !== "two-way") return 1;
+    return String(donor) < String(receiver) ? 1 : -1;
+  },
+  nodeName(nodes, id) {
+    const n = (nodes || []).find((x) => String(x.id) === String(id));
+    return (n && n.name) ? n.name : (String(id).slice(0, 8) + "…");
+  },
 };
 window.NetworkLogic = NetworkLogic;
 
@@ -461,7 +480,7 @@ const CompareLogic = {
     };
   },
   configDiff(runA, runB) {
-    const keys = ["engine", "seed", "sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m", "years"];
+    const keys = ["engine", "seed", "sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m", "years", "arm"];
     const out = [];
     (keys).forEach((k) => {
       const va = runA ? runA[k] : null, vb = runB ? runB[k] : null;
@@ -1391,15 +1410,7 @@ function applyBandDossier(d) {
   box.querySelectorAll(".prior-jump[data-prior-year]").forEach((n) => {
     n.addEventListener("click", (e) => {
       e.preventDefault();
-      const y = +n.dataset.priorYear;
-      const pid = n.dataset.priorId;
-      if (!Number.isFinite(y)) return;
-      gotoYear(y).then(() => {
-        if (pid) {
-          const found = findEventByKey(pid, y);
-          if (found) focusEvent(found);
-        }
-      });
+      jumpToRecordedEvent(n.dataset.priorId, n.dataset.priorYear);
     });
   });
 }
@@ -1453,13 +1464,12 @@ function renderLibrary() {
   boxE.innerHTML = lib.events.length
     ? lib.events.map((e) => `<button type="button" class="prior-jump" data-eid="${esc(e.id)}" data-y="${e.t}">${esc(e.id)}</button>`).join(" ")
     : "无";
-  boxY.querySelectorAll("[data-y]").forEach((n) => n.addEventListener("click", () => gotoYear(+n.dataset.y)));
+  boxY.querySelectorAll("[data-y]").forEach((n) => n.addEventListener("click", () => {
+    bumpOp();
+    gotoYear(+n.dataset.y, { opGen: S.opGen });
+  }));
   boxE.querySelectorAll("[data-eid]").forEach((n) => n.addEventListener("click", () => {
-    const y = +n.dataset.y;
-    gotoYear(y).then(() => {
-      const found = findEventByKey(n.dataset.eid, y);
-      if (found) focusEvent(found);
-    });
+    jumpToRecordedEvent(n.dataset.eid, n.dataset.y);
   }));
 }
 function pinCurrentYear() {
@@ -1490,6 +1500,40 @@ function exportCurrentRecord() {
   a.download = "obs-" + S.run.run_id + "-t" + S.t + ".json";
   a.click();
 }
+function relContextKey() {
+  const run = S.run ? S.run.run_id : "";
+  const scope = S.bandScope === "full" ? "full" : "as_of";
+  return run + "|" + S.t + "|" + scope;
+}
+function clearRelEdgeCard() {
+  S.relSel = null;
+  const card = $("net-edge-card");
+  if (card) { card.hidden = true; card.innerHTML = ""; }
+}
+function fillRelEdgeCard(e, nodes) {
+  const card = $("net-edge-card");
+  if (!card || !e) { clearRelEdgeCard(); return; }
+  const nrm = (e.phase_counts && e.phase_counts.normal) || 0;
+  const recp = (e.phase_counts && e.phase_counts.recip) || 0;
+  const dn = NetworkLogic.nodeName(nodes, e.donor);
+  const rn = NetworkLogic.nodeName(nodes, e.receiver);
+  const evs = (e.event_ids || []).map((id) => {
+    const y = DirectorLogic.yearFromEventId(id);
+    return y == null ? esc(id)
+      : `<button type="button" class="prior-jump" data-prior-year="${y}" data-prior-id="${esc(id)}">${esc(id)}</button>`;
+  }).join(" ");
+  card.hidden = false;
+  card.innerHTML = `<div class="dir-title">有向往来 · ${esc(dn)} → ${esc(rn)}</div>
+    <div class="dir-meta">${nf(e.transfers)} 笔 · ${nf(e.kcal)} kcal · 普通 ${nrm} · 优先阶段 ${recp} · 回助 ${nf(e.repay_transfers || 0)}</div>
+    <div class="dir-meta">最近 ${e.last_year != null ? ("第 " + e.last_year + " 年") : "未记录"} · 事件 ${evs || "未记录"}</div>
+    <details><summary>原始 id</summary><div class="muted">${esc(String(e.donor))} → ${esc(String(e.receiver))}</div></details>
+    <p class="muted">这不是盟友。A→B 与 B→A 若都存在，是两条边。</p>`;
+  card.querySelectorAll(".prior-jump").forEach((b) => b.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    showTab("world");
+    jumpToRecordedEvent(b.dataset.priorId, b.dataset.priorYear);
+  }));
+}
 function relCacheKey(runId, scope, year) {
   return String(runId) + "|rel|" + scope + "|" + (scope === "full" ? "full" : String(year));
 }
@@ -1503,11 +1547,17 @@ function relAccept(epoch, runId, scope, year, req) {
 }
 function renderRelations(d) {
   S.relations = d;
+  const ctxKey = relContextKey();
+  if (S.relCardKey !== ctxKey) {
+    clearRelEdgeCard();
+    S.relCardKey = ctxKey;
+  }
   const scope = (d && d.history_scope) || {};
   const totals = (d && d.totals) || {};
   const diag = (d && d.diagnostics) || {};
   const nodes = (d && d.nodes) || [];
   const edges = (d && d.edges) || [];
+  if (S.relSel != null && !edges[S.relSel]) clearRelEdgeCard();
   if ($("net-scope-pill")) {
     $("net-scope-pill").textContent = scope.mode === "full"
       ? "全档案（含该年之后）"
@@ -1538,54 +1588,46 @@ function renderRelations(d) {
       const a = byId[String(e.donor)], b = byId[String(e.receiver)];
       if (!a || !b) return;
       const kind = NetworkLogic.pairKind(edges, e.donor, e.receiver);
+      const sign = NetworkLogic.edgeBendSign(edges, e.donor, e.receiver);
+      const mag = kind === "two-way" ? 38 : 14;
+      const c = NetworkLogic.quadControl(a.x, a.y, b.x, b.y, sign, mag);
       const repay = (e.repay_transfers || 0) > 0;
-      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - (kind === "two-way" ? 22 : 8);
+      const d = `M${a.x.toFixed(1)},${a.y.toFixed(1)} Q${c.x.toFixed(1)},${c.y.toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`;
       const cls = "net-edge " + kind + (repay ? " repay" : "") + (S.relSel === i ? " on" : "");
-      out += `<path class="${cls}" data-ei="${i}" d="M${a.x.toFixed(1)},${a.y.toFixed(1)} Q${mx.toFixed(1)},${my.toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}"
-        stroke-width="${S.relSel === i ? 2.6 : 1.6}" marker-end="url(#arr)"/>`;
+      out += `<path class="net-edge-hit" data-ei="${i}" d="${d}" fill="none"/>`;
+      out += `<path class="${cls}" data-ei="${i}" d="${d}" fill="none"
+        stroke-width="${S.relSel === i ? 2.6 : 1.8}" marker-end="url(#arr)" pointer-events="none"/>`;
+      out += `<circle class="net-edge-hit net-edge-knob" data-ei="${i}" cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="11"
+        fill="${S.relSel === i ? "#e8a04a" : "rgba(212,176,106,.55)"}" stroke="#f3deaa" stroke-width="1.2"/>`;
     });
     out = `<defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
       <path d="M0,0 L6,3 L0,6" fill="#d4b06a"/></marker></defs>` + out;
     laid.forEach((p) => {
       const on = S.selBand && String(S.selBand) === p.id;
-      out += `<circle class="net-node" data-b="${esc(p.id)}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${on ? 11 : 8}"
-        fill="${on ? "#e8a04a" : (p.node.alive_at_year ? "#6fb37c" : "#5c645c")}" stroke="#f3deaa" stroke-width="${on ? 2 : 1}"/>
-        <text x="${p.x.toFixed(1)}" y="${(p.y - 14).toFixed(1)}" text-anchor="middle" font-size="10" fill="#e8eadc">${esc(p.node.name || p.id.slice(0, 8))}</text>`;
+      const label = p.node.name || p.id.slice(0, 8);
+      const tw = Math.max(48, label.length * 7);
+      out += `<g class="net-node" data-b="${esc(p.id)}" tabindex="0" role="button">
+        <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${on ? 12 : 10}"
+          fill="${on ? "#e8a04a" : (p.node.alive_at_year ? "#6fb37c" : "#5c645c")}" stroke="#f3deaa" stroke-width="${on ? 2 : 1}"/>
+        <rect class="net-label-hit" x="${(p.x - tw / 2).toFixed(1)}" y="${(p.y - 28).toFixed(1)}" width="${tw.toFixed(1)}" height="16" fill="transparent"/>
+        <text x="${p.x.toFixed(1)}" y="${(p.y - 16).toFixed(1)}" text-anchor="middle" font-size="11" fill="#e8eadc">${esc(label)}</text>
+      </g>`;
     });
     svg.innerHTML = out;
-    svg.querySelectorAll(".net-node").forEach((n) => n.addEventListener("click", () => {
-      selectBand(n.getAttribute("data-b"), { force: true, rail: "dossier" });
+    const openNode = (id) => {
+      selectBand(id, { force: true, rail: "dossier" });
       showTab("world");
-    }));
-    svg.querySelectorAll(".net-edge").forEach((n) => n.addEventListener("click", () => {
+    };
+    svg.querySelectorAll(".net-node").forEach((n) => {
+      n.addEventListener("click", () => openNode(n.getAttribute("data-b")));
+      n.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openNode(n.getAttribute("data-b")); }
+      });
+    });
+    svg.querySelectorAll(".net-edge-hit").forEach((n) => n.addEventListener("click", () => {
       const ei = +n.getAttribute("data-ei");
       S.relSel = ei;
-      const e = edges[ei];
-      if (!e) return;
-      const card = $("net-edge-card");
-      if (card) {
-        card.hidden = false;
-        const nrm = (e.phase_counts && e.phase_counts.normal) || 0;
-        const recp = (e.phase_counts && e.phase_counts.recip) || 0;
-        const evs = (e.event_ids || []).map((id) => {
-          const y = DirectorLogic.yearFromEventId(id);
-          return y == null ? esc(id)
-            : `<button type="button" class="prior-jump" data-prior-year="${y}" data-prior-id="${esc(id)}">${esc(id)}</button>`;
-        }).join(" ");
-        card.innerHTML = `<div class="dir-title">有向往来 · ${esc(String(e.donor))} → ${esc(String(e.receiver))}</div>
-          <div class="dir-meta">${nf(e.transfers)} 笔 · ${nf(e.kcal)} kcal · 普通 ${nrm} · 优先阶段 ${recp} · 回助 ${nf(e.repay_transfers || 0)}</div>
-          <div class="dir-meta">最近 ${e.last_year != null ? ("第 " + e.last_year + " 年") : "未记录"} · 事件 ${evs || "未记录"}</div>
-          <p class="muted">这不是盟友。A→B 与 B→A 若都存在，是两条边。</p>`;
-        card.querySelectorAll(".prior-jump").forEach((b) => b.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          const y = +b.dataset.priorYear, pid = b.dataset.priorId;
-          showTab("world");
-          if (Number.isFinite(y)) gotoYear(y).then(() => {
-            const found = findEventByKey(pid, y);
-            if (found) focusEvent(found);
-          });
-        }));
-      }
+      fillRelEdgeCard(edges[ei], nodes);
       renderRelations(S.relations);
     }));
   }
@@ -1593,8 +1635,8 @@ function renderRelations(d) {
   if (tbl) {
     tbl.innerHTML = `<tr><th>供给方</th><th>接收方</th><th>笔数</th><th>kcal</th><th>普通</th><th>优先</th><th>回助</th><th>最近年</th></tr>` +
       edges.map((e) => `<tr data-donor="${esc(String(e.donor))}" data-recv="${esc(String(e.receiver))}">
-        <td class="clickable" data-b="${esc(String(e.donor))}">${esc(String(e.donor))}</td>
-        <td class="clickable" data-b="${esc(String(e.receiver))}">${esc(String(e.receiver))}</td>
+        <td class="clickable" data-b="${esc(String(e.donor))}">${esc(NetworkLogic.nodeName(nodes, e.donor))}<div class="muted"><small>${esc(String(e.donor))}</small></div></td>
+        <td class="clickable" data-b="${esc(String(e.receiver))}">${esc(NetworkLogic.nodeName(nodes, e.receiver))}<div class="muted"><small>${esc(String(e.receiver))}</small></div></td>
         <td>${nf(e.transfers)}</td><td>${nf(e.kcal)}</td>
         <td>${(e.phase_counts && e.phase_counts.normal) || 0}</td>
         <td>${(e.phase_counts && e.phase_counts.recip) || 0}</td>
@@ -1633,6 +1675,7 @@ async function loadRelations() {
     if (!accept()) return { ok: false, reason: "stale" };
     if ($("rel-rail-summary")) $("rel-rail-summary").textContent = "关系读取失败：" + e.message;
     if ($("net-note")) $("net-note").textContent = "关系读取失败：" + e.message;
+    clearRelEdgeCard();
     return { ok: false, reason: e.message };
   }
 }
@@ -2099,14 +2142,8 @@ function renderEvents() {
         if (e.stopImmediatePropagation) e.stopImmediatePropagation();
         const y = +n.dataset.priorYear;
         const pid = n.dataset.priorId;
-        if (Number.isFinite(y)) {
-          gotoYear(y).then(() => {
-            if (pid) {
-              const found = findEventByKey(pid, y);
-              if (found) focusEvent(found);
-            }
-          });
-        }
+        if (Number.isFinite(y) && pid) jumpToRecordedEvent(pid, y);
+        else if (Number.isFinite(y)) { bumpOp(); gotoYear(y, { opGen: S.opGen }); }
       };
       n.addEventListener("click", go);
       n.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
@@ -2210,6 +2247,24 @@ function findEventByKey(key, tHint) {
     if (hit) return hit;
   }
   return tryYear(S.t);
+}
+async function jumpToRecordedEvent(eid, year, opts) {
+  opts = opts || {};
+  if (!eid) return navResult("failed", { reason: "no-event" });
+  const y = +year;
+  if (!Number.isFinite(y)) return navResult("failed", { reason: "no-year" });
+  if (!opts.keepPlaying) setPlaying(false);
+  bumpOp();
+  const myOp = S.opGen;
+  const myRun = S.run ? S.run.run_id : null;
+  if (!myRun) return navResult("failed", { reason: "no-run" });
+  const gy = await gotoYear(y, { quiet: opts.quiet, keepEvent: true, opGen: myOp });
+  if (!opAlive(myOp) || !gy || gy.kind === "stale" || !gy.ok) return gy || navResult("stale");
+  if (!S.run || S.run.run_id !== myRun) return navResult("stale");
+  if (S.t !== y) return navResult("stale");
+  const found = findEventByKey(String(eid), y);
+  if (!found) return navResult("failed", { reason: "missing-event" });
+  return focusEvent(found, { opGen: myOp, fromHash: true, quiet: opts.quiet });
 }
 function directorLineageHtml() {
   const ev = findEventByKey(S.selEvent, S.t);
@@ -2541,26 +2596,42 @@ function fillCompareSelects() {
     el.innerHTML = `<option value="">选择…</option>` + opts;
     if (keep) el.value = keep;
   });
-  if ($("cmp-year") && document.activeElement !== $("cmp-year")) $("cmp-year").value = String(S.cmp.t || S.t || 0);
+  if ($("cmp-year") && document.activeElement !== $("cmp-year")) {
+    const y = S.cmp.t != null ? S.cmp.t : S.t;
+    $("cmp-year").value = String(y);
+  }
 }
 async function fetchYearOrMiss(runId, t) {
   try {
     const rec = await api(`/api/runs/${runId}/year/${t}`);
-    return { rec: rec, missing: false };
+    return { rec: rec, missing: false, failed: false };
   } catch (e) {
-    return { rec: null, missing: true, error: e.message, status: e.status };
+    const run = (S.runs || []).find((r) => r.run_id === runId);
+    const recorded = run && run.years_recorded != null ? run.years_recorded : -1;
+    const outOfRange = t > recorded;
+    const missing = e.status === 404 && outOfRange;
+    const failed = !missing;
+    return { rec: null, missing: missing, failed: failed, error: e.message, status: e.status };
   }
 }
+function cmpCell(side, row, t, packSide) {
+  if (packSide && packSide.failed) {
+    return `<td class="miss">第 ${t} 年读取失败${packSide.error ? "：" + esc(packSide.error) : ""}。可重试。不是缺失。</td>`;
+  }
+  if (row["miss" + side]) return `<td class="miss">第 ${t} 年缺失</td>`;
+  const v = row[side === "A" ? "a" : "b"];
+  return `<td class="${row.diff ? "diff" : ""}">${v == null ? "未记录" : esc(String(v))}</td>`;
+}
 function renderCompare(pack) {
-  const { runA, runB, t, a, b } = pack;
+  const { runA, runB, t, a, b, relA, relB } = pack;
   const diffs = CompareLogic.configDiff(runA, runB);
   if ($("cmp-cfg")) {
     $("cmp-cfg").textContent = diffs.length
-      ? ("真实配置不同：" + diffs.map((d) => d.key + " " + d.a + " / " + d.b).join(" · "))
-      : "这两次运行的引擎与参数字段相同（仍可能是不同 seed 的另一次）。不同不解释成因。";
+      ? ("真实配置不同：" + diffs.map((d) => d.key + " " + d.a + " / " + d.b).join(" · ") + "。不同不解释成因。")
+      : "这两次运行列出的引擎与参数字段相同。不同不解释成因。";
   }
-  const missA = !a.rec, missB = !b.rec;
-  const recA = a.rec, recB = b.rec;
+  const missA = !!(a && a.missing), missB = !!(b && b.missing);
+  const recA = a && a.rec, recB = b && b.rec;
   const rows = [
     CompareLogic.row("人口", recA && recA.agg ? recA.agg.pop : null, recB && recB.agg ? recB.agg.pop : null, missA, missB),
     CompareLogic.row("群体数", recA && recA.agg ? recA.agg.bands : null, recB && recB.agg ? recB.agg.bands : null, missA, missB),
@@ -2572,15 +2643,33 @@ function renderCompare(pack) {
     CompareLogic.row("回助笔数", recA && recA.recip ? recA.recip.repay_transfers : "未记录", recB && recB.recip ? recB.recip.repay_transfers : "未记录", missA, missB),
     CompareLogic.row("分配改变（格×年）", recA && recA.recip ? recA.recip.changed : "未记录", recB && recB.recip ? recB.recip.changed : "未记录", missA, missB),
   ];
-  const cell = (side, row) => {
-    if (row["miss" + side]) return `<td class="miss">第 ${t} 年缺失</td>`;
-    const v = row[side === "A" ? "a" : "b"];
-    return `<td class="${row.diff ? "diff" : ""}">${v == null ? "未记录" : esc(String(v))}</td>`;
-  };
   if ($("cmp-table")) {
     $("cmp-table").innerHTML = `<tr><th>指标</th><th>${esc((runA && (runA.label || runA.run_id)) || "A")}</th><th>${esc((runB && (runB.label || runB.run_id)) || "B")}</th></tr>` +
-      rows.map((row) => `<tr><td>${esc(row.label)}</td>${cell("A", row)}${cell("B", row)}</tr>`).join("");
+      rows.map((row) => `<tr><td>${esc(row.label)}</td>${cmpCell("A", row, t, a)}${cmpCell("B", row, t, b)}</tr>`).join("");
   }
+  const evA = ((recA && recA.events) || []).map((e) => e.id || (e.type + ":" + e.t));
+  const evB = ((recB && recB.events) || []).map((e) => e.id || (e.type + ":" + e.t));
+  if ($("cmp-events")) {
+    $("cmp-events").innerHTML = `<tr><th>事件 id</th><th>A</th><th>B</th></tr>` +
+      Array.from(new Set(evA.concat(evB))).map((id) => {
+        const inA = evA.indexOf(id) >= 0, inB = evB.indexOf(id) >= 0;
+        return `<tr><td>${esc(String(id))}</td><td class="${inA && !inB ? "diff" : ""}">${inA ? "有" : (a && a.missing ? "年缺失" : "无")}</td><td class="${inB && !inA ? "diff" : ""}">${inB ? "有" : (b && b.missing ? "年缺失" : "无")}</td></tr>`;
+      }).join("");
+  }
+  const edgesA = ((relA && relA.edges) || []).map((e) => String(e.donor) + "→" + String(e.receiver) + ":" + (e.kcal || 0));
+  const edgesB = ((relB && relB.edges) || []).map((e) => String(e.donor) + "→" + String(e.receiver) + ":" + (e.kcal || 0));
+  if ($("cmp-edges")) {
+    const keys = Array.from(new Set(((relA && relA.edges) || []).concat((relB && relB.edges) || []).map((e) => String(e.donor) + "→" + String(e.receiver))));
+    $("cmp-edges").innerHTML = `<tr><th>有向边</th><th>A kcal / 笔</th><th>B kcal / 笔</th></tr>` +
+      keys.map((k) => {
+        const ea = ((relA && relA.edges) || []).find((e) => String(e.donor) + "→" + String(e.receiver) === k);
+        const eb = ((relB && relB.edges) || []).find((e) => String(e.donor) + "→" + String(e.receiver) === k);
+        const va = ea ? (nf(ea.kcal) + " / " + ea.transfers) : "无";
+        const vb = eb ? (nf(eb.kcal) + " / " + eb.transfers) : "无";
+        return `<tr><td>${esc(k)}</td><td class="${va !== vb ? "diff" : ""}">${va}</td><td class="${va !== vb ? "diff" : ""}">${vb}</td></tr>`;
+      }).join("");
+  }
+  void edgesA; void edgesB;
 }
 async function loadCompare() {
   const aId = ($("cmp-a") && $("cmp-a").value) || S.cmp.a;
@@ -2590,11 +2679,19 @@ async function loadCompare() {
   const t = parsed.value;
   S.cmp = { a: aId, b: bId, t: t };
   if (!aId || !bId) { flash("请选两个已有运行。", true); return { ok: false }; }
+  const myReq = ++S.cmpReqGen;
   const runA = (S.runs || []).find((r) => r.run_id === aId);
   const runB = (S.runs || []).find((r) => r.run_id === bId);
-  const [a, b] = await Promise.all([fetchYearOrMiss(aId, t), fetchYearOrMiss(bId, t)]);
-  renderCompare({ runA, runB, t, a, b });
-  return { ok: true, a: a, b: b, t: t };
+  const accept = () => S.cmpReqGen === myReq && S.cmp.a === aId && S.cmp.b === bId && S.cmp.t === t;
+  const [a, b, relA, relB] = await Promise.all([
+    fetchYearOrMiss(aId, t),
+    fetchYearOrMiss(bId, t),
+    api(`/api/runs/${aId}/relations?at_year=${t}`).catch(() => ({ edges: [] })),
+    api(`/api/runs/${bId}/relations?at_year=${t}`).catch(() => ({ edges: [] })),
+  ]);
+  if (!accept()) return { ok: false, reason: "stale" };
+  renderCompare({ runA, runB, t, a, b, relA, relB });
+  return { ok: true, a: a, b: b, t: t, stale: false };
 }
 
 /* ---------------- 运行记录 ---------------- */
@@ -2652,6 +2749,8 @@ async function openRun(id) {
   S.relReqGen += 1;
   S.relations = null;
   S.relSel = null;
+  S.relCardKey = "";
+  clearRelEdgeCard();
   let run, ser;
   try {
     run = await api(`/api/runs/${id}`);
@@ -2684,6 +2783,7 @@ async function openRun(id) {
   const gy = await gotoYear(0, { opGen: myOp });
   if (!opAlive(myOp) || !gy || !gy.ok) return { ok: false, reason: "stale" };
   renderRuns(); renderCharts(); renderStatus(); renderOverview();
+  renderLibrary();
   prefetchYears(id, maxT());
 }
 
@@ -2867,7 +2967,11 @@ async function boot() {
     const parsed = OverviewLogic.parseStrictInt($("net-year").value, { name: "年份", min: 0 });
     if (!parsed.ok) { flash(parsed.error, true); return; }
     bumpOp();
-    gotoYear(parsed.value, { opGen: S.opGen }).then(() => loadRelations());
+    const myOp = S.opGen;
+    gotoYear(parsed.value, { opGen: myOp }).then((gy) => {
+      if (!opAlive(myOp) || !gy || !gy.ok) return;
+      loadRelations();
+    });
   });
   $("speed").addEventListener("change", (e) => { S.speed = +e.target.value; });
   $("scrub").addEventListener("input", (e) => {
@@ -2893,13 +2997,7 @@ async function boot() {
   const railTabs = $("rail-tabs");
   if (railTabs) railTabs.addEventListener("click", (e) => {
     const b = e.target.closest("[data-rail]"); if (!b) return;
-    document.querySelectorAll("#rail-tabs button").forEach((x) => x.classList.toggle("on", x === b));
-    ["chronicle", "dossier", "network", "library", "help"].forEach((name) => {
-      const pane = $("pane-" + name); if (!pane) return;
-      const on = name === b.dataset.rail;
-      pane.hidden = !on;
-      pane.classList.toggle("on", on);
-    });
+    showRail(b.dataset.rail);
   });
   document.addEventListener("keydown", (e) => {
     const el = e.target || document.activeElement;
@@ -3198,9 +3296,10 @@ window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, rend
   bumpOp, opAlive, bandAccept, bandCacheKey, applyBandDossier, setPlaying, tickEvents, tick,
   navResult, beginYearLoad, endYearLoad, afterPlayStep, retryYear, reapNavUi, renderYearFailBar,
   pendingCurrentYear, PLAY_PENDING_MS, loadRelations, renderRelations, NetworkLogic,
-  loadCompare, CompareLogic, fillCompareSelects, showTab, showRail,
+  loadCompare, CompareLogic, fillCompareSelects, fetchYearOrMiss, showTab, showRail,
   collectRunDraft, applyForgePreset, confirmStartRun, LibraryLogic, renderLibrary,
-  pinCurrentYear, pinCurrentEvent, exportCurrentRecord };
+  pinCurrentYear, pinCurrentEvent, exportCurrentRecord, jumpToRecordedEvent,
+  clearRelEdgeCard, fillRelEdgeCard };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {

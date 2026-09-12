@@ -240,7 +240,8 @@ footer{color:var(--muted);font-size:12px;padding:12px 24px 28px;text-align:cente
 .net-toolbar input{width:72px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:#0c1410;color:var(--ink)}
 .net-svg{width:100%;height:min(52vh,440px);background:rgba(10,16,14,.45);border:1px solid var(--line2);border-radius:10px}
 .net-node{cursor:pointer}
-.net-edge{cursor:pointer;fill:none}
+.net-edge{cursor:pointer;fill:none;pointer-events:none}
+.net-edge-hit{stroke:rgba(212,176,106,.28);stroke-width:22;fill:none;pointer-events:stroke;cursor:pointer}
 .net-edge.one-way{stroke:#6fb37c}
 .net-edge.two-way{stroke:#6eb8b4}
 .net-edge.repay{stroke:#d4b06a}

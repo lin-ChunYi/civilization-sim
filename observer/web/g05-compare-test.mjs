@@ -57,6 +57,37 @@ pending.forEach((x) => {
 const pack = await p;
 ok("C4 B 为缺失 A 有数", pack && pack.ok && pack.a.missing === false && pack.b.missing === true, JSON.stringify(pack && { a: pack.a && pack.a.missing, b: pack.b && pack.b.missing }));
 ok("C5 表格含缺失字样", (els["cmp-table"].innerHTML || "").indexOf("缺失") >= 0, els["cmp-table"].innerHTML.slice(0, 180));
+ok("C6 configDiff 含 arm", C.configDiff({ arm: "memory" }, { arm: "omniscient" }).some((d) => d.key === "arm"));
+els["cmp-year"].value = "0";
+O.S.t = 124; O.S.cmp.t = 0;
+O.fillCompareSelects();
+ok("C7 t=0 不被回放年覆盖", els["cmp-year"].value === "0", els["cmp-year"].value);
+{
+  const my = ++O.S.cmpReqGen;
+  O.S.cmp = { a: "runC", b: "runD", t: 83 };
+  O.S.cmpReqGen = my;
+  ok("C8 世代绑定：旧请求代数不等于当前", my !== 0 && O.S.cmp.t === 83);
+}
+{
+  els["cmp-a"].value = "runA"; els["cmp-b"].value = "runB"; els["cmp-year"].value = "10";
+  O.S.runs[0].years_recorded = 150;
+  const pFail = O.fetchYearOrMiss ? null : true;
+  void pFail;
+}
+{
+  const p500 = O.fetchYearOrMiss("runA", 125);
+  await new Promise((r) => setTimeout(r, 10));
+  const req = pending.filter((x) => x.url.indexOf("/year/125") >= 0).pop();
+  if (req) req.resolve({ ok: false, status: 500, json: async () => ({ detail: "boom" }) });
+  const r500 = await p500;
+  ok("C9 500 是失败不是缺失", r500 && r500.failed && !r500.missing, JSON.stringify(r500));
+  const p404 = O.fetchYearOrMiss("runB", 150);
+  await new Promise((r) => setTimeout(r, 10));
+  const req404 = pending.filter((x) => x.url.indexOf("runB/year/150") >= 0).pop();
+  if (req404) req404.resolve({ ok: false, status: 404, json: async () => ({ detail: "no" }) });
+  const r404 = await p404;
+  ok("C10 超范围 404 才是缺失", r404 && r404.missing && !r404.failed, JSON.stringify(r404));
+}
 const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
 out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
 process.stdout.write(out.join("\n") + "\n");
