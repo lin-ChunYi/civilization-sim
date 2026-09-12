@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -1922,6 +1923,238 @@ else:
             srv.wait(timeout=10)
         except Exception:  # noqa: BLE001
             srv.kill()
+
+# ---------------------------------------------------------------- 六台引擎全接入
+# "把现有全部引擎接入界面"——冻结的 EXP-01/02 也算。它们的能力比 EXP-03 少：
+# 没有 macc、没有 pop_start、没有人口分项账；EXP-01 连资源波动账都没有。
+# 缺的指标一律**省略键 + 能力说明**，绝不填 0 冒充测量。
+print("\nO33 六台引擎：真实新建 / 逐年回放 / 按各自原始哈希核对 / 缺值不当 0")
+
+ENGINE_CASES = [
+    ("exp01", {}),
+    ("exp02", {"sigma_m": 400}),
+    ("exp03", {"sigma_m": 400, "move_mort_m": 50}),
+    ("exp04", {"sigma_m": 400, "move_mort_m": 50, "share_m": 1000}),
+    ("exp05", {"sigma_m": 0, "move_mort_m": 50, "share_m": 1000, "aid_m": 1000}),
+    ("exp06", {"sigma_m": 0, "move_mort_m": 50, "share_m": 1000, "aid_m": 1000,
+               "recip_m": 1000}),
+]
+
+
+def _frozen_engine(rel_path, name):
+    """按路径只读加载引擎源码本身，用**它自己的**哈希函数核对，不借道适配层。"""
+    spec = importlib.util.spec_from_file_location(name, str(REPO / rel_path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _finish(rid, limit=3000):
+    for _ in range(limit):
+        row = store.get_run(rid)
+        if row["status"] in ("done", "failed", "canceled", "interrupted"):
+            return row
+        time.sleep(0.02)
+    return store.get_run(rid)
+
+
+with store.connect() as _c:
+    _c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+
+engine_runs = {}
+with TestClient(app) as c17:
+    cfg = c17.get("/api/config").json()
+    check("O33a 六台引擎全部登记（含冻结的 EXP-01/02）",
+          set(cfg["engines"]) == {"exp01", "exp02", "exp03", "exp04", "exp05", "exp06"},
+          str(sorted(cfg["engines"])))
+    check("O33a2 默认引擎没有被改动", cfg["default_engine"] == "exp03", cfg["default_engine"])
+    e01, e02, e03 = (cfg["engines"][k] for k in ("exp01", "exp02", "exp03"))
+    check("O33b 各引擎只声明自己真有的参数",
+          e01["engine_params"] == [] and e02["engine_params"] == ["sigma_m"]
+          and e03["engine_params"] == ["sigma_m", "move_mort_m"],
+          f'{e01["engine_params"]} / {e02["engine_params"]}')
+    check("O33b2 不支持的参数被点名，前端据此不给控件",
+          set(e01["unsupported_params"]) == {"sigma_m", "move_mort_m", "share_m",
+                                             "aid_m", "recip_m"}
+          and e02["unsupported_params"] == ["move_mort_m", "share_m", "aid_m", "recip_m"]
+          and cfg["engines"]["exp06"]["unsupported_params"] == [],
+          str(e02["unsupported_params"]))
+    check("O33b3 能力表如实标出有没有人口分项账",
+          e01["metrics"]["population_identity"] is False
+          and e02["metrics"]["population_identity"] is False
+          and e03["metrics"]["population_identity"] is True)
+    check("O33b4 常量表只给这台引擎真有的（EXP-01 没有 SIGMA_M_MAX）",
+          "SIGMA_M_MAX" not in e01["constants"] and "SIGMA_M_MAX" in e02["constants"]
+          and "MOVE_MORT_M_MAX" not in e02["constants"]
+          and "MOVE_MORT_M_MAX" in e03["constants"],
+          str(sorted(e01["constants"]))[:60])
+    check("O33b5 两个冻结基线登记了固定身份",
+          e01["baseline_commit"] == "20da486" and e02["baseline_commit"] == "c5a1f18",
+          f'{e01["baseline_commit"]} / {e02["baseline_commit"]}')
+    frozen01 = subprocess.run(["git", "show", "20da486:exp01/verify.py"], cwd=REPO,
+                              capture_output=True).stdout
+    frozen02 = subprocess.run(["git", "show", "c5a1f18:exp02/verify2.py"], cwd=REPO,
+                              capture_output=True).stdout
+    check("O33b6 登记的 sha256 就是那两个冻结提交里的源码",
+          e01["engine_sha256"] == hashlib.sha256(frozen01).hexdigest()
+          and e02["engine_sha256"] == hashlib.sha256(frozen02).hexdigest())
+
+    # 六台引擎：真实新建 -> 跑完 -> 逐年回放
+    for engine, params in ENGINE_CASES:
+        body = {"seed": 4242, "years": 40, "engine": engine, "arm": "memory",
+                "label": "O33 " + engine, "sigma_m": 0, "move_mort_m": 0}
+        body.update(params)
+        r = c17.post("/api/runs", json=body)
+        if r.status_code != 200:
+            check(f"O33c {engine} 真实跑完并能逐年回放", False,
+                  f"新建失败 {r.status_code} {str(r.json())[:70]}")
+            continue
+        rid = r.json()["run_id"]
+        row = _finish(rid)
+        engine_runs[engine] = rid
+        series = c17.get(f"/api/runs/{rid}/series").json()["series"]
+        y20 = c17.get(f"/api/runs/{rid}/year/20")
+        detail = c17.get(f"/api/runs/{rid}").json()
+        check(f"O33c {engine} 真实跑完并能逐年回放",
+              row["status"] == "done" and len(series) == 41 and y20.status_code == 200
+              and detail["engine"] == engine and row["full_digest"],
+              f'{row["status"]} / {len(series)} 年 / {(row["error"] or "")[:40]}')
+
+    # EXP-01/02：用**它们自己的**哈希函数核对记录器没有扰动状态
+    for engine, rel_path, params in (("exp01", "exp01/verify.py", []),
+                                     ("exp02", "exp02/verify2.py", [400])):
+        if engine not in engine_runs:
+            uncov(f"O33d {engine} 原始哈希核对", "这台引擎没跑起来，前提缺失")
+            continue
+        mod = _frozen_engine(rel_path, engine + "_frozen_check")
+        plain = mod.make_world(4242, "", *params)
+        plain_hashes = []
+        for _ in range(40):
+            mod.step(plain)
+            plain_hashes.append(mod.state_hash(plain))
+        rid = engine_runs[engine]
+        api_hashes = [c17.get(f"/api/runs/{rid}/year/{t}").json()["integrity"]["state_hash"]
+                      for t in range(1, 41)]
+        first_bad = next((i + 1 for i, (a, b) in enumerate(zip(plain_hashes, api_hashes))
+                          if a != b), None)
+        check(f"O33d {engine} 逐年状态哈希与独立重跑逐字相同（记录层没扰动模型）",
+              plain_hashes == api_hashes, f"第一处不同：第 {first_bad} 年" if first_bad else "")
+        check(f"O33d2 {engine} 的 full_digest 也对得上",
+              store.get_run(rid)["full_digest"] == mod.full_digest(plain),
+              store.get_run(rid)["full_digest"][:44])
+
+    # 缺的指标：省略键 + 能力说明，**不是 0**
+    if "exp01" in engine_runs:
+        rec = c17.get(f"/api/runs/{engine_runs['exp01']}/year/10").json()
+        check("O33e EXP-01 没有人口恒等账：整个键都不出现（而不是给个 0）",
+              "population_identity_error" not in rec["integrity"]
+              and "conservation_error" in rec["integrity"],
+              str(sorted(rec["integrity"]))[:70])
+        check("O33e2 EXP-01 的群体没有 macc：键不出现",
+              all("macc" not in b for b in rec["bands"])
+              and all("size" in b and "store" in b for b in rec["bands"]))
+        check("O33e3 没记的累计量不参与差分（cum/year 里根本没有这些键）",
+              "births_cum" not in rec["cum"] and "deficit_cum" not in rec["cum"]
+              and "clim_nominal" not in rec["cum"] and "inflow" in rec["cum"]
+              and set(rec["cum"]) == set(rec["year"]), str(sorted(rec["cum"]))[:70])
+        check("O33e4 契约里写明了'省略 = 未记录，禁止填 0'",
+              "禁止填 0" in cfg["engines"]["exp01"]["recorded_note"],
+              cfg["engines"]["exp01"]["recorded_note"][:40])
+        meta = c17.get(f"/api/runs/{engine_runs['exp01']}").json()["meta"]
+        check("O33e5 开局人口由真实群体求和得到，并标明来源（不是拿 0 顶）",
+              meta["pop_start"] == 120 and "no pop_start" in meta["pop_start_note"],
+              f'{meta["pop_start"]} / {meta["pop_start_note"][:40]}')
+    if "exp02" in engine_runs:
+        rec2 = c17.get(f"/api/runs/{engine_runs['exp02']}/year/10").json()
+        check("O33e6 EXP-02 有资源波动账、仍没有人口分项账",
+              "deficit_cum" in rec2["cum"] and "clim_nominal" in rec2["cum"]
+              and "births_cum" not in rec2["cum"]
+              and "population_identity_error" not in rec2["integrity"])
+
+    # 合法参数真的传进了引擎：同种子、只改 SIGMA_M，结果必须不同
+    pair = {}
+    for tag, sig in (("sig0", 0), ("sig900", 900)):
+        r = c17.post("/api/runs", json={"seed": 7, "years": 12, "engine": "exp02",
+                                        "sigma_m": sig, "move_mort_m": 0,
+                                        "label": "O33 " + tag})
+        if r.status_code == 200:
+            pair[tag] = _finish(r.json()["run_id"])["full_digest"]
+    if len(pair) == 2:
+        check("O33f EXP-02 的 SIGMA_M 真的传进了引擎（取值不同，结果就不同）",
+              all(pair.values()) and pair["sig0"] != pair["sig900"],
+              f'{pair["sig0"][:16]}… vs {pair["sig900"][:16]}…')
+    else:
+        uncov("O33f SIGMA_M 生效", f"对照运行没起全：{sorted(pair)}")
+
+    bad_cases = [
+        ({"engine": "exp01", "sigma_m": 400}, 400, "exp01 不支持 SIGMA_M"),
+        ({"engine": "exp01", "move_mort_m": 50}, 400, "exp01 不支持 MOVE_MORT_M"),
+        ({"engine": "exp01", "share_m": 1000}, 400, "exp01 不支持 SHARE_M"),
+        ({"engine": "exp02", "move_mort_m": 50}, 400, "exp02 不支持 MOVE_MORT_M"),
+        ({"engine": "exp02", "sigma_m": 1001}, 400, "SIGMA_M 越界"),
+        ({"engine": "exp02", "sigma_m": 1.5}, 422, "SIGMA_M 非整数"),
+        ({"engine": "exp02", "sigma_m": True}, 422, "SIGMA_M 是布尔"),
+    ]
+    wrong = []
+    for extra, want, why in bad_cases:
+        body = {"seed": 1, "years": 3, "sigma_m": 0, "move_mort_m": 0}
+        body.update(extra)
+        got = c17.post("/api/runs", json=body).status_code
+        if got != want:
+            wrong.append(f"{why}->{got}(应 {want})")
+    check("O33g 不支持 / 越界 / 类型不对的参数分别被准确拒绝", not wrong, "; ".join(wrong))
+    msg = c17.post("/api/runs", json={"seed": 1, "years": 3, "engine": "exp01",
+                                      "sigma_m": 400, "move_mort_m": 0}).json().get("detail", "")
+    check("O33g2 拒绝时说清楚是哪台引擎没有这个参数",
+          "exp01" in msg and "SIGMA_M" in msg, msg[:70])
+    check("O33g3 EXP-01 的合法组合仍然放行（零值不等于'不支持'）",
+          c17.post("/api/runs", json={"seed": 1, "years": 1, "engine": "exp01",
+                                      "sigma_m": 0, "move_mort_m": 0,
+                                      "label": "O33 zero"}).status_code == 200)
+    _finish((store.active_run() or {}).get("run_id") or "none", limit=1500)
+
+    # 没有援助机制的引擎：空集合是能力事实，并明示支持范围
+    if "exp01" in engine_runs:
+        rel = c17.get(f"/api/runs/{engine_runs['exp01']}/relations").json()
+        check("O33h 没有援助机制的引擎：关系网为空，并写明这是能力事实而非缺数据",
+              rel["totals"]["edges"] == 0 and rel["engine_supports"]["aid"] is False
+              and "能力事实" in rel["source"],
+              str(rel["engine_supports"])[:70])
+        bid = c17.get(f"/api/runs/{engine_runs['exp01']}/year/0").json()["bands"][0]["id"]
+        band = c17.get(f"/api/runs/{engine_runs['exp01']}/band/{bid}").json()
+        check("O33h2 群体卷宗同样明示支持范围，援助字段如实为空、轨迹照常",
+              band["engine_supports"]["aid"] is False and band["aid_memory"] is None
+              and band["aid_given"]["transfers"] == 0 and band["trajectory"])
+    if "exp06" in engine_runs:
+        rel6 = c17.get(f"/api/runs/{engine_runs['exp06']}/relations").json()
+        check("O33h3 有援助机制的引擎照旧，支持范围写 true",
+              rel6["engine_supports"]["aid"] is True
+              and rel6["engine_supports"]["recip"] is True)
+
+    # 事件来自真实日志/真实状态，缺的分项不猜
+    if "exp01" in engine_runs:
+        seen = []
+        for t in range(0, 41):
+            seen += c17.get(f"/api/runs/{engine_runs['exp01']}/year/{t}").json()["events"]
+        kinds = sorted({e["type"] for e in seen})
+        if not seen:
+            uncov("O33i EXP-01 的事件", "这条运行 40 年里没有事件，前提缺失")
+        else:
+            bad_src = [e for e in seen if not e.get("source")]
+            invented = [e for e in seen if "pop_delta" in e or "path" in e or "deaths" in e]
+            check("O33i EXP-01 的事件都带来源，且没有编造模型里没有的分项",
+                  not bad_src and not invented, f"{kinds} / 无来源 {len(bad_src)}")
+            moves = [e for e in seen if e["type"] == "migrate"]
+            if moves:
+                check("O33i2 迁移事件给出真实的起讫格，迁移死亡人数如实写未记录",
+                      all({"from", "to"} <= set(e) for e in moves)
+                      and all("unrecorded" in e for e in moves),
+                      str({k: moves[0][k] for k in ("from", "to") if k in moves[0]}))
+            else:
+                uncov("O33i2 EXP-01 的迁移事件", "这条运行里没有迁移，前提缺失")
+
+with store.connect() as _c:
+    _c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
 
 # ---------------------------------------------------------------- 冻结目录
 print("\nO12 冻结基线未被改动")

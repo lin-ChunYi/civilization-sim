@@ -268,6 +268,15 @@ def _with_event_ids(rec):
     return rec
 
 
+def _engine_supports(engine_name):
+    """这台引擎有哪些机制。两个端点共用一份，免得各写一份、口径走偏。"""
+    params = config.ENGINES.get(engine_name, {}).get("params", [])
+    return {"engine": engine_name,
+            "sigma": "sigma_m" in params, "move_mort": "move_mort_m" in params,
+            "share": "share_m" in params, "aid": "aid_m" in params,
+            "recip": "recip_m" in params}
+
+
 def _scope(run_id, at_year):
     """确定"截至哪一年"。越界/负数一律 400 说清楚，不静默夹取。"""
     recorded = max(store.year_count(run_id) - 1, 0)
@@ -353,13 +362,7 @@ def get_relations(run_id: str, at_year: Optional[int] = None):
                         "note": "recip.changed 是格×年的诊断，不属于任何一条边；"
                                 "也不要用 repay_transfers 代替它 —— 回助在 RECIP_M=0 时"
                                 "同样会发生，那是碰巧"},
-        "engine_supports": {
-            "sigma": "sigma_m" in config.ENGINES.get(eng, {}).get("params", []),
-            "move_mort": "move_mort_m" in config.ENGINES.get(eng, {}).get("params", []),
-            "share": "share_m" in config.ENGINES.get(eng, {}).get("params", []),
-            "aid": "aid_m" in config.ENGINES.get(eng, {}).get("params", []),
-            "recip": "recip_m" in config.ENGINES.get(eng, {}).get("params", []),
-        },
+        "engine_supports": _engine_supports(eng),
         "source": "只聚合本次运行已保存的逐笔援助事件（模型日志 st['aid_log']）；"
                   "不含任何推断出来的关系、称谓或立场。"
                   "engine_supports.aid=false 时边集为空是能力事实，不是缺年。",
@@ -463,6 +466,10 @@ def get_band(run_id: str, band_id: str, at_year: Optional[int] = None):
             "extinct_at": extinct_at, "trajectory": traj, "sizes": sizes,
             "aid_given": aid_given, "aid_received": aid_received,
             "aid_memory": aid_memory,
+            # 与 /relations 同一口径：没有援助机制的引擎，援助字段为空是**能力事实**，
+            # 不是缺数据，界面不要显示成"0 笔援助"。
+            "engine_supports": _engine_supports(
+                (store.get_run(run_id) or {}).get("engine") or config.DEFAULT_ENGINE),
             "source": "全部来自本次运行已保存的逐年记录与模型日志；"
                       "群体层的出生/死亡分项未记录，账本只记全局分项。"
                       "aid_memory 里的 last_year 是引擎内部 tick，"

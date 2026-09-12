@@ -195,6 +195,9 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 
 ## 6. obs-1.8 的变化（EXP-01/02 与服务身份）
 
+**六台引擎的验收证据（各自真跑、按原始哈希核对、缺值确实没填 0）见
+[`OBS-01-HANDOFF-ENGINES.md`](OBS-01-HANDOFF-ENGINES.md)。**
+
 新增字段，不删除、不改已有字段含义。默认引擎仍是 `exp03`。
 
 | 变化 | 兼容性 |
@@ -203,6 +206,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 | `GET /api/config.service_identity` | **新增**；启动时冻结，不把磁盘 HEAD 的后续变化当成已加载 UI |
 | `/year/{t}` 省略引擎没有的账本键 | **省略不是 0**；UI 写「未记录」 |
 | `/relations.engine_supports` | **新增**；无援助机制时空边集是能力事实 |
+| `/band/{id}.engine_supports` | **新增**；与 `/relations` 同一份口径，援助字段为空同样是能力事实，不要显示成"0 笔援助" |
 | 不支持的参数传非 0 → `400` | 与 obs-1.2 起的规则相同，现覆盖到 exp01/exp02 |
 
 EXP-01/02 冻结源码一个字节都不改。`pop_start` 若引擎没有该字段，则在 **t=0 状态**上对在世群体人口求和，并在 `meta.pop_start_note` 写明来源。
@@ -352,7 +356,8 @@ EXP-01/02 冻结源码一个字节都不改。`pop_start` 若引擎没有该字�
   里给一个运行级合计；也**不能**用 `repay_transfers` 代替它 —— `RECIP_M=0` 时照样会发生回助，
   那是碰巧撞上，不是优先机制起作用。
 - 旧引擎（`exp03`/`exp04`）的运行照常返回 `200`，`edges` 为空，`totals` 全 0，不报错也不编造。
-- **obs-1.8** 增加 `engine_supports`：`{sigma, move_mort, share, aid, recip}` 布尔值，按该次运行的引擎参数表填写。
+- **obs-1.8** 增加 `engine_supports`：`{engine, sigma, move_mort, share, aid, recip}`，按该次运行的引擎参数表填写，
+  `/relations` 与 `/band/{id}` 两处共用同一份（后台同一个函数产出，不会走偏）。
   `engine_supports.aid=false` 时边集为空是能力事实，不是缺年。
 
 ### 6.3 展示年份 vs 内部 tick（`aid_memory` 与 `basis`）
