@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS runs (
   cancel_requested INTEGER NOT NULL DEFAULT 0,
   cancel_requested_at REAL,                           -- 用户按下取消的时刻（有界收尾的起算点）
   cancel_note   TEXT NOT NULL DEFAULT '',             -- 取消收尾进行到哪一步（人话，给页面看）
+  cancel_last_attempt_at REAL,                        -- 上一次真的发过停止信号的时刻（节流用）
   engine_sha256 TEXT NOT NULL DEFAULT '',
   engine_path   TEXT NOT NULL DEFAULT '',
   baseline_commit TEXT NOT NULL DEFAULT '',
@@ -82,7 +83,8 @@ MIGRATIONS = (("share_m", "INTEGER NOT NULL DEFAULT 0"),
               ("aid_m", "INTEGER NOT NULL DEFAULT 0"),
               ("recip_m", "INTEGER NOT NULL DEFAULT 0"),
               ("cancel_requested_at", "REAL"),
-              ("cancel_note", "TEXT NOT NULL DEFAULT ''"))
+              ("cancel_note", "TEXT NOT NULL DEFAULT ''"),
+              ("cancel_last_attempt_at", "REAL"))
 
 
 def init_db() -> None:
@@ -258,6 +260,13 @@ def request_cancel(run_id: str) -> Optional[float]:
         row = conn.execute("SELECT cancel_requested_at FROM runs WHERE run_id=?",
                            (run_id,)).fetchone()
     return row["cancel_requested_at"] if row else None
+
+
+def mark_cancel_attempt(run_id: str, when: Optional[float] = None) -> None:
+    """记下"这一轮真的发过停止信号"。只用于节流，不参与任何状态判断。"""
+    with connect() as conn:
+        conn.execute("UPDATE runs SET cancel_last_attempt_at=? WHERE run_id=?",
+                     (time.time() if when is None else when, run_id))
 
 
 def set_cancel_note(run_id: str, note: str) -> None:
@@ -453,24 +462,51 @@ def _is_our_worker(pid: Optional[int], run_id: str) -> bool:
     return probe_worker(pid, run_id) == WORKER_ALIVE
 
 
-def stop_worker(pid: int, run_id: str, grace: float = 3.0) -> bool:
-    """先 SIGTERM，等一会儿再 SIGKILL。必须在标记中断**之前**做完，
-    否则会出现“记录标成 interrupted，旧进程还在写、还能把状态改回 done”。"""
+def stop_worker(pid: int, run_id: str, grace: float = 3.0) -> str:
+    """先 SIGTERM，必要时再 SIGKILL，**并核实结果**。返回 gone / alive / unknown。
+
+    返回值就是"到底停没停下来"，调用方必须自己区分 —— 这里**没有**布尔"成功"：
+
+      * `gone`    —— 已确认这个 pid 不再是本次运行的工作进程，可以放心放槽；
+      * `alive`   —— 信号发了，它还在；
+      * `unknown` —— 查不到（`ps` 超时 / 权限不足 / 发信号本身报错）。
+        **未知不等于停下来了**：旧工作进程若还活着，仍会往 `years.jsonl` 里追加，
+        而数据库围栏只管数据库，管不住文件写入。
+
+    每次发信号之前都**重新核验一次身份**：pid 随时可能被系统回收并复用，
+    拿几秒钟前的判断去 SIGKILL 是在赌别人的进程。
+    """
+    probe = probe_worker(pid, run_id)
+    if probe != WORKER_ALIVE:
+        return probe                       # 已经不是我们的进程：gone 不用发信号，unknown 更不发
     try:
         os.kill(int(pid), signal.SIGTERM)
+    except ProcessLookupError:
+        return probe_worker(pid, run_id)   # 刚好在这一瞬间自己退了，再确认一次
     except OSError:
-        return False
-    deadline = time.time() + grace
-    while time.time() < deadline:
-        if not _is_our_worker(pid, run_id):
-            return True
+        return WORKER_UNKNOWN              # 信号发不出去：它现在什么状态我们并不知道
+    deadline = time.time() + max(0.0, grace)
+    while True:
+        state = probe_worker(pid, run_id)
+        if state != WORKER_ALIVE:
+            return state                   # gone 才是停下来了；unknown 原样交给调用方判断
+        if time.time() >= deadline:
+            break
         time.sleep(0.1)
+    if probe_worker(pid, run_id) != WORKER_ALIVE:
+        return probe_worker(pid, run_id)   # 升级前再核验一次身份，别对刚被复用的 pid 下手
     try:
         os.kill(int(pid), signal.SIGKILL)
-    except OSError:
+    except ProcessLookupError:
         pass
-    time.sleep(0.2)
-    return True
+    except OSError:
+        return WORKER_UNKNOWN              # KILL 都发不出去，绝不报告"已停止"
+    for _ in range(20):                    # KILL 之后同样要**核实**，不假定它一定死
+        time.sleep(0.05)
+        state = probe_worker(pid, run_id)
+        if state != WORKER_ALIVE:
+            return state
+    return WORKER_ALIVE                    # 连 SIGKILL 都没能让它消失：如实上报
 
 
 def reap_stale() -> List[Dict[str, Any]]:
@@ -524,6 +560,7 @@ def reap_stale() -> List[Dict[str, Any]]:
 CANCEL_COOPERATIVE = "cooperative"   # 还在协作窗口内：等工作进程算完这一年自己停
 CANCEL_ESCALATED = "escalated"       # 协作窗口用完了：已核验身份，强制停止
 CANCEL_UNCONFIRMED = "unconfirmed"   # 进程身份查不到：**不杀**，如实报告，等下一轮
+CANCEL_STOP_FAILED = "stop_failed"   # 信号发了但没能确认它停下来：**不放槽**，下一轮再来
 
 
 def cancel_stage(run: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
@@ -564,7 +601,8 @@ def enforce_cancels() -> List[Dict[str, Any]]:
     init_db()
     with connect() as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT run_id, pid, status, cancel_requested_at FROM runs "
+            "SELECT run_id, pid, status, cancel_requested_at, cancel_last_attempt_at "
+            "FROM runs "
             "WHERE cancel_requested=1 AND status IN (?,?)", _STATUS_ACTIVE).fetchall()]
     acted = []
     now = time.time()
@@ -585,10 +623,38 @@ def enforce_cancels() -> List[Dict[str, Any]]:
                                      "（最多再等 %.0f 秒；超时就强制停止）。"
                                      % max(0.0, config.CANCEL_GRACE_SEC - waited))
                 continue
-            # 协作窗口用完。身份已核验（ps 里能看到 observer.worker 和这个 run_id）才发信号。
-            stop_worker(int(pid), rid)
-            why = ("协作取消超时：请求取消 %.0f 秒后工作进程仍卡在同一步，已强制停止。"
-                   % waited)
+            # 协作窗口用完。上一次强制停止要是刚试过，这一轮先不重复发信号 ——
+            # stop_worker 要同步等好几秒，每来一个页面请求就重试会把接口拖住。
+            # 这只是**节流**，不改变任何判断：取消请求、说明、不放槽通通保持原样。
+            last_try = r["cancel_last_attempt_at"] or 0.0
+            if now - last_try < config.CANCEL_GRACE_SEC:
+                acted.append({"run_id": rid, "action": "stop_pending",
+                              "why": "上一次停止尝试还不到 %.0f 秒，等下一轮再试"
+                                     % config.CANCEL_GRACE_SEC})
+                continue
+            mark_cancel_attempt(rid, now)
+            # stop_worker 内部会在每次发信号前重新核验身份。
+            outcome = stop_worker(int(pid), rid)
+            if outcome != WORKER_GONE:
+                # **没有确认它停下来，就不能放槽。** 旧工作进程若还活着，仍会往
+                # years.jsonl 里追加；数据库围栏只管数据库，管不住文件写入。
+                # 取消请求保持原样，下一轮继续试 —— 不写 canceled、不放槽、不谎报已停止。
+                if outcome == WORKER_ALIVE:
+                    msg = ("已请求取消：协作窗口用完后发过停止信号（TERM 之后 KILL），"
+                           "但到现在仍能查到这个工作进程还在。任务槽**先不释放**，"
+                           "以免旧进程继续往这次运行的记录里追加；下一次检查会再试一次。")
+                else:
+                    msg = ("已请求取消：停止信号发出后无法确认这个进程的状态"
+                           "（ps 超时 / 权限不足 / 信号发不出去）。**未知不等于已停止**，"
+                           "任务槽先不释放；下一次检查会再看一遍。")
+                set_cancel_note(rid, msg)
+                acted.append({"run_id": rid,
+                              "action": (CANCEL_STOP_FAILED if outcome == WORKER_ALIVE
+                                         else CANCEL_UNCONFIRMED),
+                              "stop_result": outcome, "why": msg})
+                continue
+            why = ("协作取消超时：请求取消 %.0f 秒后工作进程仍卡在同一步，已强制停止"
+                   "（已确认该进程不在）。" % waited)
         else:
             why = "取消时工作进程已经不在了。"
         done = len(_lines(rid))
@@ -599,7 +665,7 @@ def enforce_cancels() -> List[Dict[str, Any]]:
                       cancel_note=note, error=note):
             _CACHE.pop(rid, None)
             acted.append({"run_id": rid, "action": CANCEL_ESCALATED if probe == WORKER_ALIVE
-                          else "reaped", "why": why})
+                          else "reaped", "stop_result": WORKER_GONE, "why": why})
         else:
             # 这中间工作进程自己收尾了（或状态/pid 变了）—— 赢家不覆盖。
             acted.append({"run_id": rid, "action": "already_settled"})
@@ -619,11 +685,16 @@ def recover_interrupted() -> int:
             "SELECT run_id, pid FROM runs WHERE status IN (?,?)", _STATUS_ACTIVE).fetchall()]
     for r in rows:
         probe = probe_worker(r["pid"], r["run_id"])
-        killed = stop_worker(int(r["pid"]), r["run_id"]) if probe == WORKER_ALIVE else False
+        stopped = stop_worker(int(r["pid"]), r["run_id"]) if probe == WORKER_ALIVE else probe
         done = len(_lines(r["run_id"]))
-        tail = ("，旧工作进程已被停止" if killed else
-                ("，且无法确认旧工作进程的状态（写入围栏仍然生效，它改不回 done）"
-                 if probe == WORKER_UNKNOWN else ""))
+        # 三态如实转述：**只有确认 gone 才说"已被停止"**，unknown / alive 都不算成功。
+        if stopped == WORKER_GONE:
+            tail = "，旧工作进程已被停止"
+        elif stopped == WORKER_ALIVE:
+            tail = ("，但发过停止信号后仍能查到那个旧工作进程（写入围栏仍然生效，"
+                    "它改不回 done；若它还在写这次运行的记录，请手动结束该进程）")
+        else:
+            tail = ("，且无法确认旧工作进程的状态（写入围栏仍然生效，它改不回 done）")
         note = ("服务重启时该任务尚未完成" + tail +
                 "。本版不做跨进程续跑；已完整保存的年份仍可回放，继续推进请新建运行。")
         transition(r["run_id"], "interrupted", years_done=max(done - 1, 0),

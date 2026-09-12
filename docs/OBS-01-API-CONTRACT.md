@@ -58,7 +58,8 @@
 ```
 run_id label kind status created_at started_at finished_at
 seed years sigma_m move_mort_m share_m aid_m recip_m engine arm
-years_done years_recorded cancel_requested cancel_requested_at cancel_note cancel
+years_done years_recorded cancel_requested cancel_requested_at cancel_note
+cancel_last_attempt_at cancel
 engine_sha256 engine_path baseline_commit repo_commit model_run_id full_digest
 error pid
 ```
@@ -75,7 +76,7 @@ error pid
   `{requested, stage, requested_at, seconds_left, note}`，`stage` ∈
   `none | cooperative | escalated | finished`；`cancel_note` 是同一件事的人话版本
   （**用户输入无关，但仍按纯文本展示**）。`cancel_requested` / `cancel_requested_at`
-  是原始字段，语义不变。详见 §6。
+  是原始字段，语义不变。`cancel_last_attempt_at` 只给后台节流用，UI 不必显示。详见 §6。
 - **`engine`（obs-1.2 新增）** ∈ `exp03 | exp04 | exp05 | exp06`，旧记录默认 `exp03`。
   `share_m` 对 `exp04` 起有意义，`aid_m` 对 `exp05` 起有意义，`recip_m` 只对 `exp06` 有意义；
   引擎没有的参数传非 0 会被 400 拒绝。**不要把引擎名和参数写死**，读 `engines` 里的
@@ -185,6 +186,10 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 
 ## 6. obs-1.7 的变化（取消的可靠性）
 
+> 本节在 obs-1.7 被接受**之前**修正过一次：`afcb635` 里"停止"只是发完信号就算数，
+> 查不到与 SIGKILL 失败都被当成成功，记录照样转 `canceled` 并释放任务槽。
+> 现在停止结果是三态的、核实过的，见 6.2 第二张表。版本号不变（那一版没有发布过稳定服务）。
+
 以前取消只设一个标志，工作进程在**年边界**才读它。进程活着却卡在某一步时，
 那个标志永远读不到，唯一的任务槽就再也放不出来 —— 只能重启服务。
 
@@ -206,15 +211,36 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 
 | 工作进程的探测结果 | 做什么 |
 |---|---|
-| 确认是本次运行的活进程（`ps` 里能看到 `observer.worker` 和这个 run_id） | 先给 `CANCEL_GRACE_SEC` 秒**协作窗口**，让它算完当前这一年自己停（写 `canceled`）；窗口用完还在，说明它卡住了，这时才 SIGTERM → SIGKILL |
+| 确认是本次运行的活进程（`ps` 里能看到 `observer.worker` 和这个 run_id） | 先给 `CANCEL_GRACE_SEC` 秒**协作窗口**，让它算完当前这一年自己停（写 `canceled`）；窗口用完还在，说明它卡住了，这时才 SIGTERM → SIGKILL，**并核实结果** |
 | 确认已经不在 | 取消请求没人会读到，直接判 `canceled` |
 | **查不到**（`ps` 超时 / 权限不足 / pid 可能被复用） | **一个信号都不发**，只写一句人话说明，下一轮再看 |
+
+**停止的结果本身也是三态的**，`canceled` 与任务槽的释放只认其中一种：
+
+| 停止结果 | 记录 | 任务槽 |
+|---|---|---|
+| **确认不在了**（`gone`） | 写 `canceled` | 释放 |
+| 信号发了它还在（`alive`） | **保持 `running`**，`cancel_requested` 不清，说明写明"仍能查到…任务槽先不释放" | **不释放**，下一轮再试 |
+| 停不停下来查不到（`unknown`，含信号本身发不出去） | 同上，说明写明"未知不等于已停止" | **不释放** |
+
+这一条是硬的：旧工作进程若还活着，会继续往它那次运行的 `years.jsonl` 里**追加**年份 ——
+数据库的状态/pid 围栏只管数据库，管不住文件写入。所以没确认停下来就放槽，
+等于让一个还在写的进程和一次新运行同时存在。
 
 - `CANCEL_GRACE_SEC` 默认 15 秒，环境变量 `OBSERVER_CANCEL_GRACE` 可调。
 - **只有用户明确按过取消才会走到这里。** 没有取消请求时，这条路上没有任何
   "多久没进度就停掉它"的判据 —— 一个算得慢的正常任务永远不会被动。
 - 收尾时间不依赖页面刷不刷新：取消请求会安排**一次性**的到点检查
   （没有轮询线程、没有后台监控）。页面的 `/api/runs` 轮询也会顺手走一遍同一个函数。
+- **每次发信号之前都重新核验身份。** pid 随时可能被系统回收并复用，拿几秒钟前的
+  判断去 SIGKILL 是在赌别人的进程；升级到 SIGKILL 之前会再确认一次，
+  身份变了就立刻收手。
+- 因此"有界"指的是**升级动作**有界（协作窗口一到就发信号），**不是**"任务槽一定在
+  N 秒内放出来"。一个连 SIGKILL 都杀不掉的进程会让这条运行一直停在 `running`，
+  接口会如实这么说 —— 不会假装它已经结束了。
+- 停止尝试之间有节流：刚试过就不会在下一个请求里再发一遍信号
+  （`stop_worker` 要同步等几秒，不然每次页面刷新都被拖住）。节流只影响**什么时候重试**，
+  不影响任何判断 —— 取消请求、说明、"不放槽"通通保持原样。
 
 ### 6.3 保证与不保证
 
@@ -224,6 +250,8 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 - **竞态不覆盖赢家**：工作进程抢先写完 `done` 的那一刻即使正在被停止，收尾写入也匹配不到行，
   记录保持 `done`；反过来取消先落地时，迟到的工作进程也改不回 `done`（写入围栏）。
 - **不保证跨进程续跑**：取消就是结束，继续推进请新建运行。
+- **不保证"按了取消就一定停得下来"**：停止结果是核实出来的，不是假设出来的。
+  停不下来时 UI 应当把 `cancel_note` 原样显示给用户（纯文本），让人来决定下一步。
 - 取消**不删除**任何已保存的记录；`DELETE /api/runs/{id}` 才是删除。
 
 

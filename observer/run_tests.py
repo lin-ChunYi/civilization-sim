@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -1414,6 +1415,184 @@ check("O30u 已结束的运行：取消不改状态、不清数据，接口如�
 with store.connect() as _c:
     _c.execute("DELETE FROM runs WHERE run_id IN (?,?,?,?,?,?)",
                (STUCK, REUSED, UNK, RACE, LATE, TERM))
+
+# ------------------------------------------------ 停止的结果必须是"核实过的"
+# C05 的漏洞：stop_worker 把"查不到"当成"停下来了"，SIGKILL 失败也无条件返回成功；
+# enforce_cancels 又完全忽略返回值，照样写 canceled 并释放任务槽。
+# 结果是旧工作进程还活着、还在往 years.jsonl 里**追加**（数据库围栏管不住文件写入），
+# 新运行却已经起来了。这一组把"停止失败/未知"的每一条路都逼一遍。
+# 发出去的真实信号只打**本脚本自己起的**子进程；失败注入全部用替身函数，不碰任何别的进程。
+print("\nO31 停止结果三态：只有确认 gone 才放槽；未知与失败都不许谎报已停止")
+
+_REAL_KILL = os.kill
+_REAL_PROBE = store.probe_worker
+
+
+def scripted(probe_seq=None, kill_error=None, kill_log=None, fixed_probe=None):
+    """临时替换探测与发信号：probe 按剧本逐次返回，os.kill 只记录不真发。"""
+    seq = list(probe_seq or [])
+
+    def fake_probe(pid, rid):
+        if fixed_probe is not None:
+            return fixed_probe
+        return seq.pop(0) if seq else store.WORKER_ALIVE
+
+    def fake_kill(pid, sig):
+        if kill_log is not None:
+            kill_log.append(sig)
+        if kill_error is not None and (not isinstance(kill_error, dict)
+                                       or sig in kill_error):
+            err = kill_error[sig] if isinstance(kill_error, dict) else kill_error
+            raise err
+        return None
+    return fake_probe, fake_kill
+
+
+def run_stop(pid, rid, **kw):
+    """在替身下跑一次 stop_worker，跑完立刻还原（真实 os.kill 不被长期改动）。"""
+    fake_probe, fake_kill = scripted(**kw)
+    store.probe_worker, os.kill = fake_probe, fake_kill
+    try:
+        return store.stop_worker(pid, rid, grace=0.2)
+    finally:
+        store.probe_worker, os.kill = _REAL_PROBE, _REAL_KILL
+
+
+A, G, U = store.WORKER_ALIVE, store.WORKER_GONE, store.WORKER_UNKNOWN
+sigs = []
+check("O31a TERM 发不出去（OSError）时返回未知，不冒充已停止，也不升级到 KILL",
+      run_stop(999999, "x", probe_seq=[A], kill_error=PermissionError("nope"),
+               kill_log=sigs) == U and sigs == [signal.SIGTERM], str(sigs))
+check("O31b 等待期间探测变'查不到'：返回未知（旧实现在这里返回'已停止'）",
+      run_stop(999999, "x", probe_seq=[A, U], kill_log=[]) == U)
+sigs = []
+check("O31c KILL 发不出去时返回未知，绝不报告已停止",
+      run_stop(999999, "x", probe_seq=[A, A, A, A, A, A, A, A, A, A],
+               kill_error={signal.SIGKILL: PermissionError("nope")},
+               kill_log=sigs) == U and signal.SIGKILL in sigs, str(sigs))
+check("O31d KILL 之后仍然查得到它：返回 alive（旧实现无条件说成功）",
+      run_stop(999999, "x", fixed_probe=A, kill_log=[]) == A)
+sigs = []
+check("O31e 升级到 KILL 之前身份变了（pid 被复用）：返回 gone，且一个 KILL 都不发",
+      run_stop(999999, "x", probe_seq=[A, A, G], kill_log=sigs) == G
+      and signal.SIGKILL not in sigs, str(sigs))
+check("O31f 一开始就不是我们的进程：一个信号都不发",
+      run_stop(999999, "x", probe_seq=[G], kill_log=sigs) == G)
+
+# 正向对照：真能停下来的进程必须返回 gone（否则上面几条可能是"永远不返回 gone"）
+GOOD = "o31-stoppable"
+good_proc = fake_worker(GOOD, ignore_term=False)
+make_row(GOOD, good_proc.pid, cancel=1, cancel_at=time.time() - config.CANCEL_GRACE_SEC - 1)
+check("O31g 真的能停下来的工作进程：返回 gone（信号只打本测试自己的子进程）",
+      store.stop_worker(good_proc.pid, GOOD) == store.WORKER_GONE
+      and not alive(good_proc))
+store.enforce_cancels()
+check("O31h 确认停下来之后才释放任务槽，记录写 canceled",
+      store.get_run(GOOD)["status"] == "canceled" and store.active_run() is None,
+      store.get_run(GOOD)["status"])
+
+# --- 停不下来：**不许**放槽 ---
+HARD = "o31-unstoppable"
+hard_proc = fake_worker(HARD)          # 无视 SIGTERM
+make_row(HARD, hard_proc.pid, cancel=1, cancel_at=time.time() - config.CANCEL_GRACE_SEC - 1)
+_saved_stop = store.stop_worker
+store.stop_worker = lambda pid, rid, grace=3.0: (store.WORKER_ALIVE if rid == HARD
+                                                 else _saved_stop(pid, rid, grace))
+try:
+    acted = store.enforce_cancels()
+finally:
+    store.stop_worker = _saved_stop
+row = store.get_run(HARD)
+check("O31i 信号发了但没能确认它停下来：**不写 canceled、不放槽**",
+      row["status"] == "running" and alive(hard_proc)
+      and (store.active_run() or {}).get("run_id") == HARD,
+      f'{row["status"]} / active={(store.active_run() or {}).get("run_id")}')
+check("O31j 说明如实写明没停下来、槽先不释放，不谎报已强制停止",
+      "仍能查到" in (row["cancel_note"] or "") and "不释放" in (row["cancel_note"] or "")
+      and "已强制停止" not in (row["cancel_note"] or ""),
+      (row["cancel_note"] or "")[:48])
+check("O31k 取消请求保留着，下一轮还会再试",
+      bool(row["cancel_requested"]) and row["cancel_requested_at"] is not None
+      and [a for a in acted if a["run_id"] == HARD][0]["action"] == store.CANCEL_STOP_FAILED,
+      str([a for a in acted if a["run_id"] == HARD])[:70])
+
+# 节流：刚试过一次就不该在下一个请求里再发一遍信号（stop_worker 要同步等好几秒）
+tries = []
+store.stop_worker = lambda pid, rid, grace=3.0: (tries.append(rid) or store.WORKER_ALIVE
+                                                 if rid == HARD
+                                                 else _saved_stop(pid, rid, grace))
+try:
+    store.enforce_cancels()
+    store.enforce_cancels()
+finally:
+    store.stop_worker = _saved_stop
+check("O31l 刚试过就不重复发信号（否则每次页面刷新都要卡住几秒）",
+      tries == [], f"这一轮又发了 {len(tries)} 次")
+check("O31l2 节流期间状态与取消请求都不变",
+      store.get_run(HARD)["status"] == "running"
+      and bool(store.get_run(HARD)["cancel_requested"]))
+
+
+def next_round():
+    """把"上一次尝试"清掉，表示已经到了下一轮检查。"""
+    with store.connect() as c:
+        c.execute("UPDATE runs SET cancel_last_attempt_at=NULL WHERE run_id=?", (HARD,))
+
+
+# 探测未知同样不放槽
+next_round()
+store.stop_worker = lambda pid, rid, grace=3.0: (store.WORKER_UNKNOWN if rid == HARD
+                                                 else _saved_stop(pid, rid, grace))
+try:
+    store.enforce_cancels()
+finally:
+    store.stop_worker = _saved_stop
+row = store.get_run(HARD)
+check("O31l3 停止结果未知时也不放槽，说明写明'未知不等于已停止'",
+      row["status"] == "running" and "未知不等于已停止" in (row["cancel_note"] or ""),
+      f'{row["status"]} / {(row["cancel_note"] or "")[:30]}')
+
+# 取消端点不能用乐观通稿盖掉这句准确说明。
+# 这里**直接调端点函数**：再开一个 TestClient 会触发启动恢复，把这条还在跑的
+# 记录直接标成 interrupted，测的就不是取消了。
+from observer import app as _appmod                     # noqa: E402
+next_round()
+store.stop_worker = lambda pid, rid, grace=3.0: (store.WORKER_ALIVE if rid == HARD
+                                                 else _saved_stop(pid, rid, grace))
+try:
+    resp = _appmod.cancel_run(HARD)
+finally:
+    store.stop_worker = _saved_stop
+check("O31m 再点一次取消，接口回的是真实情况，不是'会在这一年算完后停下'",
+      "不释放" in resp["note"] and "算完后自己停下" not in resp["note"]
+      and resp["cancel"]["requested"], resp["note"][:44])
+
+# 等它真的没了，同一条判据自行收尾
+hard_proc.kill()
+time.sleep(0.5)
+next_round()
+store.enforce_cancels()
+check("O31n 旧进程真的没了之后，同一条路才收尾 canceled 并放槽",
+      store.get_run(HARD)["status"] == "canceled" and store.active_run() is None,
+      store.get_run(HARD)["status"])
+
+# 另一个调用方：启动恢复同样不许把未知说成"已被停止"
+REC = "o31-recover"
+rec_proc = fake_worker(REC)
+make_row(REC, rec_proc.pid, cancel=0)
+store.stop_worker = lambda pid, rid, grace=3.0: (store.WORKER_UNKNOWN if rid == REC
+                                                 else _saved_stop(pid, rid, grace))
+try:
+    store.recover_interrupted()
+finally:
+    store.stop_worker = _saved_stop
+rrow = store.get_run(REC)
+check("O31o 启动恢复：停止结果未知时不写'旧工作进程已被停止'",
+      rrow["status"] == "interrupted" and "已被停止" not in (rrow["error"] or "")
+      and "无法确认" in (rrow["error"] or ""), (rrow["error"] or "")[:44])
+rec_proc.kill()
+with store.connect() as _c:
+    _c.execute("DELETE FROM runs WHERE run_id IN (?,?,?)", (GOOD, HARD, REC))
 
 # ---------------------------------------------------------------- 探测未知 ≠ 死亡
 print("\nO23 进程探测：查不到不等于死了；回收前要比对状态与 pid")

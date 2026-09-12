@@ -526,15 +526,14 @@ def cancel_run(run_id: str):
                 "已停止，任务槽已释放。"}
     # 还在跑：安排一次**一次性**的到点检查，让收尾时间不依赖页面刷不刷新。
     arm_cancel_deadline(run_id)
-    probe = store.probe_worker(after["pid"], run_id)
-    if probe == store.WORKER_UNKNOWN:
-        note = ("已记下取消请求，但暂时无法确认那个进程号还是不是这次运行的工作进程，"
-                "**不会**对身份不明的进程发信号；下一次检查会再看一遍。")
-    else:
+    # enforce_cancels 已经按实际探测/停止结果写好了准确说明（协作窗口 / 身份未知 /
+    # 信号发了但没确认停下）。**不要用一句乐观的通稿把它盖掉。**
+    note = (after.get("cancel_note") or "").strip()
+    if not note:
         note = ("已请求取消：工作进程会在当前这一年算完后自己停下；"
                 "若它卡住，最多 %.0f 秒后会被强制停止。已完整保存的年份都留着。"
                 % config.CANCEL_GRACE_SEC)
-    store.set_cancel_note(run_id, note)
+        store.set_cancel_note(run_id, note)
     return {"ok": True, "run_id": run_id, "status": after["status"],
             "cancel": dict(stage, note=note), "note": note}
 
