@@ -95,6 +95,7 @@
           <button type="button" data-type="extinct">消失</button>
           <button type="button" data-type="share">信息</button>
           <button type="button" data-type="aid">援助</button>
+          <button type="button" data-type="repay">回助</button>
         </div>
       </div>
       <p class="muted" id="ev-load-note"></p>
@@ -208,8 +209,21 @@
         <label>年数 years<input id="f-years" type="text" inputmode="numeric" value="120" autocomplete="off"></label>
         <label>SIGMA_M 资源再生年际波动（‰）<input id="f-sigma" type="text" inputmode="numeric" value="400" autocomplete="off"></label>
         <label>MOVE_MORT_M 迁移死亡强度（‰）<input id="f-mort" type="text" inputmode="numeric" value="50" autocomplete="off"></label>
-        <label id="f-share-wrap" hidden>SHARE_M 同格信息交换参与概率（‰）<input id="f-share" type="text" inputmode="numeric" value="0" autocomplete="off"></label>
-        <label id="f-aid-wrap" hidden>食物援助比例 AID_M（‰）<input id="f-aid" type="text" inputmode="numeric" value="0" autocomplete="off"></label>
+        <label id="f-share-wrap" hidden><span id="f-share-title">SHARE_M 同格信息交换参与概率</span>
+          <input id="f-share" type="text" inputmode="numeric" value="0" autocomplete="off">
+          <span class="field-hint muted" id="f-share-hint"></span></label>
+        <label id="f-aid-wrap" hidden><span id="f-aid-title">食物援助比例 AID_M</span>
+          <input id="f-aid" type="text" inputmode="numeric" value="0" autocomplete="off">
+          <span class="field-hint muted" id="f-aid-hint"></span></label>
+        <label id="f-recip-wrap" hidden>
+          <span id="f-recip-title">优先回助 RECIP_M</span>
+          <input id="f-recip" type="text" inputmode="numeric" value="0" autocomplete="off">
+          <span class="field-hint muted" id="f-recip-hint">0 = 关闭优先回助（合法对照）。1000 = 优先预算全开。关闭后仍可能出现碰巧回助；规则是否改变分配看 recip.changed，不是 repay。</span>
+          <span class="recip-presets">
+            <button type="button" class="btn small" id="recip-off">关闭优先回助（0）</button>
+            <button type="button" class="btn small" id="recip-on">开启优先回助（1000）</button>
+          </span>
+        </label>
         <label>信息条件（对照臂）<select id="f-arm"></select></label>
         <label>世界备注（可空）<input id="f-label" type="text" maxlength="60" placeholder="例如：对照 MORT=50"></label>
         <button id="b-start" class="btn primary forge-go">创生世界</button>

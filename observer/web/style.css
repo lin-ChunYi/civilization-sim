@@ -166,6 +166,15 @@ td.clickable,.link{color:var(--gold);cursor:pointer;text-decoration:underline do
 .ev:hover{background:rgba(212,176,106,.1)}
 .ev.split{border-color:#7aa7d8}.ev.migrate{border-color:#c8a05a}.ev.extinct{border-color:#c07a72}
 .ev.share{border-color:#6a8f6a}.ev.aid{border-color:#4a7c59}
+.ev.repay{border-color:#f3deaa;box-shadow:inset 3px 0 0 #d4b06a}
+.ev.phase-recip{background:rgba(110,184,180,.08)}
+.field-hint{display:block;margin-top:4px;line-height:1.4}
+.recip-presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.subh{margin:12px 0 4px;font-size:12px;letter-spacing:.12em;color:var(--gold)}
+.mem-row,.compare-row{font-size:12.5px;margin:4px 0;color:#e8eadc}
+@media (prefers-reduced-motion: reduce){
+  .flow-line,.year-display.pulse{animation:none}
+}
 .ev .src{color:var(--muted);font-size:11.5px;margin-top:2px}
 .ev .when{font-weight:700;margin-right:8px;color:var(--gold);font-variant-numeric:tabular-nums}
 

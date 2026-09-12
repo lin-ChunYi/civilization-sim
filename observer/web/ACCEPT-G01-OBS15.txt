@@ -1,0 +1,29 @@
+G01_OBS15 验收记录
+工作目录：/Users/ecool/Desktop/civilization/civilization-sim
+分支：main
+基线 HEAD 开工时：42d55cb
+隔离数据：/Users/ecool/Desktop/civilization/.dispatch/20260912-exp06/grok-data
+测试端口：8772  PID 69175
+
+网页真实创建（不是预生成）：
+  engine=exp06 seed=31337 years=150 sigma=0 mort=50 share=1000 aid=1000 recip_m=1000
+  run_id=5340a1a8756f  status=done  years_recorded=150
+  台账 recip_m=1000（未默认关闭）
+  params_used 含 recip_m=1000
+
+动态扫描（不写死样本年）：
+  首次 repay 事件 t=124
+  侧栏：援助活动 1 次（格×年）/ 逐笔 2 笔 / 回助（含碰巧）1 笔 / 分配被规则改变 0 次
+  档案 aid_memory：群体-0C98E8 累计 1011984 kcal · 最近第 123 年
+  依据 prior_events：t83-aid-3
+  同状态对照：该年该格 changed=false（开启 2 对 / 关闭 2 对）—— repay 与 changed 未混用
+
+前端自检：
+  overview-selftest 40 pass / 0 fail
+  /selftest/selftest.html T1–T7 20 pass / 0 fail
+  browser-verify-exp06 start 7 pass；inspect 9 pass
+
+未做（本轮只交完整流程第 1 项）：
+  九项马拉松的 2–9
+  无图像生成入口，沙盘仍用 SVG/CSS，未画虚构山川
+  Claude 若再修分配权重，展示数字会随接口变，本页未写死

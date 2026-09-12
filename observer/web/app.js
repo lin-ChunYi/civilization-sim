@@ -118,6 +118,7 @@ const OverviewLogic = {
           " 次信息交换、" + ev.aid + " 条食物援助（逐笔转移）。");
       }
       OverviewLogic._appendAidLedger(sentences, input.aid);
+      OverviewLogic._appendRecipLedger(sentences, input.recip);
       return { sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md };
     }
     sentences.push("本年出生 " + births + " 人，非迁移死亡（模型的原规则死亡） " +
@@ -136,6 +137,7 @@ const OverviewLogic = {
         " 条；人数与事件条数不能混加，也不强行对齐。");
     }
     OverviewLogic._appendAidLedger(sentences, input.aid);
+    OverviewLogic._appendRecipLedger(sentences, input.recip);
     return { sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md };
   },
   _appendAidLedger(sentences, aid) {
@@ -143,6 +145,13 @@ const OverviewLogic = {
     sentences.push("援助账本：援助活动 " + aid.events + " 次（格×年，一次多人援助算 1），" +
       "逐笔转移 " + aid.transfers + " 笔（一个供给方给一个接收方算 1）。" +
       "活动次数与转移笔数不是同一个计数，不能相加或互相替代。");
+  },
+  _appendRecipLedger(sentences, recip) {
+    if (!recip) return;
+    sentences.push("回助账本：记得对方帮过自己的转移 " + recip.repay_transfers +
+      " 笔（含碰巧，不代表规则起作用）；优先阶段 " + recip.transfers +
+      " 笔；分配被优先规则改变 " + recip.changed +
+      " 次（格×年）。repay、优先阶段笔数、changed 不是同一个计数。");
   },
 };
 window.OverviewLogic = OverviewLogic;
@@ -171,7 +180,19 @@ function runEngineInfo(run) {
 }
 function engineHasParam(name, param) {
   const inf = S.cfg && S.cfg.engines && S.cfg.engines[name];
-  return !!(inf && inf.engine_params && inf.engine_params.indexOf(param) >= 0);
+  if (!inf) return false;
+  if (inf.engine_params && inf.engine_params.indexOf(param) >= 0) return true;
+  if (Array.isArray(inf.params) && inf.params.some((p) => p && p.name === param)
+      && param !== "seed" && param !== "years") return true;
+  return false;
+}
+function engineParamMeta(engine, param) {
+  const inf = S.cfg && S.cfg.engines && S.cfg.engines[engine];
+  if (inf && Array.isArray(inf.params)) {
+    const hit = inf.params.find((p) => p && p.name === param);
+    if (hit) return hit;
+  }
+  return null;
 }
 const NEED = () => {
   const inf = S.run ? runEngineInfo(S.run) : (S.cfg && S.cfg.engine);
@@ -311,6 +332,7 @@ function renderOverview() {
       t: S.t, year: rec.year, agg: rec.agg, events: rec.events,
       ledgerMig: rec.year ? rec.year.mig_total : null,
       aid: rec.aid || null,
+      recip: rec.recip || null,
     });
     $("year-summary").textContent = sum.sentences.join("");
   }
@@ -341,6 +363,7 @@ function renderHudParams() {
   ];
   if (engineHasParam(runEngineName(S.run), "share_m")) bits.push("SHARE_M " + (S.run.share_m ?? 0) + "‰");
   if (engineHasParam(runEngineName(S.run), "aid_m")) bits.push("AID_M " + (S.run.aid_m ?? 0) + "‰");
+  if (engineHasParam(runEngineName(S.run), "recip_m")) bits.push("RECIP_M " + (S.run.recip_m ?? 0) + "‰");
   bits.push(S.cfg && S.cfg.arms[S.run.arm] ? S.cfg.arms[S.run.arm].label : S.run.arm);
   box.textContent = bits.join("  ·  ");
 }
@@ -381,6 +404,8 @@ function renderTech() {
       ? (S.run.share_m ?? 0) + "‰（本次运行实际值）" : "无此参数"],
     ["AID_M", engineHasParam(runEngineName(S.run), "aid_m")
       ? (S.run.aid_m ?? 0) + "‰（本次运行实际值）" : "无此参数"],
+    ["RECIP_M", engineHasParam(runEngineName(S.run), "recip_m")
+      ? (S.run.recip_m ?? 0) + "‰（本次运行实际值）" : "无此参数"],
     ["信息条件", arm ? arm.label : S.run.arm],
     ["model_run_id", S.run.model_run_id || "（尚未写入）"],
     ["full_digest", S.run.full_digest || "（尚未写入）"],
@@ -406,6 +431,17 @@ function renderTech() {
       rows.push(["逐笔转移", rec.aid.transfers + " 笔"]);
       rows.push(["本年援助食物", rec.aid.kcal + " kcal"]);
       rows.push(["累计援助活动 / 转移", rec.aid.cum_events + " 次 / " + rec.aid.cum_transfers + " 笔"]);
+    }
+    if (rec.recip) {
+      rows.push(["回助（含碰巧）", rec.recip.repay_transfers + " 笔"]);
+      rows.push(["优先阶段转移", rec.recip.transfers + " 笔"]);
+      rows.push(["分配被规则改变", rec.recip.changed + " 次（格×年）"]);
+      rows.push(["累计分配改变", String(rec.recip.cum_changed) + " 次"]);
+    }
+    const used = S.run.params_used;
+    if (Array.isArray(used) && used.length) {
+      rows.push(["本次实际参数", used.map((p) =>
+        (p.label || p.name) + "=" + p.value + (p.unit ? p.unit : "")).join(" · ")]);
     }
     rows.push(["累计吃掉", py(rec.cum.out_eat) + " 人年口粮"]);
     rows.push(["累计腐损", py(rec.cum.out_spoil) + " 人年口粮"]);
@@ -558,7 +594,7 @@ function renderMap() {
       const rad = rads[k];
       const x = x0 + rad, y = cy - 10;
       x0 += 2 * rad + 2;
-      bandPos[b.id] = [x, y, c.i];
+      bandPos[String(b.id)] = [x, y, c.i];
       const on = S.selBand === b.id;
       out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad.toFixed(1)}"
           fill="${on ? "#e8a04a" : "#c47a3a"}" fill-opacity="0.95"
@@ -579,17 +615,18 @@ function renderMap() {
       if (e.type === "migrate" && e.from != null && e.to != null) {
         a = cellCenter(S.map.cells[e.from]); b = cellCenter(S.map.cells[e.to]);
       } else if ((e.type === "share" || e.type === "aid") && e.donor && e.receiver) {
-        a = bandPos[e.donor]; b = bandPos[e.receiver];
-        if (a && b && a[2] === b[2]) {
-          const x = a[0], y = a[1] - 16;
-          out += `<path d="M${a[0].toFixed(1)},${a[1].toFixed(1)} Q${x.toFixed(1)},${y} ${b[0].toFixed(1)},${b[1].toFixed(1)}"
-            class="flow-line" stroke="${col[e.type]}"/>`;
-          return;
-        }
+        a = bandPos[String(e.donor)]; b = bandPos[String(e.receiver)];
+        if (!a || !b || a[2] !== b[2]) return;
+        const stroke = e.repay ? "#f3deaa" : (col[e.type] || "#6fb37c");
+        const x = a[0], y = a[1] - (e.repay ? 20 : 16);
+        out += `<path d="M${a[0].toFixed(1)},${a[1].toFixed(1)} Q${x.toFixed(1)},${y} ${b[0].toFixed(1)},${b[1].toFixed(1)}"
+          class="flow-line${e.repay ? " repay-flow" : ""}" stroke="${stroke}" stroke-width="${e.repay ? 2.2 : 1.6}"/>`;
+        return;
       } else if (e.type === "split" && e.parent && e.band) {
-        a = bandPos[e.parent]; b = bandPos[e.band];
+        a = bandPos[String(e.parent)]; b = bandPos[String(e.band)];
       }
       if (!a || !b) return;
+      if (e.type === "aid" || e.type === "share") return;
       out += `<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"
         class="flow-line" stroke="${col[e.type] || "#d4b06a"}"/>`;
     });
@@ -614,7 +651,7 @@ function renderMap() {
     store: "储粮层：颜色按本格群体储粮合计。",
     mem: memBand ? ("记忆层（" + memBand.name + "）：未知格标灰，时间戳如实显示。") : "记忆层：先点一个群体。",
     event: "事件层：金色描边的格子本年有可核实事件。",
-    flow: "流向层：金=迁移，青=信息交换，绿=食物援助。动画只是示意方向，不改变记录。",
+    flow: "流向层：只画同格事实。金=迁移，青=信息交换，绿=援助，亮金=回助。不补编跨格路线。",
   };
   if ($("legend")) $("legend").innerHTML = `<span class="bar"></span> ${esc(keys[layer] || keys.resource)}`;
   if ($("maphint")) {
@@ -625,6 +662,47 @@ function renderMap() {
   if ($("map-key")) {
     $("map-key").textContent = "圆点是群体，数字是人口。" + (keys[layer] || "");
   }
+}
+
+function bandName(rec, id) {
+  const b = (rec.bands || []).find((x) => String(x.id) === String(id));
+  return b ? b.name : (String(id).slice(0, 8) + "…");
+}
+function yearFromEventId(eid) {
+  const m = String(eid || "").match(/^t(\d+)-/);
+  return m ? Number(m[1]) : null;
+}
+function renderAidMemory(b, rec) {
+  const mem = b.aid_memory;
+  if (mem == null) {
+    return `<div class="muted" style="margin-top:8px">援助记忆：未记录。此引擎或此年没有 aid_memory 字段。</div>`;
+  }
+  const keys = Object.keys(mem);
+  if (!keys.length) {
+    return `<div class="muted" style="margin-top:8px">援助记忆：空。没有谁帮助过这个群体。</div>`;
+  }
+  const rows = keys.map((id) => {
+    const e = mem[id] || {};
+    const last = (e.last_year === null || e.last_year === undefined)
+      ? "时间未记录" : ("最近第 " + e.last_year + " 年");
+    const jump = (e.last_year === null || e.last_year === undefined) ? "" :
+      ` class="link" data-prior-year="${e.last_year}"`;
+    return `<div class="mem-row"><span${jump}>${esc(bandName(rec, id))}</span>
+      累计 ${nf(e.kcal)} kcal（${py(e.kcal)} 人年口粮）· ${esc(last)}</div>`;
+  }).join("");
+  return `<h4 class="subh">谁帮助过我</h4>
+    <p class="muted">只由实际转移累加，不是好感、债务或联盟。</p>${rows}`;
+}
+function renderRecipCompare(rec, cell) {
+  if (!rec.recip || !Array.isArray(rec.recip.compare) || !rec.recip.compare.length) return "";
+  const hits = rec.recip.compare.filter((c) => c && (cell == null || c.cell === cell));
+  if (!hits.length) return "";
+  return `<h4 class="subh">同状态分配对照</h4>` + hits.map((c) => {
+    const ch = c.changed ? "开/关优先回助后，这一格的分配不同" : "开/关优先回助后，这一格的分配相同";
+    const withN = Array.isArray(c.with_totals) ? c.with_totals.length : 0;
+    const withoutN = Array.isArray(c.without_totals) ? c.without_totals.length : 0;
+    return `<div class="compare-row">${esc(ch)}（第 ${c.cell} 号格；开启 ${withN} 对 / 关闭 ${withoutN} 对）。这是规则是否起作用的证据，不是 repay 笔数。</div>`;
+  }).join("");
 }
 
 /* ---------------- 侧栏 ---------------- */
@@ -659,6 +737,11 @@ function renderSide() {
     rows.push(["逐笔转移", `${nf(rec.aid.transfers)} <small>笔</small>`]);
     rows.push(["本年援助食物", kcalCell(rec.aid.kcal)]);
   }
+  if (rec.recip) {
+    rows.push(["回助（含碰巧）", `${nf(rec.recip.repay_transfers)} <small>笔</small>`]);
+    rows.push(["优先阶段转移", `${nf(rec.recip.transfers)} <small>笔</small>`]);
+    rows.push(["分配被规则改变", `${nf(rec.recip.changed)} <small>次（格×年）</small>`]);
+  }
   $("side-now").innerHTML = rows.map(([k, v]) =>
     `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
   const crows = [
@@ -676,6 +759,10 @@ function renderSide() {
     crows.push(["累计逐笔转移", `${nf(rec.aid.cum_transfers)} <small>笔</small>`]);
     crows.push(["累计援助食物", kcalCell(rec.aid.cum_kcal)]);
   }
+  if (rec.recip) {
+    crows.push(["累计回助（含碰巧）", `${nf(rec.recip.cum_repay_transfers)} <small>笔</small>`]);
+    crows.push(["累计分配改变", `${nf(rec.recip.cum_changed)} <small>次</small>`]);
+  }
   $("side-cum").innerHTML = crows.map(([k, v]) =>
     `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
   const ok = (v) => v === 0 ? `<span style="color:var(--ok)">0 ✓</span>` : `<span class="err">${v} ✗</span>`;
@@ -684,6 +771,8 @@ function renderSide() {
      <div class="k">人口恒等误差</div><div class="v">${ok(rec.integrity.population_identity_error)}</div>
      ${rec.integrity.aid_ledger_error != null
        ? `<div class="k">援助账误差</div><div class="v">${ok(rec.integrity.aid_ledger_error)}</div>` : ""}
+     ${rec.integrity.aid_memory_error != null
+       ? `<div class="k">援助记忆误差</div><div class="v">${ok(rec.integrity.aid_memory_error)}</div>` : ""}
      <div class="k">状态哈希</div><div class="v"><small>${esc(rec.integrity.state_hash.slice(0, 16))}…</small></div>`;
 
   const selWrap = $("side-sel"), h = $("side-sel-h");
@@ -728,9 +817,13 @@ function renderSide() {
     <div class="k">储粮</div><div class="v">${kcalCell(b.store)}</div>
     <div class="k">所在位置</div><div class="v">第 ${b.cell} 号格（区块 ${esc(S.map.cells[b.cell].region)}）</div>
     <div class="k">记忆条目</div><div class="v">${known} <small>格</small></div>
-    <div class="k">实体 id</div><div class="v"><small>${esc(b.id)}</small></div>
+    <div class="k">实体 id</div><div class="v"><small>${esc(String(b.id))}</small></div>
   </div>
+  ${renderAidMemory(b, rec)}
+  ${renderRecipCompare(rec, b.cell)}
   <div id="bandmore" class="muted" style="margin-top:8px">正在读取轨迹…</div>`;
+  selWrap.querySelectorAll("[data-prior-year]").forEach((n) =>
+    n.addEventListener("click", (e) => { e.stopPropagation(); gotoYear(+n.dataset.priorYear); }));
   loadBand(b.id);
 }
 
@@ -977,22 +1070,47 @@ function renderEvents() {
   }
   if ($("ev-load-note")) $("ev-load-note").textContent = loadNote;
 
-  const filtered = S.evFilter === "all" ? items : items.filter((e) => e.type === S.evFilter);
+  const filtered = S.evFilter === "all" ? items
+    : S.evFilter === "repay" ? items.filter((e) => e.type === "aid" && e.repay)
+    : items.filter((e) => e.type === S.evFilter);
   if (!filtered.length) {
     box.innerHTML = `<div class="emptystate">${S.evScope === "year"
       ? (S.t === 0 ? "开局" : "第 " + S.t + " 年") + "没有可核实的" +
-        (S.evFilter === "all" ? "迁移、分裂、群体消失、信息交换或食物援助" : TYPE_LABEL(S.evFilter)) + "事件。"
+        (S.evFilter === "all" ? "迁移、分裂、群体消失、信息交换或食物援助"
+          : S.evFilter === "repay" ? "回助" : TYPE_LABEL(S.evFilter)) + "事件。"
       : "已加载范围内没有符合筛选的事件。"}</div>`;
   } else {
-    box.innerHTML = filtered.map((e) => `<div class="ev ${esc(e.type)}" data-t="${e.t}"
+    box.innerHTML = filtered.map((e) => {
+      const badges = [];
+      if (e.type === "aid" && e.repay) badges.push(`<span class="badge s-wait">回助</span>`);
+      if (e.phase === "recip") badges.push(`<span class="badge s-run">优先阶段</span>`);
+      else if (e.phase === "normal" && e.type === "aid") badges.push(`<span class="badge s-off">普通阶段</span>`);
+      let basis = "";
+      if (e.basis) {
+        const priors = (e.basis.prior_events || []).map((id) => {
+          const y = yearFromEventId(id);
+          return y == null ? esc(String(id))
+            : `<span class="link" data-prior-year="${y}" data-prior-id="${esc(id)}">第 ${y} 年原援助</span>`;
+        }).join("、");
+        const remY = e.basis.remembered_last_year;
+        basis = `<div class="src">依据：${esc(e.basis.why || "未记录")}` +
+          (e.basis.remembered_kcal != null ? ` · 援助前记住 ${nf(e.basis.remembered_kcal)} kcal` : "") +
+          (remY == null ? "" : ` · 最近受助于第 ${remY} 年`) +
+          (priors ? ` · 跳转 ${priors}` : " · 先前事件未记录") + `</div>`;
+      }
+      const cls = [e.type, e.repay ? "repay" : "", e.phase === "recip" ? "phase-recip" : ""]
+        .filter(Boolean).join(" ");
+      return `<div class="ev ${esc(cls)}" data-t="${e.t}"
         data-band="${esc(e.band || e.receiver || "")}" data-to="${e.to != null ? e.to : ""}"
         data-from="${e.from != null ? e.from : ""}" data-cell="${e.cell != null ? e.cell : ""}">
         <div><span class="when">${e.t === 0 ? "开局" : "第 " + e.t + " 年"}</span>
-          ${esc(TYPE_LABEL(e.type))} · ${esc(e.text)}</div>
+          ${badges.join(" ")} ${esc(TYPE_LABEL(e.type))} · ${esc(e.text)}</div>
         <div class="src">来源：${esc(e.source || "未标注")}${e.unrecorded
-          ? "　·　未记录：" + esc(e.unrecorded) : ""}</div>
-      </div>`).join("");
-    box.querySelectorAll(".ev").forEach((n) => n.addEventListener("click", () => {
+          ? "　·　未记录：" + esc(e.unrecorded) : ""}</div>${basis}
+      </div>`;
+    }).join("");
+    box.querySelectorAll(".ev").forEach((n) => n.addEventListener("click", (ev) => {
+      if (ev.target.closest("[data-prior-year]")) return;
       jumpToEvent({
         t: +n.dataset.t,
         band: n.dataset.band || null,
@@ -1001,6 +1119,11 @@ function renderEvents() {
         cell: n.dataset.cell === "" ? null : +n.dataset.cell,
       });
     }));
+    box.querySelectorAll("[data-prior-year]").forEach((n) =>
+      n.addEventListener("click", (e) => {
+        e.stopPropagation();
+        gotoYear(+n.dataset.priorYear);
+      }));
   }
 
   if (rec && $("ev-ledger-note")) {
@@ -1019,6 +1142,11 @@ function renderEvents() {
       $("ev-ledger-note").textContent += " 援助活动 " + rec.aid.events +
         " 次（格×年）；逐笔转移 " + rec.aid.transfers + " 笔；已记录食物援助事件 " +
         listedAid + " 条。活动次数与转移笔数不是同一个计数。";
+    }
+    if (rec.recip) {
+      $("ev-ledger-note").textContent += " 回助（含碰巧） " + rec.recip.repay_transfers +
+        " 笔；优先阶段 " + rec.recip.transfers + " 笔；分配被规则改变 " + rec.recip.changed +
+        " 次。repay 不是 changed。";
     }
   }
 
@@ -1049,7 +1177,7 @@ function jumpToEvent(ev) {
 /* ---------------- 运行记录 ---------------- */
 function renderRuns() {
   const head = `<tr><th>运行</th><th>状态</th><th>引擎</th><th>seed</th><th>年数</th><th>SIGMA_M</th>
-    <th>MOVE_MORT_M</th><th>SHARE_M</th><th>AID_M</th><th>信息条件</th><th>已算/目标</th><th>创建时间</th><th>模型版本</th><th>操作</th></tr>`;
+    <th>MOVE_MORT_M</th><th>SHARE_M</th><th>AID_M</th><th>RECIP_M</th><th>信息条件</th><th>已算/目标</th><th>创建时间</th><th>模型版本</th><th>操作</th></tr>`;
   $("runtable").innerHTML = head + S.runs.map((r) => `<tr class="${S.run && S.run.run_id === r.run_id ? "on" : ""}">
     <td class="clickable" data-open="${esc(r.run_id)}">${esc(r.label || r.run_id)}
       ${r.kind === "preset" ? '<span class="badge s-off">预生成</span>' : ""}</td>
@@ -1058,6 +1186,7 @@ function renderRuns() {
     <td>${r.sigma_m}‰</td><td>${r.move_mort_m}‰</td>
     <td>${engineHasParam(r.engine || "exp03", "share_m") ? (r.share_m ?? 0) + "‰" : "—"}</td>
     <td>${engineHasParam(r.engine || "exp03", "aid_m") ? (r.aid_m ?? 0) + "‰" : "—"}</td>
+    <td>${engineHasParam(r.engine || "exp03", "recip_m") ? (r.recip_m ?? 0) + "‰" : "—"}</td>
     <td>${S.cfg.arms[r.arm] ? esc(S.cfg.arms[r.arm].label) : esc(r.arm)}</td>
     <td>${r.years_recorded}/${r.years}</td><td>${tsfmt(r.created_at)}</td>
     <td><small>${esc(r.engine_path || "")} · ${esc((r.engine_sha256 || "").slice(0, 8))}</small></td>
@@ -1219,6 +1348,8 @@ async function boot() {
   $("speed").addEventListener("change", (e) => { S.speed = +e.target.value; });
   $("scrub").addEventListener("input", (e) => { setPlaying(false); gotoYear(+e.target.value); });
   $("b-start").addEventListener("click", startRun);
+  if ($("recip-off")) $("recip-off").addEventListener("click", () => { $("f-recip").value = "0"; });
+  if ($("recip-on")) $("recip-on").addEventListener("click", () => { $("f-recip").value = "1000"; });
   $("ev-scope").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-scope]"); if (!b) return;
     S.evScope = b.dataset.scope; renderEvents();
@@ -1299,13 +1430,44 @@ function bindMapCam() {
   });
 }
 
+function applyParamChrome(engine, param, titleId, hintId, inputId) {
+  const spec = engineParamMeta(engine, param);
+  if (spec && $(titleId)) {
+    const unit = spec.unit ? "（" + spec.unit + "）" : "";
+    $(titleId).textContent = (spec.label || param) + unit;
+  }
+  if (spec && $(hintId)) {
+    const bits = [];
+    if (spec.min != null && spec.max != null) bits.push("范围 " + spec.min + "–" + spec.max);
+    if (spec.default != null) bits.push("默认 " + spec.default);
+    if (spec.unit) bits.push(spec.unit);
+    if (bits.length) $(hintId).textContent = bits.join(" · ");
+  }
+  if (spec && $(inputId) && document.activeElement !== $(inputId) && !$(inputId).value) {
+    $(inputId).value = String(spec.default != null ? spec.default : 0);
+  }
+}
+
 function syncEngineForm() {
   if (!$("f-engine")) return;
   const name = $("f-engine").value;
   const shareWrap = $("f-share-wrap");
   const aidWrap = $("f-aid-wrap");
+  const recipWrap = $("f-recip-wrap");
   if (shareWrap) shareWrap.hidden = !engineHasParam(name, "share_m");
   if (aidWrap) aidWrap.hidden = !engineHasParam(name, "aid_m");
+  if (recipWrap) recipWrap.hidden = !engineHasParam(name, "recip_m");
+  applyParamChrome(name, "share_m", "f-share-title", "f-share-hint", "f-share");
+  applyParamChrome(name, "aid_m", "f-aid-title", "f-aid-hint", "f-aid");
+  applyParamChrome(name, "recip_m", "f-recip-title", null, "f-recip");
+  applyParamChrome(name, "sigma_m", null, null, "f-sigma");
+  applyParamChrome(name, "move_mort_m", null, null, "f-mort");
+  if (engineHasParam(name, "recip_m") && $("f-recip-hint")) {
+    const spec = engineParamMeta(name, "recip_m");
+    const range = spec ? ("范围 " + spec.min + "–" + spec.max + "，默认 " + spec.default + "。") : "";
+    $("f-recip-hint").textContent = range +
+      "0 = 关闭优先回助（合法对照）。1000 = 开启优先回助。repay 含碰巧；changed 才表示规则改变了分配。";
+  }
 }
 
 async function startRun() {
@@ -1326,15 +1488,30 @@ async function startRun() {
   }
   let aid_m = 0;
   if (engineHasParam(engine, "aid_m")) {
-    const aid = OverviewLogic.parseStrictInt($("f-aid").value, { name: "AID_M", min: 0, max: 1000 });
+    const spec = engineParamMeta(engine, "aid_m") || { min: 0, max: 1000 };
+    const aid = OverviewLogic.parseStrictInt($("f-aid").value, {
+      name: (spec.label || "AID_M"), min: spec.min != null ? spec.min : 0,
+      max: spec.max != null ? spec.max : 1000 });
     if (!aid.ok) { flash(aid.error, true); return; }
     aid_m = aid.value;
+  }
+  let recip_m = 0;
+  let sendRecip = false;
+  if (engineHasParam(engine, "recip_m")) {
+    const spec = engineParamMeta(engine, "recip_m") || { min: 0, max: 1000 };
+    const recip = OverviewLogic.parseStrictInt($("f-recip").value, {
+      name: (spec.label || "RECIP_M"), min: spec.min != null ? spec.min : 0,
+      max: spec.max != null ? spec.max : 1000 });
+    if (!recip.ok) { flash(recip.error, true); return; }
+    recip_m = recip.value;
+    sendRecip = true;
   }
   const body = {
     seed: seed.value, years: years.value, sigma_m: sigma.value,
     move_mort_m: mort.value, arm: $("f-arm").value, label: $("f-label").value.trim(),
     engine: engine, share_m: share_m, aid_m: aid_m,
   };
+  if (sendRecip) body.recip_m = recip_m;
   $("b-start").disabled = true;
   try {
     const r = await api("/api/runs", { method: "POST", body: JSON.stringify(body) });

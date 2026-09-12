@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>OBS-01 EXP-06 网页启动验收</title>
+<style>body{font:13px/1.5 monospace;background:#111;color:#ddd;padding:8px}#result{white-space:pre-wrap}#mount{background:#0e1512;color:#ece8d8;max-height:240px;overflow:auto}</style>
+</head>
+<body>
+<pre id="result">running…</pre>
+<div id="mount"></div>
+<script>window.__OBS_MANUAL_BOOT__ = true;</script>
+<script>
+(async () => {
+  const realFetch = window.fetch.bind(window);
+  const out = [];
+  const ok = (name, cond, detail) => out.push((cond ? "PASS" : "FAIL") + " " + name + (detail ? " :: " + detail : ""));
+  const txt = (sel) => (document.querySelector(sel) || { textContent: "" }).textContent.replace(/\s+/g, " ").trim();
+  const hp = {};
+  (location.hash || "").replace(/^#/, "").split("&").forEach((kv) => {
+    const [k, v] = kv.split("="); if (k) hp[k] = decodeURIComponent(v || "");
+  });
+  try {
+    const html = await realFetch("/static/index.html").then((r) => r.text());
+    const body = html.split("<body>")[1].split("</body>")[0].replace(/<script[\s\S]*?<\/script>/g, "");
+    document.getElementById("mount").innerHTML = body;
+    await new Promise((res, rej) => {
+      const el = document.createElement("script");
+      el.src = "/static/app.js?e06=" + Date.now(); el.onload = res; el.onerror = () => rej(new Error("app.js"));
+      document.head.appendChild(el);
+    });
+    const O = window.__obs;
+    await O.boot();
+
+    if (hp.inspect) {
+      await O.openRun(hp.inspect);
+      ok("I0 打开网页创建的运行", O.S.run && O.S.run.run_id === hp.inspect);
+      ok("I1 台账提交了 recip_m 且非默认关闭", O.S.run && O.S.run.engine === "exp06" && O.S.run.recip_m === 1000,
+        JSON.stringify(O.S.run && { engine: O.S.run.engine, recip_m: O.S.run.recip_m, aid_m: O.S.run.aid_m }));
+      const used = O.S.run.params_used;
+      ok("I2 params_used 含 recip_m=1000", Array.isArray(used) && used.some((p) => p.name === "recip_m" && p.value === 1000),
+        JSON.stringify(used && used.filter((p) => p.name === "recip_m")));
+      let repayYear = null, repayEv = null, memBand = null;
+      const max = O.S.run.years_recorded || 0;
+      for (let t = 0; t <= max; t++) {
+        if (!O.S.years.has(O.ykey(hp.inspect, t))) {
+          try { O.S.years.set(O.ykey(hp.inspect, t), await O.api("/api/runs/" + hp.inspect + "/year/" + t)); }
+          catch (e) { continue; }
+        }
+        const rec = O.S.years.get(O.ykey(hp.inspect, t));
+        const hit = ((rec && rec.events) || []).find((e) => e.type === "aid" && e.repay);
+        if (hit) { repayYear = t; repayEv = hit; break; }
+      }
+      ok("I3 找到回助事件（年份不写死）", !!repayEv, "t=" + repayYear);
+      if (repayYear != null) {
+        await O.gotoYear(repayYear);
+        ok("I4 回助标识出现", txt("#events").indexOf("回助") >= 0, txt("#events").slice(0, 160));
+        ok("I5 优先阶段与回助不是同一标签",
+          txt("#events").indexOf("优先阶段") >= 0 || txt("#events").indexOf("普通阶段") >= 0);
+        ok("I6 侧栏区分活动/转移/repay/changed",
+          txt("#side-now").indexOf("援助活动次数") >= 0 && txt("#side-now").indexOf("逐笔转移") >= 0
+          && txt("#side-now").indexOf("回助（含碰巧）") >= 0 && txt("#side-now").indexOf("分配被规则改变") >= 0,
+          txt("#side-now"));
+        const rec = O.S.years.get(O.ykey(hp.inspect, repayYear));
+        const recv = repayEv.receiver || repayEv.band;
+        if (recv) {
+          O.selectBand(String(recv), { force: true });
+          memBand = (rec.bands || []).find((b) => String(b.id) === String(recv));
+        }
+        ok("I7 档案有援助记忆或明确未记录/空",
+          /谁帮助过我|援助记忆/.test(txt("#side-sel")), txt("#side-sel").slice(0, 220));
+        if (repayEv.basis && repayEv.basis.prior_events && repayEv.basis.prior_events[0]) {
+          ok("I8 依据含可跳转的先前事件 id", true, repayEv.basis.prior_events[0]);
+        } else {
+          ok("I8 依据含可跳转的先前事件 id", false, "basis 未记录");
+        }
+      }
+    } else {
+      ok("A0 engines 含 exp06", !!(O.S.cfg.engines && O.S.cfg.engines.exp06));
+      ok("A1 exp06 含 recip_m",
+        (O.S.cfg.engines.exp06.engine_params || []).indexOf("recip_m") >= 0
+        || (O.S.cfg.engines.exp06.params || []).some((p) => p.name === "recip_m"));
+      document.getElementById("f-engine").value = "exp06";
+      document.getElementById("f-engine").dispatchEvent(new Event("change"));
+      ok("A2 选 exp06 显示 RECIP_M", document.getElementById("f-recip-wrap").hidden === false);
+      document.getElementById("f-engine").value = "exp03";
+      document.getElementById("f-engine").dispatchEvent(new Event("change"));
+      ok("A3 选 exp03 隐藏 RECIP_M", document.getElementById("f-recip-wrap").hidden === true);
+      document.getElementById("f-engine").value = "exp06";
+      document.getElementById("f-engine").dispatchEvent(new Event("change"));
+      document.getElementById("f-seed").value = "31337";
+      document.getElementById("f-years").value = "150";
+      document.getElementById("f-sigma").value = "0";
+      document.getElementById("f-mort").value = "50";
+      document.getElementById("f-share").value = "1000";
+      document.getElementById("f-aid").value = "1000";
+      document.getElementById("f-label").value = "网页启动验收 EXP-06 recip1000";
+      document.getElementById("f-recip").value = "1.5";
+      const before = O.S.runs.length;
+      await O.startRun();
+      ok("A4 小数 RECIP_M 不会提交", O.S.runs.length === before);
+      document.getElementById("f-recip").value = "1000";
+      await O.startRun();
+      const run = O.S.run;
+      ok("A5 startRun 成功", !!(run && run.run_id), run && run.run_id);
+      ok("A6 请求带了 recip_m=1000", run && run.recip_m === 1000 && run.engine === "exp06",
+        JSON.stringify(run && { id: run.run_id, engine: run.engine, recip_m: run.recip_m, aid_m: run.aid_m }));
+      out.push("RUN_ID " + ((run && run.run_id) || ""));
+    }
+  } catch (e) {
+    out.push("FAIL 脚本出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
+  }
+  const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
+  out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
+  document.getElementById("result").textContent = out.join("\n");
+})();
+</script>
+</body></html>

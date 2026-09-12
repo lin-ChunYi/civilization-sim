@@ -121,6 +121,16 @@ window.__OBS_MANUAL_BOOT__ = true;
       /援助活动 1 次/.test(aidBlob) && /逐笔转移 2 笔/.test(aidBlob) && /2 条食物援助/.test(aidBlob));
     ok("L35 小数 AID_M 被拒绝", !L.parseStrictInt("100.5", { name: "AID_M" }).ok);
     ok("L36 AID_M=1000 通过", L.parseStrictInt("1000", { name: "AID_M", min: 0, max: 1000 }).ok);
+    const sRec = L.buildYearSummary({
+      t: 20, year: { births_cum: 1, deaths_demo_cum: 0, mig_deaths_cum: 0 },
+      agg: { pop: 120, bands: 6 }, events: [{ type: "aid", repay: true }],
+      aid: { events: 1, transfers: 2 },
+      recip: { repay_transfers: 3, transfers: 1, changed: 0 }
+    });
+    const rb = sRec.sentences.join("");
+    ok("L37 回助含碰巧与 changed 分开", /回助/.test(rb) && /3 笔/.test(rb) && /改变 0 次/.test(rb));
+    ok("L38 援助活动与逐笔转移仍分开", /援助活动 1 次/.test(rb) && /逐笔转移 2 笔/.test(rb));
+    ok("L39 RECIP_M=0 是合法整数", L.parseStrictInt("0", { name: "RECIP_M", min: 0, max: 1000 }).ok);
   } catch (e) {
     out.push("FAIL 自检脚本本身出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
   }
