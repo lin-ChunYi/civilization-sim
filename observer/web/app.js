@@ -447,7 +447,10 @@ const UnitArt = {
   },
   scale(size) {
     const n = Math.max(1, Number(size) || 1);
-    return Math.max(0.92, Math.min(1.42, 0.82 + Math.sqrt(n) * 0.075));
+    return Math.max(1.08, Math.min(1.58, 0.98 + Math.sqrt(n) * 0.08));
+  },
+  silhouetteName(v) {
+    return ["staff", "stocky", "cloak", "scout"][(Number(v) || 0) % 4];
   },
   partyCount(size) {
     const n = Math.max(1, Number(size) || 1);
@@ -501,34 +504,62 @@ const UnitArt = {
   },
   propMarkup(v, pal) {
     if (v === 0) {
-      return `<path class="unit-prop" d="M8.2,-7.2 L8.6,10.2" stroke="${pal.accent}" stroke-width="1.4" stroke-linecap="round" fill="none"/>`
-        + `<circle cx="8.2" cy="-8.1" r="1.45" fill="${pal.sash}"/>`;
+      return `<path class="unit-prop" d="M8.6,-9.2 L9.1,12.4" stroke="${pal.accent}" stroke-width="1.55" stroke-linecap="round" fill="none"/>`
+        + `<circle cx="8.6" cy="-10.2" r="1.7" fill="${pal.sash}"/>`;
     }
     if (v === 1) {
-      return `<ellipse class="unit-prop" cx="-8.2" cy="5.0" rx="2.7" ry="2.0" fill="${pal.sash}" stroke="${pal.accent}" stroke-width="0.65"/>`;
+      return `<ellipse class="unit-prop" cx="-9.4" cy="5.6" rx="3.3" ry="2.4" fill="${pal.sash}" stroke="${pal.accent}" stroke-width="0.7"/>`
+        + `<path d="M-9.4,3.4 L-9.4,8.2" stroke="${pal.hair}" stroke-width="1.1"/>`;
     }
     if (v === 2) {
-      return `<path class="unit-prop" d="M-6.2,-2.6 C-9.2,1.4 -8.4,9.0 -3.4,9.4" fill="${pal.sash}" opacity="0.88"/>`;
+      return "";
     }
-    return `<path class="unit-prop" d="M-7.4,3.2 L-5.6,7.2 M7.4,3.2 L5.6,7.2" stroke="${pal.accent}" stroke-width="1.3" stroke-linecap="round" fill="none"/>`;
+    return `<path class="unit-prop" d="M-8.2,3.6 L-6.2,8.2 M8.0,3.6 L6.2,8.2" stroke="${pal.accent}" stroke-width="1.45" stroke-linecap="round" fill="none"/>`;
   },
   figureMarkup(pal, pose, v, ox, oy, sc, lead) {
-    const armY = pose === "give" ? "-3.4" : (pose === "select" ? "-2.4" : (pose === "walk" ? "2.0" : "3.8"));
-    const armRY = pose === "talk" ? "-3.6" : (pose === "walk" ? "2.6" : "3.6");
-    const legL = pose === "walk" ? "M-2.6,7.2 L-4.6,13.0" : "M-2.4,7.2 L-3.4,12.8";
-    const legR = pose === "walk" ? "M2.4,7.2 L4.4,13.0" : "M2.2,7.2 L3.2,12.8";
-    const prop = lead ? this.propMarkup(v, pal) : "";
-    return `<g class="unit-figure${lead ? " unit-lead" : " unit-companion"}" transform="translate(${ox},${oy}) scale(${sc})">
-        <path class="unit-leg unit-leg-l" d="${legL}" stroke="${pal.hair}" stroke-width="2.15" stroke-linecap="round" fill="none"/>
-        <path class="unit-leg unit-leg-r" d="${legR}" stroke="${pal.hair}" stroke-width="2.15" stroke-linecap="round" fill="none"/>
-        <path class="unit-tunic" d="M-6.4,-1.8 C-7.0,4.0 -5.6,8.6 -3.8,9.6 L3.8,9.6 C5.6,8.6 7.0,4.0 6.4,-1.8 C3.8,-3.4 -3.8,-3.4 -6.4,-1.8Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.8"/>
-        <path class="unit-sash" d="M-5.4,1.5 L5.6,2.8 L5.2,4.7 L-5.8,3.4Z" fill="${pal.sash}"/>
-        <path class="unit-arm-l" d="M-5.6,0.2 L-8.6,${armY}" stroke="${pal.skin}" stroke-width="1.85" stroke-linecap="round" fill="none"/>
-        <path class="unit-arm-r" d="M5.6,0.2 L8.4,${armRY}" stroke="${pal.skin}" stroke-width="1.85" stroke-linecap="round" fill="none"/>
-        <circle class="unit-head" cx="0" cy="-6.6" r="4.15" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.7"/>
-        <path class="unit-hair" d="M-4.0,-7.4 C-3.4,-11.0 3.4,-11.0 4.0,-7.4 C1.8,-8.8 -1.8,-8.8 -4.0,-7.4Z" fill="${pal.hair}"/>
-        ${lead ? `<circle cx="-1.25" cy="-6.35" r="0.55" fill="${pal.hair}" opacity="0.5"/><circle cx="1.25" cy="-6.35" r="0.55" fill="${pal.hair}" opacity="0.5"/>` : ""}
-        ${prop}
+    const kind = (Number(v) || 0) % 4;
+    const sil = this.silhouetteName(kind);
+    const armY = pose === "give" ? "-4.0" : (pose === "select" ? "-2.8" : (pose === "walk" ? "2.2" : "4.2"));
+    const armRY = pose === "talk" ? "-4.2" : (pose === "walk" ? "2.8" : "4.0");
+    const walk = pose === "walk";
+    let legs, tunic, sash, head, extra = "";
+    if (kind === 1) {
+      legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-3.4,6.6 L-5.2,12.2" : "M-3.2,6.6 L-4.0,12.0"}" stroke="${pal.hair}" stroke-width="2.7" stroke-linecap="round" fill="none"/>`
+        + `<path class="unit-leg unit-leg-r" d="${walk ? "M3.4,6.6 L5.2,12.2" : "M3.2,6.6 L4.0,12.0"}" stroke="${pal.hair}" stroke-width="2.7" stroke-linecap="round" fill="none"/>`;
+      tunic = `<path class="unit-tunic" d="M-8.4,-1.0 C-9.2,4.6 -7.2,9.0 -4.6,9.8 L4.6,9.8 C7.2,9.0 9.2,4.6 8.4,-1.0 C4.6,-2.8 -4.6,-2.8 -8.4,-1.0Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.85"/>`;
+      sash = `<path class="unit-sash" d="M-7.2,2.0 L7.4,3.2 L6.8,5.4 L-7.6,4.2Z" fill="${pal.sash}"/>`;
+      head = `<circle class="unit-head" cx="0" cy="-5.6" r="4.55" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.75"/>`
+        + `<path class="unit-hair" d="M-4.4,-6.2 C-3.4,-9.4 3.4,-9.4 4.4,-6.2 C2.0,-7.4 -2.0,-7.4 -4.4,-6.2Z" fill="${pal.hair}"/>`;
+    } else if (kind === 2) {
+      legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-2.4,7.6 L-3.8,13.4" : "M-2.2,7.6 L-2.8,13.2"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`
+        + `<path class="unit-leg unit-leg-r" d="${walk ? "M2.4,7.6 L3.8,13.4" : "M2.2,7.6 L2.8,13.2"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`;
+      tunic = `<path class="unit-tunic" d="M-7.6,-2.4 C-9.6,2.8 -8.8,10.4 -3.6,11.2 L3.6,11.2 C8.8,10.4 9.6,2.8 7.6,-2.4 C3.2,-4.6 -3.2,-4.6 -7.6,-2.4Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.8"/>`;
+      sash = `<path class="unit-sash" d="M-4.8,3.4 L5.2,4.2 L4.8,6.0 L-5.2,5.2Z" fill="${pal.sash}"/>`;
+      head = `<circle class="unit-head" cx="0" cy="-7.2" r="3.9" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.6"/>`
+        + `<path class="unit-hair" d="M-4.6,-6.4 C-5.2,-11.6 5.2,-11.6 4.6,-6.4 C2.4,-8.8 -2.4,-8.8 -4.6,-6.4Z" fill="${pal.hair}"/>`;
+      extra = `<path class="unit-hood" d="M-4.8,-7.8 C-2.2,-12.4 2.2,-12.4 4.8,-7.8 L3.4,-5.4 C1.4,-6.6 -1.4,-6.6 -3.4,-5.4Z" fill="${pal.sash}" opacity="0.92"/>`;
+    } else if (kind === 3) {
+      legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-2.8,6.4 L-4.8,11.6" : "M-2.6,6.4 L-3.4,11.4"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`
+        + `<path class="unit-leg unit-leg-r" d="${walk ? "M2.8,6.4 L4.8,11.6" : "M2.6,6.4 L3.4,11.4"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`;
+      tunic = `<path class="unit-tunic" d="M-5.8,-1.2 C-6.2,3.4 -5.0,7.4 -3.4,8.2 L3.4,8.2 C5.0,7.4 6.2,3.4 5.8,-1.2 C3.2,-2.6 -3.2,-2.6 -5.8,-1.2Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.8"/>`;
+      sash = `<path class="unit-sash" d="M-5.0,0.6 L5.2,1.4 L4.8,2.8 L-5.4,2.0Z" fill="${pal.sash}"/>`
+        + `<path class="unit-sash" d="M-5.0,3.6 L5.2,4.4 L4.8,5.6 L-5.4,4.8Z" fill="${pal.accent}" opacity="0.85"/>`;
+      head = `<circle class="unit-head" cx="0.6" cy="-6.2" r="3.7" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.7"/>`
+        + `<path class="unit-hair" d="M-3.0,-6.8 C-2.2,-10.2 3.6,-10.4 4.4,-6.6 C2.4,-7.8 -0.6,-7.6 -3.0,-6.8Z" fill="${pal.hair}"/>`;
+    } else {
+      legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-2.2,8.0 L-3.6,14.2" : "M-2.0,8.0 L-2.8,14.0"}" stroke="${pal.hair}" stroke-width="2.15" stroke-linecap="round" fill="none"/>`
+        + `<path class="unit-leg unit-leg-r" d="${walk ? "M2.2,8.0 L3.6,14.2" : "M2.0,8.0 L2.8,14.0"}" stroke="${pal.hair}" stroke-width="2.15" stroke-linecap="round" fill="none"/>`;
+      tunic = `<path class="unit-tunic" d="M-5.6,-2.4 C-6.0,4.8 -4.6,10.2 -3.0,11.2 L3.0,11.2 C4.6,10.2 6.0,4.8 5.6,-2.4 C3.2,-4.0 -3.2,-4.0 -5.6,-2.4Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.8"/>`;
+      sash = `<path class="unit-sash" d="M-4.8,1.8 L4.8,3.0 L4.4,4.8 L-5.2,3.6Z" fill="${pal.sash}"/>`;
+      head = `<circle class="unit-head" cx="0" cy="-7.4" r="4.05" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.7"/>`
+        + `<path class="unit-hair" d="M-3.8,-8.2 C-3.2,-12.0 3.2,-12.0 3.8,-8.2 C1.6,-9.6 -1.6,-9.6 -3.8,-8.2Z" fill="${pal.hair}"/>`;
+    }
+    const arms = kind === 2 ? ""
+      : `<path class="unit-arm-l" d="M-5.4,0.4 L-8.8,${armY}" stroke="${pal.skin}" stroke-width="1.9" stroke-linecap="round" fill="none"/>`
+        + `<path class="unit-arm-r" d="M5.4,0.4 L8.6,${armRY}" stroke="${pal.skin}" stroke-width="1.9" stroke-linecap="round" fill="none"/>`;
+    const prop = lead ? this.propMarkup(kind, pal) : "";
+    return `<g class="unit-figure${lead ? " unit-lead" : " unit-companion"}" data-silhouette="${sil}" transform="translate(${ox},${oy}) scale(${sc})">
+        ${legs}${tunic}${sash}${arms}${head}${extra}${prop}
       </g>`;
   },
   markup(b, x, y, opts) {
@@ -556,15 +587,15 @@ const UnitArt = {
           <path d="M9.5,-20 L20.5,-15.5 L9.5,-11Z" fill="${pal.sash}" stroke="${pal.accent}" stroke-width="0.5"/>
         </g>`
       : "";
-    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-pose="${esc(pose)}" data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
-      <title>${esc(name)} · 群体代表（${nParty}人造型）· ${size}人。这是群体的可视替身，不是独立个人生平。</title>
-      <ellipse class="unit-camp" cx="0" cy="13.2" rx="${campRx}" ry="3.6" fill="${pal.cloth}" fill-opacity="0.32" stroke="${pal.sash}" stroke-width="0.95"/>
+    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-silhouette="${this.silhouetteName(v)}" data-pose="${esc(pose)}" data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
+      <title>${esc(name)} · 群体代表（${this.silhouetteName(v)} · ${nParty}人造型）· ${size}人。这是群体的可视替身，不是独立个人生平。</title>
+      <ellipse class="unit-camp" cx="0" cy="14.0" rx="${campRx}" ry="3.8" fill="${pal.cloth}" fill-opacity="0.34" stroke="${pal.sash}" stroke-width="1.05"/>
       <g class="unit-body unit-${esc(pose)}">${party}</g>
-      ${on ? `<circle class="unit-ring" cx="0" cy="2" r="15.5" fill="none" stroke="${pal.accent}" stroke-width="1.45"/>` : ""}
+      ${on ? `<circle class="unit-ring" cx="0" cy="2" r="17.2" fill="none" stroke="${pal.accent}" stroke-width="1.55"/>` : ""}
       ${banner}
-      ${opts.hit === false ? "" : `<rect class="unit-hit" x="-18" y="-22" width="36" height="42" fill="transparent"/>`}
-      ${opts.showPop === false ? "" : `<text class="unit-pop" x="0" y="19.2" text-anchor="middle" font-size="7.1" fill="${on ? "#f3deaa" : "#1a1408"}" font-weight="700" pointer-events="none">${size}人</text>`}
-      ${opts.showName ? `<text class="unit-name" x="0" y="-18.5" text-anchor="middle" font-size="6.5" fill="#f3deaa" pointer-events="none">${esc(name)}</text>` : ""}
+      ${opts.hit === false ? "" : `<rect class="unit-hit" x="-22" y="-26" width="44" height="50" fill="transparent"/>`}
+      ${opts.showPop === false ? "" : `<text class="unit-pop" x="0" y="20.4" text-anchor="middle" font-size="7.4" fill="${on ? "#f3deaa" : "#1a1408"}" font-weight="700" pointer-events="none">${size}人</text>`}
+      ${opts.showName ? `<text class="unit-name" x="0" y="-20.2" text-anchor="middle" font-size="7.0" fill="#f3deaa" pointer-events="none">${esc(name)}</text>` : ""}
     </g>`;
   },
   labelMarkup(b, x, y, opts) {
@@ -1250,8 +1281,8 @@ function renderMap() {
         skin: S.skin,
         pose: on ? "select" : "idle",
         scale: UnitArt.scale(b.size) * (n > 3 ? 0.84 : 1),
-        showPop: lodB >= 0.92,
-        showName: lodB >= 1.55 || on,
+        showPop: lodB >= 0.85,
+        showName: lodB >= 1.02 || on,
       });
     });
   });
@@ -2076,7 +2107,10 @@ async function gotoYear(t, opts) {
   return finishOk();
 }
 function playDelay() {
-  return Math.max(80, (S.playMode === "events" ? 1250 : 650) / Math.max(S.speed || 1, 0.25));
+  return Math.max(80, (S.playMode === "events" ? 1600 : 720) / Math.max(S.speed || 1, 0.25));
+}
+function walkDuration() {
+  return Math.max(80, 1100 / Math.max(S.speed || 1, 0.25));
 }
 function tick() {
   if (!S.playing) return;
@@ -2510,7 +2544,7 @@ function svgEl(name, attrs) {
 function fxCaption(overlay, x, y, text) {
   const n = svgEl("text", {
     class: "fx-caption", x: Number(x).toFixed(1), y: Number(y).toFixed(1),
-    "text-anchor": "middle", "font-size": "8", fill: "#f3deaa",
+    "text-anchor": "middle", "font-size": "11", fill: "#f3deaa",
   });
   n.textContent = text;
   overlay.appendChild(n);
@@ -2573,7 +2607,7 @@ function paintMigrateAction(overlay, ev, plan, reduced) {
   S.fxAwayBand = ev.band ? String(ev.band) : null;
   if (!reduced) {
     const gen = S.fxGen;
-    S.fxAnim = { gen: gen, t0: performance.now(), dur: playDelay(), a: a, b: b, kind: "migrate" };
+    S.fxAnim = { gen: gen, t0: performance.now(), dur: walkDuration(), a: a, b: b, kind: "migrate" };
     const step = (now) => {
       if (gen !== S.fxGen || !S.fxAnim || S.fxAnim.gen !== gen) return;
       const u = Math.min(1, (now - S.fxAnim.t0) / S.fxAnim.dur);
@@ -2665,8 +2699,12 @@ function paintDirectorFx(opts) {
     if (!ev) return;
     const focus = DirectorLogic.eventFocus(ev);
     markEventCells(svg, ev, focus);
-    if (!focus.locate) return;
     const overlay = svgEl("g", { id: "fx-overlay", "pointer-events": "none" });
+    if (!focus.locate) {
+      fxCaption(overlay, 260, 28, "地点未记录 · 不在地图上猜测");
+      svg.appendChild(overlay);
+      return;
+    }
     const plan = UnitArt.actionPlan(ev, focus);
     if (plan.kind === "migrate") paintMigrateAction(overlay, ev, plan, reduced);
     else if (plan.kind === "share" || plan.kind === "aid") paintPairAction(overlay, ev, plan, reduced);

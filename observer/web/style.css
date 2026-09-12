@@ -241,7 +241,7 @@ footer{color:var(--muted);font-size:12px;padding:12px 24px 28px;text-align:cente
 @keyframes unit-bob{0%,100%{transform:translate(0,0)}50%{transform:translate(0,-2.2px)}}
 @keyframes unit-stride{0%,100%{transform:rotate(-11deg)}50%{transform:rotate(11deg)}}
 .fx-endpoint-line{stroke:#d4b06a;stroke-width:1.4;stroke-dasharray:4 5;opacity:.85;fill:none}
-.fx-caption{font-size:8px;fill:#f3deaa}
+.fx-caption{font-size:11px;fill:#f3deaa;paint-order:stroke;stroke:#0c100c;stroke-width:3.6}
 @keyframes flow { to { stroke-dashoffset: -24; } }
 .flow-line{stroke-dasharray:6 6;animation:flow 1s linear infinite;fill:none;stroke-width:1.6;opacity:.9}
 @keyframes yearpulse { from { opacity:.45; transform:scale(.96)} to { opacity:1; transform:none} }
@@ -335,7 +335,10 @@ html.skin-console #pane-help{display:none !important}
   .mapbox,#map{min-height:38vh}
   .map-key{display:none}
   .console{margin:4px 8px 8px;padding:6px}
-  .console .tlctl .btn{min-width:36px}
+  .console .tlctl .btn{min-width:44px;min-height:36px}
+  .ev{padding:10px 12px;min-height:44px}
+  .map-tools .btn{min-width:36px;min-height:32px}
+  .director-card{padding:10px}
   .tl-note{display:none}
   .kv{grid-template-columns:1fr}
   .kv .v{text-align:left}

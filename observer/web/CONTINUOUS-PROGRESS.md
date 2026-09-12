@@ -1,5 +1,15 @@
 # 连续开发进度
 
+## GROK_BUILD_003 检查点
+- 从 7152f60 续：默认缩放下拉开四种体型（staff / stocky / cloak / scout），营地更大、名字更早出现、点选热区 44×50。
+- 事件播放：事件间隔 1600ms、行走 1100ms，字幕 11px 描边；分裂只在沙盘顶栏写「地点未记录 · 不在地图上猜测」，不猜格。
+- 390 宽：时间轴按钮 ≥44px，事件行 min-height 44px。
+- 8788 PID 8659 未重启（静态即当前 web）。8765/8772 未动。
+- 试玩：http://127.0.0.1:8788/static/index.html#tab=world&run=preset-exp06-recip1000&t=0
+  建议 t=0 看营地体型 → 点选 → 事件模式 t=4 迁移 / t=83 援助 / t=125 信息 / t=52 分裂。
+- tests：game-v2-unit 20/0；game-v2-cdp 19/0（silN=3 cloak/scout/staff）；director-logic 18/0；g04-fix 6/0
+- 下一轮：事件模式手机卷宗与沙盘联动更醒目；衣饰对比再加强；bitmap 精灵仍可选；Safari 无 headless。
+
 ## GROK_BUILD_002 检查点
 - 从 a217dc42 续：先跑完整 `observer/run_tests.py`，修 O18b/O18c（毒化脚本删行导致语法错，自检 dump 0 条 FAIL）。
 - 毒化现同时关掉 opAlive / yearNavAlive / openRun 世代守卫，且不再用正则删行。套件 **213 pass / 0 fail / 1 uncovered**（O28m 预置无消失，未覆盖）。

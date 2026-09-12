@@ -47,7 +47,7 @@ const palB = U.palette(idB);
 ok("U1 palette stable for same id", palA1.cloth === palA2.cloth && palA1.sash === palA2.sash);
 ok("U2 palette differs across bands", palA1.cloth !== palB.cloth || palA1.sash !== palB.sash);
 ok("U3 scale grows with size but stays bounded",
-  U.scale(1) < U.scale(80) && U.scale(1) >= 0.9 && U.scale(400) <= 1.42);
+  U.scale(1) < U.scale(80) && U.scale(1) >= 1.05 && U.scale(400) <= 1.58);
 
 const mk = U.markup({ id: idA, name: "群体-ABC123", size: 20, cell: 10 }, 100, 80, { selected: true, pose: "select" });
 ok("U4 markup is a group representative not a lone circle token",
@@ -88,6 +88,19 @@ ok("U17 twenty-person group is a two-figure camp with banner",
   && /unit-companion/.test(mk2) && /unit-lead/.test(mk2));
 ok("U18 migrate stages stay on the endpoint segment",
   U.migrateStage(0) === "leave" && U.migrateStage(0.5) === "travel" && U.migrateStage(1) === "arrive");
+const pal = U.palette(idA);
+const f0 = U.figureMarkup(pal, "idle", 0, 0, 0, 1, true);
+const f1 = U.figureMarkup(pal, "idle", 1, 0, 0, 1, true);
+const f2 = U.figureMarkup(pal, "idle", 2, 0, 0, 1, true);
+const f3 = U.figureMarkup(pal, "idle", 3, 0, 0, 1, true);
+ok("U19 four silhouettes stay distinct at default mass",
+  U.silhouetteName(0) === "staff" && U.silhouetteName(1) === "stocky"
+  && U.silhouetteName(2) === "cloak" && U.silhouetteName(3) === "scout"
+  && f0.indexOf('data-silhouette="staff"') >= 0
+  && f1.indexOf('data-silhouette="stocky"') >= 0
+  && f2.indexOf("unit-hood") >= 0 && f2.indexOf('data-silhouette="cloak"') >= 0
+  && f3.indexOf('data-silhouette="scout"') >= 0
+  && f0 !== f1 && f1 !== f2 && f2 !== f3);
 
 const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
 out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);

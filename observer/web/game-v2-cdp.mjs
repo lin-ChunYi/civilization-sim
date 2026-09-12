@@ -12,7 +12,7 @@ mkdirSync(SHOT, { recursive: true });
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9341;
 const RUN = "preset-exp06-recip1000";
-const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v2b#tab=world&run=" + RUN + "&t=0";
+const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v3#tab=world&run=" + RUN + "&t=0";
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
   `--remote-debugging-port=${PORT}`,
@@ -85,16 +85,19 @@ try {
     var polys=[].slice.call(document.querySelectorAll('#map polygon.band'));
     var O=window.__obs; var rec=O.S.years.get(O.S.run.run_id+'|'+O.S.t);
     var party=units.map(function(n){return n.getAttribute('data-party');});
+    var sil=units.map(function(n){return n.getAttribute('data-silhouette');});
+    var silSet={};
+    sil.forEach(function(s){ if(s) silSet[s]=true; });
     return {units:units.length, circleTokens:circles.length, diamondTokens:polys.length,
       bands: rec && rec.bands ? rec.bands.length : 0, t:O.S.t, run:O.S.run && O.S.run.run_id,
       hasHead: !!document.querySelector('#map .unit-head'), hasTunic: !!document.querySelector('#map .unit-tunic'),
       hasCamp: !!document.querySelector('#map .unit-camp'), skirts: document.querySelectorAll('#map .cell-skirt').length,
-      party: party};
+      party: party, sil: sil, silN: Object.keys(silSet).length};
   })()`);
   ok("V1 代表人数等于在世群体且不是圆点/菱形棋子",
     census && census.units === census.bands && census.units > 0
     && census.circleTokens === 0 && census.diamondTokens === 0 && census.hasHead && census.hasTunic
-    && census.hasCamp && census.skirts > 0,
+    && census.hasCamp && census.skirts > 0 && census.silN >= 2,
     JSON.stringify(census));
   await shot("desktop-t0-units.png");
 
@@ -187,12 +190,15 @@ try {
     var fe=await O.focusEvent(Object.assign({}, e, {t:52}));
     await new Promise(function(r){setTimeout(r, 80);});
     var body=document.querySelector('#director-card-body');
+    var cap=document.querySelector('#fx-overlay .fx-caption');
     return {ok: !!(fe && fe.ok), eid:e.id, walker: !!document.getElementById('fx-walker'),
-      pair: !!document.getElementById('fx-pair'), overlayKids: (document.querySelector('#fx-overlay')||{childNodes:{length:0}}).childNodes.length,
+      pair: !!document.getElementById('fx-pair'),
+      cap: cap ? cap.textContent : '',
       note: body ? body.textContent : ''};
   })()`);
   ok("V6 分裂不在地图上猜地点",
-    split && split.ok && !split.walker && !split.pair && /地点未记录/.test(split.note),
+    split && split.ok && !split.walker && !split.pair && /地点未记录/.test(split.note)
+    && /不在地图上猜测/.test(split.cap || ""),
     JSON.stringify(split));
   await shot("desktop-split-no-locate.png");
 
