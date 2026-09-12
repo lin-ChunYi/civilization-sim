@@ -48,8 +48,17 @@ python3 ops/dispatch.py resume
 对方什么时候停、停不停，要看它自己的回执或会话回到 `waiting`。通知只发一次，
 `resume` 之后才会重新允许发。
 
-`stop` 只停**本脚本自己启动的 watch 进程**：先落 `stop.request`，再发 SIGTERM，
-等它把状态写完退出。它不碰任何被借用的会话，也不会留下第二个还在派单的控制器。
+`stop` 只停**本脚本自己启动的 watch 进程**，而且**先验明正身**：
+`watch.json` 里记了 pid + 一次性 token，`stop` 会用 `ps` 核对那个 pid 确实是
+"本脚本、本 state-dir 的 watch"。核对不上（典型是 pid 被别的进程复用、或 `ps` 不可用）
+就**不发信号**，只报告让人去看 —— 宁可留个孤儿状态文件，也不能误杀别人的进程。
+确认之后才写带 token 的 `stop.request` 并发 SIGTERM，等它把状态写完退出。
+它不碰任何被借用的会话，也不会留下第二个还在派单的控制器。
+
+守护和独立命令共用一把项目锁，但行为不同：**守护会等**（默认最多 10 秒，`--lock-wait` 可调），
+等不到就**跳过这一轮继续活着**（`watch.json` 里记 `skipped_rounds`）；
+独立命令不等，直接如实报 `busy`（退出码 3）。一次正常的 `status`/`submit`/`pause`
+不会把守护弄退出。
 
 ## 状态与回执怎么读
 
@@ -61,13 +70,20 @@ python3 ops/dispatch.py resume
 
 | receipt_state | 含义 |
 |---|---|
-| `queued` | 信封已落 outbox / 已被取走，还没有落地回执 |
+| `queued` | 信封已落 outbox / 已被取走，还没有终态回执 |
 | `bridge_ack` | 桥接确认收到 —— **不是**任务完成 |
-| `durable_ok` | 落地回执 `ok:true` —— 只代表**送达**，仍然不是完成 |
+| `durable_ok` | 终态回执 `ok:true` —— 只代表**送达**，仍然不是完成 |
 | `permission_pending` | 对面有权限/提问待办，需要人去看，不要一键批准 |
 | `failed` | 明确失败（`ok:false` 或 `.err`） |
 | `quota_blocked` | 明确的额度/限流阻塞 —— 不切付费通道、不高速重试 |
-| `unknown` | 超时仍无回执：**结果未知**。不是失败，也**绝不自动重发** |
+| `unknown` | **结果未知**：超时没有终态回执、`agent_prompt_stalled`、或回执写了一半读不出来。不是失败，**绝不自动重发** |
+
+两点容易搞错，写清楚：
+
+* **`agent_prompt_stalled` 不是失败。** 它的意思是文字和回车**都已经送到**，
+  只是没看见画面推进。当成失败去重排，就是把同一份活儿派了两遍。
+* **超时判定不看 outbox 里还剩什么。** 信封没被取走、或者只有一个 `.ack`，
+  到点照样判 `unknown` —— 否则会永远停在 `queued`/`bridge_ack` 等一个不会来的回执。
 
 任务状态：`pending → running → review →（外部 accept）→ done`，
 出问题则 `blocked`。`unknown` 只会让任务 `blocked` 停下等人看。
@@ -75,9 +91,30 @@ python3 ops/dispatch.py resume
 要重排一个任务：
 
 ```bash
-python3 ops/dispatch.py requeue C03                               # 仅限明确失败
-python3 ops/dispatch.py requeue C03 --acknowledge-duplicate-risk  # 未知投递，必须显式承认风险
+# 免确认重排，**只允许**能证明"根本没送到对面"的失败
+# （session not found / device offline / invalid envelope / rejected before delivery …）
+python3 ops/dispatch.py requeue C03
+
+# 其余一律要显式承认重复投递风险：unknown、agent_prompt_stalled、
+# 半写回执、以及原因不明的 ok:false
+python3 ops/dispatch.py requeue C03 --acknowledge-duplicate-risk
 ```
+
+## 返工闭环（不要手改 queue.json）
+
+外部复核认为不合格时，有两条**受控**路径，不需要去编辑状态文件：
+
+```bash
+# 1) 直接拒收：review/blocked -> rejected，owner 随之释放，可以接下一个任务
+python3 ops/dispatch.py reject G01 --reason "独立复核发现 X"
+
+# 2) 或者保留 review，派一个明确指向它的返工任务（job JSON 里写 "rework_of": "G01"）
+python3 ops/dispatch.py submit ops/jobs/G01_R1.json
+```
+
+`rework_of` 必须指向**同一个 owner**、且处于 `review` / `rejected` / `blocked` 的那条任务；
+只有它能在 owner 还压着 review 的时候被派出去。**普通的下一个任务仍然要等 `accept`**，
+这条规矩没有松。
 
 ## 转录被截短了怎么办（已处理）
 
@@ -85,9 +122,14 @@ python3 ops/dispatch.py requeue C03 --acknowledge-duplicate-risk  # 未知投递
 派工时记下的字节偏移立刻失效。脚本用双保险处理：
 
 1. 派工时除了偏移，还记一个锚（偏移前 512 字节的 sha256）。锚对得上就走快路；
-2. 对不上就**重新绑定**：在当前文件里找到最后一条包含本次提示词开头的**用户**记录，
-   只认它之后的**助手**记录。找不到就报 `rebind-failed`，宁可等人看，
-   也不拿孤立的标记当完成。
+2. 对不上就**重新绑定**，按三件真实情况处理：
+   * 每次投递都带一个唯一前缀 `[dispatch <TASK_ID> <CORR8>]`，重绑定找的是**它**，
+     所以上一轮的同名标记冒充不了这一轮；
+   * Cockpit 的 `composeInjection` 会把 CR/LF/Tab 折成空格
+     （`cockpit-cloud-hub/internal/inject/attachment.go:94`），
+     所以两边都按同一套**空白规范化**再比；
+   * Grok 会把用户提示词拆成多条 `user chunk`，所以连续的用户记录先拼起来再比。
+   找不到就报 `rebind-failed`，宁可等人看，也不拿孤立的标记当完成。
 
 配套的两条硬规矩：**只认助手说的话**（派工提示词里本来就带着 `CIV_RESULT_` 模板，
 它是用户记录，永远不算完成），**只认本次派工之后**的输出（上一轮遗留的同名标记不算）。
@@ -98,19 +140,26 @@ python3 ops/dispatch.py requeue C03 --acknowledge-duplicate-risk  # 未知投递
 
 `task_id`（大写下划线）、`owner`（`claude` / `grok`）、`objective`、`allowed_paths`、
 `baseline_sha`、`dependencies`、`acceptance`、`workdir`、`branch`、
-`device_id`、`session_id`、`session_cwd`、`prompt_file`。
+`device_id`、`session_id`、`session_cwd`、`prompt_file`；
+可选 `rework_of`（指向同 owner 的 review/rejected/blocked 任务，用于受控返工）。
 派工前会核对会话身份（source / cwd）与空闲边界，对不上就不投。
 
 ## 测试
 
 ```bash
-python3 ops/test_dispatch.py      # 13 项，全部在临时目录里造假 hub
+python3 ops/test_dispatch.py      # 25 项，全部在临时目录里造假 hub
 ```
 
-不碰本机任何真实会话与真实 outbox。覆盖：假助手标记、只认派工之后的输出、
-两种 chunk 格式、截短后重绑定与无法绑定、回执分类、不重发与重启、并发锁、
-暂停只通知一次、安全停止、自报不等于验收、STATUS 脱敏。
-每条都验证过"把对应防护去掉就会红"。
+不碰本机任何真实会话与真实 outbox（PID 复用那条也只拿测试自己起的 `sleep` 当靶子）。
+覆盖：假助手标记、只认派工之后的输出、两种 chunk 格式、截短后重绑定
+（含真实空白规范化与 Grok 拆 chunk）、旧投递前缀不可冒充、回执分级、
+`agent_prompt_stalled` 与半写回执判 unknown、留着 ack/信封也能按时判 unknown、
+安全重排的边界、不重发与重启、并发锁下守护存活、暂停只通知一次、
+`stop` 拒绝对身份不明的 pid 发信号、损坏 queue.json 保留原件并拦住派发、
+拒收/返工闭环、`screenshots[]`、自报不等于验收、STATUS 脱敏。
+
+每条都验证过"把对应防护去掉就会红"：把这 25 项拿去跑上一版
+（commit `aff0ed5`）会红 12 项。
 
 ## 边界（写明，别指望）
 
@@ -118,5 +167,8 @@ python3 ops/test_dispatch.py      # 13 项，全部在临时目录里造假 hub
 - **关机 / 应用退出不保证继续**：watch 是一个普通前台/后台进程，没有 launchd、
   没有系统服务、没有自启。机器睡了、终端关了、Cockpit 应用退了，它就停了；
   重启后要人手 `start`，而且**不会**自动重发结果未知的任务。
+- **状态文件坏了不会被悄悄覆盖**：`queue.json` 读不出来时会把原件另存为
+  `queue.corrupt.<时间戳>.json`，然后拦住一切派发并报 `blocked`（退出码 2），
+  等人修好，绝不拿一个空队列写回去。
 - 没有网络端口、没有远程命令入口。
 - 不新建 Redis / 微服务 / Agent 平台，这个文件就是全部。

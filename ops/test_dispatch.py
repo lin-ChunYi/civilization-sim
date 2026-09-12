@@ -92,6 +92,15 @@ class Base(unittest.TestCase):
         queue = D.read(self.root / 'queue.json')
         return queue['jobs']['T1']
 
+    def injected_text(self, task='T1'):
+        """真实投递出去的文本（带 [dispatch TASK CORR8] 前缀），从命令日志里取。"""
+        return D.read(self.root / 'logs' / (task + '.command.json'))['data']['text']
+
+    def cockpit_normalized(self, text):
+        """Cockpit 的 composeInjection 会把 CR/LF/Tab 折成空格
+        （cockpit-cloud-hub/internal/inject/attachment.go:94）。转录里的用户记录长这样。"""
+        return ' '.join(text.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ').split())
+
     def envelopes(self):
         return sorted(p for p in (self.hub / 'outbox').glob('*.json')
                       if not p.name.endswith('.result.json'))
@@ -152,9 +161,10 @@ class TestTranscriptTruncation(Base):
         job = self.submit_and_dispatch()
         old_offset = job['transcript_offset']
         self.assertGreater(old_offset, 1000)
-        # 模拟物化：只留尾部（提示词 + 助手回答），文件比 offset 小得多
+        # 模拟物化：只留尾部（**真实注入文本、已被 Cockpit 归一化** + 助手回答）
         self.tpath.write_text('\n'.join([
-            json.dumps(claude_rec('user', self.prompt.read_text()), ensure_ascii=False),
+            json.dumps(claude_rec('user', self.cockpit_normalized(self.injected_text())),
+                       ensure_ascii=False),
             json.dumps(claude_rec('assistant', MARKER + ' {"status":"done","commit":"R"}'),
                        ensure_ascii=False)]) + '\n', encoding='utf-8')
         self.assertLess(self.tpath.stat().st_size, old_offset)
@@ -176,6 +186,47 @@ class TestTranscriptTruncation(Base):
         self.assertEqual(j['transcript_read_mode'], 'rebind-failed')
         self.assertNotEqual(j['status'], 'review', '无法锚定时把孤立标记当成了完成')
         self.assertIn('truncated', j.get('attention', ''))
+
+
+class TestInjectionAnchor(Base):
+    def test_R4c_grok_user_prompt_split_into_chunks(self):
+        """Grok 会把用户提示词拆成多条 user chunk，拼起来才找得到投递前缀。"""
+        self.write_snapshot(snapshot(owner='grok'))
+        self.append([grok_rec('assistant', 'z' * 2000)])      # 先有历史，offset 才非 0
+        self.submit_and_dispatch(owner='grok')
+        text = self.cockpit_normalized(self.injected_text())
+        cut = len(text) // 3
+        self.tpath.write_text('\n'.join([
+            json.dumps(grok_rec('user', text[:cut]), ensure_ascii=False),
+            json.dumps(grok_rec('user', text[cut:2 * cut]), ensure_ascii=False),
+            json.dumps(grok_rec('user', text[2 * cut:]), ensure_ascii=False),
+            json.dumps(grok_rec('assistant', MARKER + ' {"status":"done","commit":"SPLIT"}'),
+                       ensure_ascii=False)]) + '\n', encoding='utf-8')
+        self.run_cli('tick')
+        j = self.queue()['jobs']['T1']
+        self.assertEqual(j['transcript_read_mode'], 'rebound', '拆成多条的用户提示词没能重绑定')
+        self.assertEqual(j['report']['commit'], 'SPLIT')
+
+    def test_R4d_old_dispatch_tag_is_not_reused(self):
+        """上一轮派工的前缀不能给这一轮当锚点：每次投递的 [dispatch ...] 都不一样。"""
+        self.append([claude_rec('assistant', 'w' * 2000)])    # 先有历史，offset 才非 0
+        self.submit_and_dispatch()
+        old_tag = self.queue()['jobs']['T1']['inject_tag']
+        self.tpath.write_text('\n'.join([
+            json.dumps(claude_rec('user', self.cockpit_normalized(old_tag + ' 旧的一轮')),
+                       ensure_ascii=False),
+            json.dumps(claude_rec('assistant', MARKER + ' {"status":"done","commit":"OLD"}'),
+                       ensure_ascii=False)]) + '\n', encoding='utf-8')
+        self.run_cli('tick')          # 这一轮的 tag 就是 old_tag，所以应当认
+        self.assertEqual(self.queue()['jobs']['T1']['report']['commit'], 'OLD')
+        # 换一个 corr（模拟新一轮派工）后，旧 tag 不再是锚点
+        q = self.queue(); q['jobs']['T1']['inject_tag'] = '[dispatch T1 FFFFFFFF]'
+        q['jobs']['T1']['status'] = 'running'; q['jobs']['T1'].pop('report', None)
+        D.atomic(self.root / 'queue.json', q)
+        self.run_cli('tick')
+        j = self.queue()['jobs']['T1']
+        self.assertEqual(j['transcript_read_mode'], 'rebind-failed', '旧 tag 被当成了本轮锚点')
+        self.assertNotEqual(j['status'], 'review')
 
 
 class TestReceipts(Base):
@@ -216,6 +267,66 @@ class TestReceipts(Base):
         j = self.queue()['jobs']['T1']
         self.assertEqual(j['receipt_state'], 'unknown')
         self.assertIn('no auto-resend', j['blocking_reason'])
+
+
+class TestStallAndUnreadable(Base):
+    def test_R12_prompt_stalled_is_unknown_not_failure(self):
+        """agent_prompt_stalled：文字和回车都送到了，只是没见画面推进 —— 绝不是"没执行"。"""
+        job = self.submit_and_dispatch()
+        (self.hub / 'outbox' / (job['corr_id'] + '.result.json')).write_text(
+            '{"ok":false,"error":"agent_prompt_stalled"}', encoding='utf-8')
+        self.run_cli('tick')
+        j = self.queue()['jobs']['T1']
+        self.assertEqual(j['receipt_state'], 'unknown', 'stalled 被误判成 failed')
+        self.assertFalse(j['receipt_safe_requeue'])
+        self.run_cli('requeue', 'T1', expect=1)          # 免确认重排 = 重复派工，必须拦住
+        self.run_cli('requeue', 'T1', '--acknowledge-duplicate-risk')
+
+    def test_R13_half_written_receipt_is_unknown(self):
+        """回执写了一半（JSON 解析不了）不是失败，是未知。"""
+        job = self.submit_and_dispatch()
+        (self.hub / 'outbox' / (job['corr_id'] + '.result.json')).write_text(
+            '{"ok":tr', encoding='utf-8')
+        self.run_cli('tick')
+        j = self.queue()['jobs']['T1']
+        self.assertEqual(j['receipt_state'], 'unknown', '半写回执被误判成 failed')
+        self.assertIn('unreadable', j['receipt_detail'])
+        self.run_cli('requeue', 'T1', expect=1)
+
+    def test_R14_overdue_reaches_unknown_even_with_ack_or_envelope(self):
+        """outbox 里还留着 .ack 或旧信封，也必须能按时判 unknown，不能永远停在 queued。"""
+        for leftover in ('.ack.json', '.json'):
+            self.setUp()
+            job = self.submit_and_dispatch()
+            corr = job['corr_id']
+            if leftover == '.ack.json':
+                (self.hub / 'outbox' / (corr + '.ack.json')).write_text('{"ack":1}',
+                                                                       encoding='utf-8')
+            q = self.queue()
+            q['jobs']['T1']['started_epoch'] = time.time() - D.UNKNOWN_AFTER_SEC - 5
+            D.atomic(self.root / 'queue.json', q)
+            self.run_cli('tick')
+            j = self.queue()['jobs']['T1']
+            self.assertEqual(j['receipt_state'], 'unknown',
+                             '留着 %s 就永远到不了 unknown' % leftover)
+
+    def test_R20_only_provably_undelivered_failure_is_safe_to_requeue(self):
+        job = self.submit_and_dispatch()
+        out = self.hub / 'outbox' / (job['corr_id'] + '.result.json')
+        out.write_text('{"ok":false,"error":"session not found"}', encoding='utf-8')
+        self.run_cli('tick')
+        j = self.queue()['jobs']['T1']
+        self.assertEqual(j['receipt_state'], 'failed')
+        self.assertTrue(j['receipt_safe_requeue'], '确证未送达的失败应当可以直接重排')
+        self.run_cli('requeue', 'T1')                    # 无需承认风险
+        # 原因不明的失败 -> 不给免确认
+        self.setUp()
+        job = self.submit_and_dispatch()
+        (self.hub / 'outbox' / (job['corr_id'] + '.result.json')).write_text(
+            '{"ok":false,"error":"something odd happened"}', encoding='utf-8')
+        self.run_cli('tick')
+        self.assertFalse(self.queue()['jobs']['T1']['receipt_safe_requeue'])
+        self.run_cli('requeue', 'T1', expect=1)
 
 
 class TestNoDuplicateDispatch(Base):
@@ -279,6 +390,108 @@ class TestPauseAndLocks(Base):
         self.assertFalse(self.queue()['paused'])
 
 
+class TestWatcherSafety(Base):
+    def test_R15_stop_refuses_unverified_pid(self):
+        """PID 被复用时绝不能发信号：构造一个无关进程占住记录里的 pid。"""
+        victim = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+        self.addCleanup(victim.kill)
+        self.run_cli('tick')
+        D.atomic(self.root / 'watch.json', {'pid': victim.pid, 'token': 'stale-token',
+                                            'started_at': D.now(), 'state_dir': str(self.root)})
+        out = json.loads(self.run_cli('stop').stdout)
+        self.assertFalse(out['stopped'])
+        self.assertFalse(out['signalled'], '对身份不明的 pid 发了信号')
+        self.assertIn('PID reuse', out['reason'])
+        time.sleep(0.3)
+        self.assertIsNone(victim.poll(), '无关进程被误杀了')
+
+    def test_R16_watcher_survives_lock_contention(self):
+        """status/submit/pause 正常占锁时，守护要么等、要么跳过这一轮，**都得继续活着**。"""
+        import fcntl
+        # (a) 正常争用：守护等一会儿就拿到锁，必须活着并继续收轮
+        self.run_cli('start', '--interval', '1')
+        self.addCleanup(lambda: self.run_cli('stop'))
+        pid = D.read(self.root / 'watch.json')['pid']
+        with (self.root / 'controller.lock').open('a+') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            time.sleep(3)
+            os.kill(int(pid), 0)                      # 占锁期间没被"锁"死
+        before = (D.read(self.root / 'watch.json', {}) or {}).get('heartbeat')
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            info = D.read(self.root / 'watch.json', {}) or {}
+            if info.get('heartbeat') != before and info.get('last_round') == 'ok':
+                break
+            time.sleep(0.3)
+        self.assertTrue(D.watcher_alive(self.root), '守护被一次正常占锁弄退出了')
+        self.assertEqual((D.read(self.root / 'watch.json') or {}).get('last_round'), 'ok',
+                         '让开锁之后守护没有恢复收轮')
+
+        # (b) 等不到锁：必须记一轮 skipped 并正常退出（而不是 SystemExit 把守护打死）
+        self.run_cli('stop')
+        with (self.root / 'controller.lock').open('a+') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            proc = subprocess.run([sys.executable, DISPATCH, '--state-dir', str(self.root),
+                                   '--hub-dir', str(self.hub), 'watch', '--once',
+                                   '--lock-wait', '1'], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0,
+                         '拿不到锁时守护直接退出了：%s' % (proc.stderr[-300:]))
+        info = D.read(self.root / 'watch.json', {}) or {}
+        self.assertGreaterEqual(info.get('skipped_rounds', 0), 1, '没有记录被跳过的轮次')
+        self.assertIn('skipped', info.get('last_round', ''))
+
+
+class TestQueueIntegrity(Base):
+    def test_R17_corrupt_queue_is_preserved_not_overwritten(self):
+        self.submit_and_dispatch()
+        original = (self.root / 'queue.json').read_text(encoding='utf-8')
+        (self.root / 'queue.json').write_text(original[:len(original) // 2], encoding='utf-8')
+        broken = (self.root / 'queue.json').read_text(encoding='utf-8')
+        out = self.run_cli('status', expect=2)
+        self.assertIn('unreadable', out.stdout)
+        self.assertEqual((self.root / 'queue.json').read_text(encoding='utf-8'), broken,
+                         '损坏的队列被空状态覆盖了')
+        self.assertTrue(list(self.root.glob('queue.corrupt.*.json')), '没有保留原件')
+        self.run_cli('tick', expect=2)        # 派发也必须被拦住
+
+
+class TestReworkLoop(Base):
+    def test_R18_review_blocks_next_task_but_allows_controlled_rework(self):
+        self.submit_and_dispatch()
+        self.append([claude_rec('assistant', MARKER + ' {"status":"done","commit":"V1"}')])
+        self.run_cli('tick')
+        self.assertEqual(self.queue()['jobs']['T1']['status'], 'review')
+
+        # 普通的下一个任务：仍然要等 accept，不能越过验收
+        nxt = self.job(task='T2'); jf = self.tmp / 'j2.json'
+        jf.write_text(json.dumps(nxt), encoding='utf-8'); self.run_cli('submit', str(jf))
+        self.run_cli('tick')
+        self.assertEqual(self.queue()['jobs']['T2']['status'], 'pending',
+                         '没验收就把下一个任务派出去了')
+
+        # 返工任务：明确 rework_of 指向那条 review，才放行
+        rw = self.job(task='T1_R1'); rw['rework_of'] = 'T1'
+        jf2 = self.tmp / 'j3.json'; jf2.write_text(json.dumps(rw), encoding='utf-8')
+        self.run_cli('submit', str(jf2))
+        self.run_cli('tick')
+        self.assertEqual(self.queue()['jobs']['T1_R1']['status'], 'running',
+                         '合法的返工闭环被拦住了')
+
+    def test_R18b_reject_frees_the_owner(self):
+        self.submit_and_dispatch()
+        self.append([claude_rec('assistant', MARKER + ' {"status":"done"}')])
+        self.run_cli('tick')
+        self.run_cli('reject', 'T1', '--reason', 'independent review found a defect')
+        j = self.queue()['jobs']['T1']
+        self.assertEqual(j['status'], 'rejected')
+        self.assertIn('defect', j['reject_reason'])
+        nxt = self.job(task='T2'); jf = self.tmp / 'j2.json'
+        jf.write_text(json.dumps(nxt), encoding='utf-8'); self.run_cli('submit', str(jf))
+        self.run_cli('tick')
+        self.assertEqual(self.queue()['jobs']['T2']['status'], 'running',
+                         'reject 之后 owner 没有被释放')
+
+
 class TestWatcherLifecycle(Base):
     def test_R9_start_stop_is_clean(self):
         out = self.run_cli('start', '--interval', '1')
@@ -314,6 +527,18 @@ class TestAcceptanceAndStatus(Base):
         j = self.queue()['jobs']['T1']
         self.assertEqual(j['status'], 'done')
         self.assertTrue(j['acceptance_evidence'].endswith('evidence.txt'))
+
+    def test_R19_status_keeps_all_screenshots(self):
+        """Grok 实际会报 screenshots[]（复数）；只读单数会漏掉已有截图。"""
+        self.submit_and_dispatch()
+        self.append([claude_rec('assistant', MARKER + ' {"status":"done",'
+                                             '"screenshots":["a.png","b.png"]}')])
+        self.run_cli('tick')
+        md = (self.root / 'STATUS.md').read_text(encoding='utf-8')
+        js = json.loads((self.root / 'STATUS.json').read_text(encoding='utf-8'))
+        self.assertIn('a.png', md)
+        self.assertIn('b.png', md, 'screenshots[] 被漏掉了')
+        self.assertEqual(js['jobs'][0]['screenshots'], ['a.png', 'b.png'])
 
     def test_R11_status_is_redacted(self):
         self.submit_and_dispatch()
