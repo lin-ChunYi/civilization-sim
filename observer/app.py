@@ -43,6 +43,11 @@ def _startup() -> None:
     n = store.recover_interrupted()
     if n:
         print(f"[observer] 启动时把 {n} 个未完成任务标记为中断")
+    pending = store.recovery_pending()
+    if pending:
+        # 没确认停下来就不放槽。这里如实报数，不把它们算进"已标记为中断"。
+        print(f"[observer] {pending} 个任务的旧工作进程没能确认停止，记录保持活动状态、"
+              f"任务槽继续占着；详见 /api/runs 的 recovery_note")
 
 
 # ---------------------------------------------------------------- 访问保护

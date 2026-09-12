@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS runs (
   cancel_requested_at REAL,                           -- 用户按下取消的时刻（有界收尾的起算点）
   cancel_note   TEXT NOT NULL DEFAULT '',             -- 取消收尾进行到哪一步（人话，给页面看）
   cancel_last_attempt_at REAL,                        -- 上一次真的发过停止信号的时刻（节流用）
+  recovery_note TEXT NOT NULL DEFAULT '',             -- 重启恢复没能确认停止时的待处理说明
   engine_sha256 TEXT NOT NULL DEFAULT '',
   engine_path   TEXT NOT NULL DEFAULT '',
   baseline_commit TEXT NOT NULL DEFAULT '',
@@ -84,7 +85,8 @@ MIGRATIONS = (("share_m", "INTEGER NOT NULL DEFAULT 0"),
               ("recip_m", "INTEGER NOT NULL DEFAULT 0"),
               ("cancel_requested_at", "REAL"),
               ("cancel_note", "TEXT NOT NULL DEFAULT ''"),
-              ("cancel_last_attempt_at", "REAL"))
+              ("cancel_last_attempt_at", "REAL"),
+              ("recovery_note", "TEXT NOT NULL DEFAULT ''"))
 
 
 def init_db() -> None:
@@ -267,6 +269,22 @@ def mark_cancel_attempt(run_id: str, when: Optional[float] = None) -> None:
     with connect() as conn:
         conn.execute("UPDATE runs SET cancel_last_attempt_at=? WHERE run_id=?",
                      (time.time() if when is None else when, run_id))
+
+
+def set_recovery_note(run_id: str, note: str) -> None:
+    """重启恢复没能确认旧进程停止时的说明。**只写说明，不碰 status**。"""
+    with connect() as conn:
+        conn.execute("UPDATE runs SET recovery_note=? WHERE run_id=? AND status IN (?,?)",
+                     (note, run_id, *_STATUS_ACTIVE))
+
+
+def recovery_pending() -> int:
+    """还有几条记录卡在"旧工作进程没能确认停止"上（仍占着任务槽）。"""
+    init_db()
+    with connect() as conn:
+        return int(conn.execute(
+            "SELECT COUNT(*) c FROM runs WHERE status IN (?,?) AND recovery_note<>''",
+            _STATUS_ACTIVE).fetchone()["c"])
 
 
 def set_cancel_note(run_id: str, note: str) -> None:
@@ -549,7 +567,8 @@ def reap_stale() -> List[Dict[str, Any]]:
         # 写入时再比对一次状态与 pid：检查之后如果工作进程刚启动（pid 变了 / 进了 running），
         # 这次 UPDATE 就匹配不到行，本轮不回收，下一轮再看。
         if transition(rid, "interrupted", allow_from=[status], expect_pid=pid,
-                      years_done=max(done - 1, 0), finished_at=now, error=note):
+                      years_done=max(done - 1, 0), finished_at=now, error=note,
+                      recovery_note=""):
             _CACHE.pop(rid, None)
             reaped.append({"run_id": rid, "from": status, "why": why})
     return reaped
@@ -673,31 +692,50 @@ def enforce_cancels() -> List[Dict[str, Any]]:
 
 
 def recover_interrupted() -> int:
-    """服务启动时调用。
+    """服务启动时调用。返回**真正被标成 interrupted 的条数**（不是扫过几条）。
 
-    顺序是固定的：**先停掉可能还活着的旧工作进程，再把记录标成中断**。
-    工作进程那边所有写入都带 status='running' AND pid=? 的围栏，所以一旦标成 interrupted，
-    即使有漏网的进程也改不回 done。已经算出来的年份仍然可以回放。
+    顺序是固定的：先停掉可能还活着的旧工作进程，**核实它确实不在了**，再标中断。
+
+    只有确认 `gone` 才终态收尾、才释放任务槽。理由和取消那条路一样：旧工作进程即使
+    被围栏挡住改不回 `done`，仍然会往 `years.jsonl` 里**追加**年份（文件写入没有围栏），
+    所以"在文案里承认没停下来"是不够的 —— 必须真的不放槽。
+
+    停不下来（`alive`）或停没停下来查不到（`unknown`）：记录**保持活动状态**，
+    写一条"恢复待处理"说明（`recovery_note`），任务槽继续占着。
+    之后**不再主动发信号**：后续的 `/api/runs` 与新建运行会走 `reap_stale()` 重新探测
+    （它只探测、不发信号），确认那个进程不在了才收尾。要主动结束它，请用户按取消 ——
+    那是有明确同意的、会重新核验身份的有界升级路径。这里不看"跑了多久"，
+    也不对没被取消的运行做任何超时判断。
     """
     init_db()
     with connect() as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT run_id, pid FROM runs WHERE status IN (?,?)", _STATUS_ACTIVE).fetchall()]
+            "SELECT run_id, pid, status FROM runs WHERE status IN (?,?)",
+            _STATUS_ACTIVE).fetchall()]
+    recovered = 0
     for r in rows:
-        probe = probe_worker(r["pid"], r["run_id"])
-        stopped = stop_worker(int(r["pid"]), r["run_id"]) if probe == WORKER_ALIVE else probe
-        done = len(_lines(r["run_id"]))
-        # 三态如实转述：**只有确认 gone 才说"已被停止"**，unknown / alive 都不算成功。
-        if stopped == WORKER_GONE:
-            tail = "，旧工作进程已被停止"
-        elif stopped == WORKER_ALIVE:
-            tail = ("，但发过停止信号后仍能查到那个旧工作进程（写入围栏仍然生效，"
-                    "它改不回 done；若它还在写这次运行的记录，请手动结束该进程）")
-        else:
-            tail = ("，且无法确认旧工作进程的状态（写入围栏仍然生效，它改不回 done）")
-        note = ("服务重启时该任务尚未完成" + tail +
-                "。本版不做跨进程续跑；已完整保存的年份仍可回放，继续推进请新建运行。")
-        transition(r["run_id"], "interrupted", years_done=max(done - 1, 0),
-                   finished_at=time.time(), error=note)
-        _CACHE.pop(r["run_id"], None)
-    return len(rows)
+        rid, pid, status = r["run_id"], r["pid"], r["status"]
+        probe = probe_worker(pid, rid)
+        # 只有"确认是本次运行的活进程"才发信号；unknown 一个信号都不发。
+        stopped = stop_worker(int(pid), rid) if probe == WORKER_ALIVE else probe
+        done = len(_lines(rid))
+        if stopped != WORKER_GONE:
+            why = ("发过停止信号后仍能查到那个旧工作进程" if stopped == WORKER_ALIVE
+                   else "无法确认那个进程号现在的状态（ps 超时 / 权限不足 / 可能已被复用）")
+            set_recovery_note(rid, (
+                "服务重启时该任务尚未完成，%s。**没有确认停下来就不放任务槽** —— "
+                "旧进程还可能往这次运行的记录里追加年份（数据库围栏管不住文件写入）。"
+                "记录保持当前状态，后续每次查看运行列表都会重新探测（只探测、不再发信号），"
+                "确认它不在了就收尾；想主动结束它，请对这条运行按取消。" % why))
+            continue
+        note = ("服务重启时该任务尚未完成，旧工作进程已确认不在。"
+                "本版不做跨进程续跑；已完整保存的 %d 年仍可回放，继续推进请新建运行。"
+                % max(done - 1, 0))
+        # 带上检查时看到的状态与 pid：这中间要是并发写完了 done、换了 pid、
+        # 或者已经落到别的终态，这次写入就落空，**不覆盖赢家**。
+        if transition(rid, "interrupted", allow_from=[status], expect_pid=pid,
+                      years_done=max(done - 1, 0), finished_at=time.time(),
+                      error=note, recovery_note=""):
+            _CACHE.pop(rid, None)
+            recovered += 1
+    return recovered

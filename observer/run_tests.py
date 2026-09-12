@@ -1576,23 +1576,164 @@ check("O31n 旧进程真的没了之后，同一条路才收尾 canceled 并放�
       store.get_run(HARD)["status"] == "canceled" and store.active_run() is None,
       store.get_run(HARD)["status"])
 
-# 另一个调用方：启动恢复同样不许把未知说成"已被停止"
-REC = "o31-recover"
-rec_proc = fake_worker(REC)
-make_row(REC, rec_proc.pid, cancel=0)
-store.stop_worker = lambda pid, rid, grace=3.0: (store.WORKER_UNKNOWN if rid == REC
-                                                 else _saved_stop(pid, rid, grace))
+# ------------------------------------- 启动恢复：同样只有确认 gone 才终态收尾
+# 上一轮只改了文案 —— 停止结果是 unknown / alive 时照样 transition interrupted 并放槽。
+# 旧工作进程虽然被围栏挡着改不回 done，却仍然会往 years.jsonl 里**追加**年份，
+# 所以"承认没停下来"不够，必须真的不放槽。这一组按恢复的四种结局逐一逼。
+print("\nO32 启动恢复：确认停了才收尾；没确认就保持活动状态并说明待处理")
+
+REC_GONE, REC_ALIVE, REC_UNK = "o32-gone", "o32-alive", "o32-unknown"
+
+
+def recover_with(stop_result, rid):
+    """只替换 stop_worker 的**结果**，探测与转换走真实代码。"""
+    saved = store.stop_worker
+    store.stop_worker = lambda pid, r, grace=3.0: (stop_result if r == rid
+                                                   else saved(pid, r, grace))
+    try:
+        return store.recover_interrupted()
+    finally:
+        store.stop_worker = saved
+
+
+# (a) 确认停下来了 -> 终态收尾、放槽、计数 +1
+gone_proc = fake_worker(REC_GONE, ignore_term=False)
+make_row(REC_GONE, gone_proc.pid)
+n_gone = store.recover_interrupted()
+grow = store.get_run(REC_GONE)
+check("O32a 确认旧工作进程不在了：标中断、放槽，并计入返回数",
+      grow["status"] == "interrupted" and not alive(gone_proc) and n_gone >= 1
+      and store.active_run() is None and "已确认不在" in (grow["error"] or ""),
+      f'{grow["status"]} / n={n_gone}')
+check("O32a2 收尾后不留恢复待处理说明",
+      not (grow["recovery_note"] or "") and store.recovery_pending() == 0,
+      (grow["recovery_note"] or "")[:30])
+gone_proc.kill()
+
+# (b) 停不下来（alive）-> **保持活动状态、槽不放**
+alive_proc = fake_worker(REC_ALIVE)          # 无视 SIGTERM
+make_row(REC_ALIVE, alive_proc.pid)
+n_alive = recover_with(store.WORKER_ALIVE, REC_ALIVE)
+arow = store.get_run(REC_ALIVE)
+check("O32b 停不下来时不标中断、不放槽（旧实现在这里放了槽）",
+      arow["status"] == "running" and alive(alive_proc)
+      and (store.active_run() or {}).get("run_id") == REC_ALIVE,
+      f'{arow["status"]} / active={(store.active_run() or {}).get("run_id")}')
+check("O32b2 返回数只算真正标成中断的，不把没收尾的也算进去",
+      n_alive == 0, str(n_alive))
+check("O32b3 写明恢复待处理：没确认停下来就不放槽，以及后续怎么再核验",
+      "仍能查到" in (arow["recovery_note"] or "")
+      and "不放任务槽" in (arow["recovery_note"] or "")
+      and "重新探测" in (arow["recovery_note"] or "")
+      and store.recovery_pending() == 1, (arow["recovery_note"] or "")[:44])
+
+# 后续刷新只探测、不再发信号。
+# 这里走的是**查看运行列表那条路**（settle_slot = enforce_cancels + reap_stale），
+# 不是再启动一次服务 —— 重启本身当然会再试一次停止，那是 recover_interrupted 的事。
+from observer import app as _appmod2                    # noqa: E402
+sig_log = []
+_saved_kill = os.kill
+
+
+def _recording_kill(pid, sig):
+    sig_log.append(sig)
+    if sig == 0:                              # 探测用的 kill(pid, 0) 必须照常工作
+        return _saved_kill(pid, sig)
+    return None                               # 其余信号只记录，一个都不真发
+
+
+os.kill = _recording_kill
 try:
-    store.recover_interrupted()
+    _appmod2.settle_slot()
+    _appmod2.settle_slot()
 finally:
-    store.stop_worker = _saved_stop
-rrow = store.get_run(REC)
-check("O31o 启动恢复：停止结果未知时不写'旧工作进程已被停止'",
-      rrow["status"] == "interrupted" and "已被停止" not in (rrow["error"] or "")
-      and "无法确认" in (rrow["error"] or ""), (rrow["error"] or "")[:44])
-rec_proc.kill()
+    os.kill = _saved_kill
+real_sigs = [x for x in sig_log if x != 0]
+check("O32c 后续每次查看运行列表只重新探测，不再对它发任何信号",
+      not real_sigs and store.get_run(REC_ALIVE)["status"] == "running",
+      f"发出的信号：{real_sigs}")
+alive_proc.kill()
+time.sleep(0.5)
+_appmod2.settle_slot()
+check("O32d 旧进程真的没了之后，同一条只探测的路把它收尾成中断",
+      store.get_run(REC_ALIVE)["status"] == "interrupted"
+      and not (store.get_run(REC_ALIVE)["recovery_note"] or ""),
+      store.get_run(REC_ALIVE)["status"])
+
+# (c) 停没停下来查不到（unknown）-> 同样保持活动状态
+unk_proc = fake_worker(REC_UNK)
+make_row(REC_UNK, unk_proc.pid)
+n_unk = recover_with(store.WORKER_UNKNOWN, REC_UNK)
+urow = store.get_run(REC_UNK)
+check("O32e 停止结果未知时保持活动状态、不放槽（上一轮这里被当成通过）",
+      urow["status"] == "running" and n_unk == 0 and alive(unk_proc)
+      and (store.active_run() or {}).get("run_id") == REC_UNK,
+      f'{urow["status"]} / n={n_unk}')
+check("O32f 说明写的是'无法确认'，不是'已被停止'",
+      "无法确认" in (urow["recovery_note"] or "")
+      and "已被停止" not in (urow["recovery_note"] or ""),
+      (urow["recovery_note"] or "")[:40])
+unk_proc.kill()
+time.sleep(0.4)
+store.reap_stale()
+check("O32g 未知转为确认之后，只探测的那条路自行收尾",
+      store.get_run(REC_UNK)["status"] == "interrupted", store.get_run(REC_UNK)["status"])
+
+# (d) 并发完成：恢复期间工作进程自己写了 done -> 不覆盖赢家
+RACE2 = "o32-race-done"
+race2 = fake_worker(RACE2)
+make_row(RACE2, race2.pid)
+_saved_stop2 = store.stop_worker
+
+
+def stop_then_worker_wins(pid, rid, grace=3.0):
+    if rid == RACE2:
+        store.worker_finish(rid, pid, "done", finished_at=time.time(), years_done=9,
+                            full_digest="recover-race")
+        return store.WORKER_GONE           # 进程确实没了，但记录已经是 done
+    return _saved_stop2(pid, rid, grace)
+
+
+store.stop_worker = stop_then_worker_wins
+try:
+    n_race = store.recover_interrupted()
+finally:
+    store.stop_worker = _saved_stop2
+rrow2 = store.get_run(RACE2)
+check("O32h 恢复期间工作进程抢先写完 done：不被覆盖成 interrupted",
+      rrow2["status"] == "done" and rrow2["full_digest"] == "recover-race"
+      and rrow2["years_done"] == 9 and n_race == 0,
+      f'{rrow2["status"]} / n={n_race}')
+race2.kill()
+
+# (e) 身份变更：探测之后 pid 被换掉 -> 这次恢复写入落空，不动新占位的那条
+SWAP = "o32-pid-swap"
+swap_proc = fake_worker(SWAP, ignore_term=False)
+make_row(SWAP, swap_proc.pid)
+_saved_stop3 = store.stop_worker
+
+
+def stop_then_pid_changes(pid, rid, grace=3.0):
+    out = _saved_stop3(pid, rid, grace)
+    if rid == SWAP:
+        store.set_pid(rid, 424242)         # 检查之后换了工作进程
+    return out
+
+
+store.stop_worker = stop_then_pid_changes
+try:
+    n_swap = store.recover_interrupted()
+finally:
+    store.stop_worker = _saved_stop3
+srow = store.get_run(SWAP)
+check("O32i 探测之后 pid 被换掉：这次恢复写入落空，不误停新接手的工作进程",
+      srow["status"] == "running" and srow["pid"] == 424242 and n_swap == 0,
+      f'{srow["status"]} / pid={srow["pid"]} / n={n_swap}')
+swap_proc.kill()
 with store.connect() as _c:
-    _c.execute("DELETE FROM runs WHERE run_id IN (?,?,?)", (GOOD, HARD, REC))
+    _c.execute("UPDATE runs SET status='interrupted' WHERE run_id IN (?,?)", (SWAP, RACE2))
+    _c.execute("DELETE FROM runs WHERE run_id IN (?,?,?,?,?)",
+               (REC_GONE, REC_ALIVE, REC_UNK, RACE2, SWAP))
 
 # ---------------------------------------------------------------- 探测未知 ≠ 死亡
 print("\nO23 进程探测：查不到不等于死了；回收前要比对状态与 pid")

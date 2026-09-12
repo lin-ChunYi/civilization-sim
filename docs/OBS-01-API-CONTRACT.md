@@ -59,7 +59,7 @@
 run_id label kind status created_at started_at finished_at
 seed years sigma_m move_mort_m share_m aid_m recip_m engine arm
 years_done years_recorded cancel_requested cancel_requested_at cancel_note
-cancel_last_attempt_at cancel
+cancel_last_attempt_at cancel recovery_note
 engine_sha256 engine_path baseline_commit repo_commit model_run_id full_digest
 error pid
 ```
@@ -77,6 +77,9 @@ error pid
   `none | cooperative | escalated | finished`；`cancel_note` 是同一件事的人话版本
   （**用户输入无关，但仍按纯文本展示**）。`cancel_requested` / `cancel_requested_at`
   是原始字段，语义不变。`cancel_last_attempt_at` 只给后台节流用，UI 不必显示。详见 §6。
+- **`recovery_note`（obs-1.7 新增）**：服务重启时没能确认旧工作进程已停止的说明。
+  非空时这条运行**仍然是活动状态、仍然占着任务槽**，UI 应当把它原样（纯文本）显示出来。
+  正常情况下是空字符串。详见 §6.4。
 - **`engine`（obs-1.2 新增）** ∈ `exp03 | exp04 | exp05 | exp06`，旧记录默认 `exp03`。
   `share_m` 对 `exp04` 起有意义，`aid_m` 对 `exp05` 起有意义，`recip_m` 只对 `exp06` 有意义；
   引擎没有的参数传非 0 会被 400 拒绝。**不要把引擎名和参数写死**，读 `engines` 里的
@@ -253,6 +256,25 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 - **不保证"按了取消就一定停得下来"**：停止结果是核实出来的，不是假设出来的。
   停不下来时 UI 应当把 `cancel_note` 原样显示给用户（纯文本），让人来决定下一步。
 - 取消**不删除**任何已保存的记录；`DELETE /api/runs/{id}` 才是删除。
+
+### 6.4 服务重启时的恢复
+
+启动时对每条还是 `queued`/`running` 的记录：**先停可能还活着的旧工作进程，核实之后再收尾**。
+判据与 6.2 完全一样，因为风险也一样 —— 旧进程即使被围栏挡着改不回 `done`，
+仍然会往它那次运行的 `years.jsonl` 里追加年份。
+
+| 停止结果 | 记录 | 任务槽 |
+|---|---|---|
+| **确认不在了**（`gone`） | 写 `interrupted`，`recovery_note` 清空 | 释放 |
+| 停不下来（`alive`）/ 查不到（`unknown`） | **保持 `queued`/`running`**，写 `recovery_note` | **不释放** |
+
+- 启动日志里"标记为中断 N 个"只数**真正转成 `interrupted`** 的那些；没收尾的另起一行报数。
+- 没收尾的那些**之后不会再被主动发信号**：每次 `GET /api/runs`、每次新建运行都会
+  重新探测一遍（只探测，不发信号），确认进程不在了就收尾。要主动结束它，
+  请对那条运行按取消 —— 那是有明确同意、会重新核验身份的有界升级路径。
+- 这里**不看运行了多久**，也不对没被取消的运行做任何超时判断。
+- 收尾写入带 `allow_from=[检查时状态]` 与 `expect_pid=检查时 pid`：恢复期间工作进程
+  抢先写完 `done`、或者 pid 被换成新接手的进程，这次写入都会落空，赢家不被覆盖。
 
 
 ## 7. obs-1.6 的变化（历史卷宗与按年关系网）
