@@ -15,6 +15,9 @@ const S = {
   lastYearLabel: null,
   yearWait: null,
   yearMiss: {},
+  hoverCell: null,
+  yearLoading: null,
+  skin: "sandtable",
 };
 const ykey = (runId, t) => `${runId}|${t}`;
 const bump = () => ++S.epoch;
@@ -615,14 +618,18 @@ function renderMap() {
       title += " · 格子编号 " + c.i;
     } else title += " · 不可通行";
     const selected = S.selCell === c.i;
+    const hovered = S.hoverCell === c.i;
     const hot = eventCells.has(c.i) && (layer === "event" || layer === "flow");
-    out += `<path d="${hexPath(cx, cy)}" fill="${fill}" stroke="${selected ? "#f3deaa" : (hot ? "#d4b06a" : "#2a3530")}"
-        stroke-width="${selected ? 2.8 : hot ? 1.8 : 1}" data-cell="${c.i}" class="cell"${selected ? ' filter="url(#glow)"' : ""}>
+    const stroke = selected ? "#f3deaa" : hovered ? "#e6c888" : (hot ? "#d4b06a" : (S.skin === "console" ? "#2c4a48" : "#2a3530"));
+    out += `<path d="${hexPath(cx, cy)}" fill="${fill}" stroke="${stroke}"
+        stroke-width="${selected ? 2.8 : hovered ? 2 : hot ? 1.8 : 1}" data-cell="${c.i}" class="cell${hovered ? " hover" : ""}"${selected ? ' filter="url(#glow)"' : ""}>
         <title>${esc(title)}</title></path>`;
-    if (c.passable && label) {
+    const lod = S.cam.k;
+    const showNum = lod >= 1.45 || selected || S.hoverCell === c.i;
+    if (c.passable && label && showNum) {
       out += `<text x="${cx}" y="${cy + (sub ? 6 : 12)}" text-anchor="middle" font-size="10"
           fill="#e8eadc" opacity="0.9" pointer-events="none">${esc(label)}</text>`;
-      if (sub) out += `<text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="8"
+      if (sub && lod >= 1.6) out += `<text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="8"
           fill="#d4b06a" pointer-events="none">${esc(sub)}</text>`;
     }
   });
@@ -643,14 +650,29 @@ function renderMap() {
       x0 += 2 * rad + 2;
       bandPos[String(b.id)] = [x, y, c.i];
       const on = S.selBand === b.id;
-      out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad.toFixed(1)}"
-          fill="${on ? "#e8a04a" : "#c47a3a"}" fill-opacity="0.95"
-          stroke="${on ? "#f3deaa" : "#f6e7c8"}" stroke-width="${on ? 2.6 : 1.4}"
-          data-band="${b.id}" class="band" style="cursor:pointer"${on ? ' filter="url(#glow)"' : ""}>
-          <title>${esc(b.name)} · ${b.size}人</title></circle>`;
-      if (rad >= 7) {
+      const lodB = S.cam.k;
+      if (S.skin === "console") {
+        const d = rad * 0.92;
+        const fillC = on ? "#8fd4d0" : "#3d7a76";
+        const strokeC = on ? "#d7f4f2" : "#99e0dd";
+        out += `<polygon points="${x},${(y-d).toFixed(1)} ${(x+d).toFixed(1)},${y} ${x},${(y+d).toFixed(1)} ${(x-d).toFixed(1)},${y}"
+            fill="${fillC}" stroke="${strokeC}" stroke-width="${on ? 2.4 : 1.3}"
+            data-band="${b.id}" class="band" style="cursor:pointer">
+            <title>${esc(b.name)} · ${b.size}人</title></polygon>`;
+      } else {
+        out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad.toFixed(1)}"
+            fill="${on ? "#e8a04a" : "#c47a3a"}" fill-opacity="0.95"
+            stroke="${on ? "#f3deaa" : "#f6e7c8"}" stroke-width="${on ? 2.6 : 1.4}"
+            data-band="${b.id}" class="band" style="cursor:pointer"${on ? ' filter="url(#glow)"' : ""}>
+            <title>${esc(b.name)} · ${b.size}人</title></circle>`;
+      }
+      if (lodB >= 0.95 && rad >= 7) {
         out += `<text x="${x.toFixed(1)}" y="${(y + 3.2).toFixed(1)}" text-anchor="middle"
             font-size="${rad >= 11 ? 9 : 7.5}" fill="#1a1408" font-weight="700" pointer-events="none">${b.size}人</text>`;
+      }
+      if (lodB >= 1.7) {
+        out += `<text x="${x.toFixed(1)}" y="${(y - rad - 4).toFixed(1)}" text-anchor="middle"
+            font-size="8" fill="#f3deaa" pointer-events="none">${esc(b.name)}</text>`;
       }
     });
   });
@@ -703,11 +725,22 @@ function renderMap() {
       if (S._suppressClick) { S._suppressClick = false; return; }
       selectBand(n.dataset.band);
     }));
-  svg.querySelectorAll(".cell").forEach((n) =>
+  svg.querySelectorAll(".cell").forEach((n) => {
     n.addEventListener("click", () => {
       if (S._suppressClick) { S._suppressClick = false; return; }
       S.selCell = +n.dataset.cell; S.selBand = null; renderMap(); renderSide();
-    }));
+    });
+    n.addEventListener("pointerenter", () => {
+      const c = +n.dataset.cell;
+      if (S.hoverCell === c) return;
+      S.hoverCell = c;
+      n.classList.add("hover");
+    });
+    n.addEventListener("pointerleave", () => {
+      if (S.hoverCell === +n.dataset.cell) S.hoverCell = null;
+      n.classList.remove("hover");
+    });
+  });
 
   const keys = {
     resource: "资源层：绿色深浅 = 野外食物（人年口粮）。灰斜纹 = 不可通行。",
@@ -969,34 +1002,56 @@ function syncYearWidgets(t) {
     $("tl-calc").textContent = "已计算到：第 " + maxT() + " 年 / 目标 " + S.run.years + " 年";
   }
 }
+function setYearLoadOverlay(t, on) {
+  const el = $("year-load");
+  if (!el) return;
+  if (on) {
+    S.yearLoading = t;
+    el.hidden = false;
+    if ($("year-load-n")) $("year-load-n").textContent = String(t);
+  } else {
+    S.yearLoading = null;
+    el.hidden = true;
+  }
+}
+function commitYear(t) {
+  S.t = t;
+  S.yearWait = null;
+  setYearLoadOverlay(t, false);
+  syncYearWidgets(t);
+  setHash({ t: String(t) });
+}
 async function gotoYear(t, opts) {
   opts = opts || {};
   if (!S.run) return;
   const myRun = S.run.run_id;
   const myEpoch = bump();
   t = Math.max(0, Math.min(t, maxT()));
-  S.t = t;
-  syncYearWidgets(t);
-  if (!S.years.has(ykey(myRun, t))) {
-    let rec;
-    try { rec = await api(`/api/runs/${myRun}/year/${t}`); }
-    catch (e) {
-      if (stale(myEpoch, myRun)) return;
-      const pending = isPendingYearError(e, t);
-      S.yearWait = { runId: myRun, t: t, pending: pending, status: e.status, message: e.message };
-      if (!pending) flash("读取第 " + t + " 年失败：" + e.message, true);
-      renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents();
-      return;
-    }
-    S.years.set(ykey(myRun, t), rec);
-    delete S.yearMiss[yearMissKey(myRun, t)];
-    S.yearWait = null;
+  if (S.years.has(ykey(myRun, t))) {
     if (stale(myEpoch, myRun)) return;
+    commitYear(t);
+    renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents(); renderTech();
+    if (!opts.quiet) renderCharts();
+    if (S.evScope === "until") prefetchYears(myRun, t);
+    return;
   }
+  setYearLoadOverlay(t, true);
+  let rec;
+  try { rec = await api(`/api/runs/${myRun}/year/${t}`); }
+  catch (e) {
+    if (stale(myEpoch, myRun)) return;
+    const pending = isPendingYearError(e, t);
+    S.yearWait = { runId: myRun, t: t, pending: pending, status: e.status, message: e.message };
+    commitYear(t);
+    if (!pending) flash("读取第 " + t + " 年失败：" + e.message, true);
+    renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents();
+    return;
+  }
+  S.years.set(ykey(myRun, t), rec);
+  delete S.yearMiss[yearMissKey(myRun, t)];
   if (stale(myEpoch, myRun)) return;
-  S.yearWait = null;
+  commitYear(t);
   renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents(); renderTech();
-  setHash({ t: String(t) });
   if (!opts.quiet) renderCharts();
   if (S.evScope === "until") prefetchYears(myRun, t);
 }
@@ -1342,9 +1397,9 @@ async function openRun(id) {
   if ($("v-truth")) $("v-truth").classList.add("on");
   if ($("v-mem")) $("v-mem").classList.remove("on");
   $("scrub").max = maxT();
-  setHash({ run: id, b: "", view: "" });
   S.t = 0;
   syncYearWidgets(0);
+  setHash({ run: id, b: "", view: "", t: "0" });
   renderOverview(); renderMap(); renderSide(); renderEvents(); renderStatus();
   await gotoYear(0);
   renderRuns(); renderCharts(); renderStatus(); renderOverview();
@@ -1451,6 +1506,11 @@ async function refresh() {
 }
 
 async function boot() {
+  const skin = new URLSearchParams(location.search).get("skin");
+  if (skin === "console") {
+    S.skin = "console";
+    document.documentElement.classList.add("skin-console");
+  }
   $("token").value = S.token;
   $("tokbtn").addEventListener("click", () => {
     S.token = $("token").value.trim();
@@ -1481,6 +1541,25 @@ async function boot() {
   $("b-start").addEventListener("click", startRun);
   if ($("recip-off")) $("recip-off").addEventListener("click", () => { $("f-recip").value = "0"; });
   if ($("recip-on")) $("recip-on").addEventListener("click", () => { $("f-recip").value = "1000"; });
+  const railTabs = $("rail-tabs");
+  if (railTabs) railTabs.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-rail]"); if (!b) return;
+    document.querySelectorAll("#rail-tabs button").forEach((x) => x.classList.toggle("on", x === b));
+    ["chronicle", "dossier", "help"].forEach((name) => {
+      const pane = $("pane-" + name); if (!pane) return;
+      const on = name === b.dataset.rail;
+      pane.hidden = !on;
+      pane.classList.toggle("on", on);
+    });
+  });
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target && e.target.tagName) || "";
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    if (e.key === "ArrowLeft") { e.preventDefault(); setPlaying(false); gotoYear(S.t - 1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); setPlaying(false); gotoYear(S.t + 1); }
+    else if (e.key === "Home") { e.preventDefault(); setPlaying(false); gotoYear(0); }
+    else if (e.key === " " || e.code === "Space") { e.preventDefault(); setPlaying(!S.playing); }
+  });
   $("ev-scope").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-scope]"); if (!b) return;
     S.evScope = b.dataset.scope; renderEvents();

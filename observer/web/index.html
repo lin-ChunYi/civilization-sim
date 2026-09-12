@@ -41,7 +41,7 @@
 <div id="toast" class="toast" hidden></div>
 
 <main>
-<section id="tab-world">
+<section id="tab-world" class="world-shell">
   <div class="overview" id="overview" aria-label="世界概览">
     <div class="ov-card viewing" id="ov-year">
       <div class="ov-k">正在回放</div>
@@ -74,35 +74,8 @@
       <div class="ov-s" id="ov-ev-now-sub">只计已记录的事件清单</div>
     </div>
   </div>
-  <div class="hud-params" id="hud-params"></div>
 
-  <div class="stage">
-    <aside class="panel glass chronicle" id="chronicle">
-      <div class="panel-kicker">WORLD CHRONICLE</div>
-      <h3>这一年发生了什么</h3>
-      <p class="year-summary" id="year-summary">打开一次运行后，这里会用账本增量填写本年摘要。</p>
-      <p class="muted" id="summary-note">出生与死亡来自年度账本增量，不是人口净变化。不编写动机或因果。</p>
-      <div class="event-head">
-        <h3>事件卷宗 <small>第 <span id="ev-year">0</span> 年</small></h3>
-        <div class="seg" id="ev-scope" role="tablist" aria-label="事件范围">
-          <button type="button" data-scope="year" class="on">本年</button>
-          <button type="button" data-scope="until">截至本年</button>
-        </div>
-        <div class="seg" id="ev-filter" role="tablist" aria-label="事件类型">
-          <button type="button" data-type="all" class="on">全部</button>
-          <button type="button" data-type="migrate">迁移</button>
-          <button type="button" data-type="split">分裂</button>
-          <button type="button" data-type="extinct">消失</button>
-          <button type="button" data-type="share">信息</button>
-          <button type="button" data-type="aid">援助</button>
-          <button type="button" data-type="repay">回助</button>
-        </div>
-      </div>
-      <p class="muted" id="ev-load-note"></p>
-      <div id="events" class="event-log"></div>
-      <p class="muted" id="ev-ledger-note"></p>
-    </aside>
-
+  <div class="world-main">
     <div class="sandtable glass">
       <div class="maphead">
         <div class="viewsw layers" id="layers">
@@ -119,59 +92,101 @@
           <button type="button" class="btn small" id="zoom-in" title="放大">+</button>
         </div>
       </div>
-      <p class="map-key" id="map-key">圆点是群体，数字是人口。绿色深浅默认表示野外食物（人年口粮）。滚轮缩放，拖拽平移。</p>
+      <p class="map-key" id="map-key">棋子是群体。格子颜色是所选图层的相对量，不是真实地形。滚轮缩放，拖拽平移。</p>
       <div class="mapbox" id="mapbox">
+        <div id="year-load" class="year-load" hidden>正在读取第 <span id="year-load-n">0</span> 年…</div>
         <svg id="map" viewBox="0 0 520 430" preserveAspectRatio="xMidYMid meet" role="img" aria-label="世界沙盘"></svg>
       </div>
       <div class="mapfoot">
         <div class="legend" id="legend"></div>
-        <div class="maphint" id="maphint">点击格子或群体看卷宗。同格多个群体分开摆放。</div>
+        <div class="maphint" id="maphint">点棋子看群体，点格子看位置。同格多个棋子可分别点选。</div>
       </div>
-      <p class="muted unit-note">1 人年口粮 = 模型标准下 1 人一年的食物量。格子上的食物是该格野外存量，不能据此说某个群体一定能活多少年。</p>
     </div>
 
-    <aside class="panel glass dossier" id="side">
-      <div class="panel-kicker">DOSSIER</div>
-      <div class="emptystate" id="side-empty">还没有选中任何运行。</div>
-      <div id="side-body" hidden>
-        <h3>第 <span id="side-year">0</span> 年 · 当年读数</h3>
-        <div class="kv" id="side-now"></div>
-        <h3 id="side-sel-h" hidden>选中对象</h3>
-        <div id="side-sel"></div>
-        <details id="side-cum-wrap"><summary>累计值与技术账</summary>
-          <div class="kv" id="side-cum"></div>
-          <div class="kv" id="side-int" style="margin-top:8px"></div>
-        </details>
-        <h3>当年在世群体</h3>
-        <div class="tablewrap compact"><table id="bandtable"></table></div>
+    <aside class="rail glass" id="rail">
+      <div class="rail-tabs" id="rail-tabs">
+        <button type="button" data-rail="chronicle" class="on">卷宗</button>
+        <button type="button" data-rail="dossier">档案</button>
+        <button type="button" data-rail="help">口径</button>
+      </div>
+      <div class="rail-pane on" id="pane-chronicle">
+        <div class="chronicle" id="chronicle">
+          <div class="panel-kicker">WORLD CHRONICLE</div>
+          <h3>这一年发生了什么</h3>
+          <p class="year-summary" id="year-summary">打开一次运行后，这里会用账本增量填写本年摘要。</p>
+          <div class="event-head">
+            <h3>事件卷宗 <small>第 <span id="ev-year">0</span> 年</small></h3>
+            <div class="seg" id="ev-scope" role="tablist" aria-label="事件范围">
+              <button type="button" data-scope="year" class="on">本年</button>
+              <button type="button" data-scope="until">截至本年</button>
+            </div>
+            <div class="seg" id="ev-filter" role="tablist" aria-label="事件类型">
+              <button type="button" data-type="all" class="on">全部</button>
+              <button type="button" data-type="migrate">迁移</button>
+              <button type="button" data-type="split">分裂</button>
+              <button type="button" data-type="extinct">消失</button>
+              <button type="button" data-type="share">信息</button>
+              <button type="button" data-type="aid">援助</button>
+              <button type="button" data-type="repay">回助</button>
+            </div>
+          </div>
+          <p class="muted" id="ev-load-note"></p>
+          <div id="events" class="event-log"></div>
+          <p class="muted" id="ev-ledger-note"></p>
+        </div>
+      </div>
+      <div class="rail-pane" id="pane-dossier" hidden>
+        <div class="dossier" id="side">
+          <div class="panel-kicker">DOSSIER</div>
+          <div class="emptystate" id="side-empty">还没有选中任何运行。</div>
+          <div id="side-body" hidden>
+            <h3>第 <span id="side-year">0</span> 年 · 当年读数</h3>
+            <div class="kv" id="side-now"></div>
+            <h3 id="side-sel-h" hidden>选中对象</h3>
+            <div id="side-sel"></div>
+            <details id="side-cum-wrap"><summary>累计值与技术账</summary>
+              <div class="kv" id="side-cum"></div>
+              <div class="kv" id="side-int" style="margin-top:8px"></div>
+            </details>
+            <h3>当年在世群体</h3>
+            <div class="tablewrap compact"><table id="bandtable"></table></div>
+          </div>
+        </div>
+      </div>
+      <div class="rail-pane" id="pane-help" hidden>
+        <div class="help-copy">
+          <div class="panel-kicker">LEGEND &amp; MEASURE</div>
+          <p id="summary-note">出生与死亡来自年度账本增量，不是人口净变化。不编写动机或因果。</p>
+          <p class="unit-note">1 人年口粮 = 模型标准下 1 人一年的食物量。格子颜色只表示相对存量，不能据此说某个群体一定能活多少年。</p>
+          <p class="muted">64 格、六邻接、A/B 被不可通行屏障列隔开。屏障只表示不可通行，不是山脉、国界或城市。</p>
+          <p class="muted">缩放：缩小时只保留棋子；放大后显示人口与名称。流向层锚定事件记录的格子，不是年末位置。</p>
+          <div class="hud-params" id="hud-params"></div>
+        </div>
       </div>
     </aside>
   </div>
 
   <div class="console glass" id="timeline">
-    <div class="console-kicker">HISTORY DRIVE</div>
-    <div class="tlhead">
-      <span class="pill strong" id="tl-play">正在回放：—</span>
-      <span class="pill" id="tl-calc">已计算到：—</span>
-      <span class="muted" id="tl-note">回放只读取已保存的记录，不会重新计算世界。</span>
-    </div>
-    <div class="density-wrap">
-      <svg id="density" class="density" preserveAspectRatio="none"></svg>
-      <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="回放年份">
-    </div>
     <div class="tlctl">
-      <button id="b-home" class="btn">⏮ 开局</button>
-      <button id="b-prev" class="btn">◀ 上一年</button>
-      <button id="b-play" class="btn primary play">▶ 播放历史</button>
-      <button id="b-next" class="btn">下一年 ▶</button>
+      <button id="b-home" class="btn" title="开局">⏮</button>
+      <button id="b-prev" class="btn" title="上一年">◀</button>
+      <button id="b-play" class="btn primary play">▶ 播放</button>
+      <button id="b-next" class="btn" title="下一年">▶</button>
       <label class="spd">速率
         <select id="speed">
           <option value="0.5">0.5×</option><option value="1" selected>1×</option>
           <option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
         </select>
       </label>
+      <span class="pill strong" id="tl-play">回放：—</span>
+      <span class="pill" id="tl-calc">已计算：—</span>
       <span class="yearbox">第 <b id="scrub-year">0</b> 年</span>
     </div>
+    <div class="density-wrap">
+      <svg id="density" class="density" preserveAspectRatio="none"></svg>
+      <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="回放年份">
+    </div>
+    <p class="muted" id="tl-note">← → 逐年，空格播放。回放只读已保存记录。</p>
   </div>
 
   <details class="panel glass tech-details" id="tech-details">
@@ -184,7 +199,7 @@
   <div class="panel glass">
     <div class="panel-kicker">INTELLIGENCE</div>
     <h3>历史曲线（整条运行；金线是当前回放年份）</h3>
-    <p class="muted">分母为 0 的点显示为缺失，不画成 0%。点击表格年份可跳转回放。</p>
+    <p class="muted">分母为 0 的点显示为缺失，不画成 0%。点击表格或曲线可跳转回放。</p>
     <div id="charts" class="charts"></div>
   </div>
   <div class="panel glass">
