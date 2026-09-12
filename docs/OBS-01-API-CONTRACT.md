@@ -192,6 +192,10 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 ②「这次谁回助了谁」：`aid` 事件里 `repay=true` 的那些（`text` 已带"回助 ·"前缀）。
 **务必把 `repay`（含碰巧）与 `recip.changed`（规则真的改变了分配）分开显示**，不要合并成一个"互惠"指标。
 
+现状：`repay=true` 的事件在你当前的前端里已经能正常渲染出来（截图
+`observer/docs/screenshots/12-recip-aid.jpg`，第 128 年那条）。还没有做的是
+`aid_memory` 的关系展示与 `recip` 段的年度统计 —— 这两块的数据都已经在接口里了。
+
 ## 7. obs-1.3 的变化（EXP-05 接入）
 
 | 变化 | 兼容性 |
