@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS runs (
   engine_path   TEXT NOT NULL DEFAULT '',
   baseline_commit TEXT NOT NULL DEFAULT '',
   repo_commit   TEXT NOT NULL DEFAULT '',
+  api_version   TEXT NOT NULL DEFAULT '',             -- 产出这条记录时服务的契约版本
   model_run_id  TEXT NOT NULL DEFAULT '',
   full_digest   TEXT NOT NULL DEFAULT '',
   error         TEXT NOT NULL DEFAULT '',
@@ -86,7 +87,8 @@ MIGRATIONS = (("share_m", "INTEGER NOT NULL DEFAULT 0"),
               ("cancel_requested_at", "REAL"),
               ("cancel_note", "TEXT NOT NULL DEFAULT ''"),
               ("cancel_last_attempt_at", "REAL"),
-              ("recovery_note", "TEXT NOT NULL DEFAULT ''"))
+              ("recovery_note", "TEXT NOT NULL DEFAULT ''"),
+              ("api_version", "TEXT NOT NULL DEFAULT ''"))
 
 
 def init_db() -> None:
@@ -115,7 +117,7 @@ def meta_path(run_id: str) -> Path:
 
 def claim_slot(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: str,
                label: str = "", kind: str = "user", engine: Dict[str, Any],
-               repo_commit: str = "", share_m: int = 0, aid_m: int = 0,
+               repo_commit: str = "", api_version: str = "", share_m: int = 0, aid_m: int = 0,
                recip_m: int = 0, engine_name: str = None) -> Optional[str]:
     """**原子**地占用唯一的任务槽并建记录。
 
@@ -137,11 +139,12 @@ def claim_slot(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: st
         conn.execute(
             "INSERT INTO runs (run_id,label,kind,status,created_at,seed,years,sigma_m,"
             "move_mort_m,share_m,aid_m,recip_m,engine,arm,engine_sha256,engine_path,"
-            "baseline_commit,repo_commit) VALUES (?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "baseline_commit,repo_commit,api_version) "
+            "VALUES (?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (run_id, label, kind, time.time(), seed, years, sigma_m, move_mort_m,
              share_m, aid_m, recip_m, engine_name or config.DEFAULT_ENGINE, arm,
              engine["engine_sha256"], engine["engine_path"], engine["baseline_commit"],
-             repo_commit))
+             repo_commit, api_version))
         conn.execute("COMMIT")
     except Exception:
         try:

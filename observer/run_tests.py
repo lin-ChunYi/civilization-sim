@@ -2156,6 +2156,74 @@ with TestClient(app) as c17:
 with store.connect() as _c:
     _c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
 
+# ---------------------------------------------------------------- 运行版本身份
+# 回放一条旧记录时，必须分得清"产出它的是哪一版"和"现在跑着的是哪一版"。
+# 分不清的时候是 null（未知），**不是 false**——"不知道"不等于"不一样"。
+print("\nO34 版本身份：记录存的是产出当时那一版，和当前服务比对不靠猜")
+
+c07 = subprocess.run([sys.executable, str(REPO / "observer" / "c07_version_test.py")],
+                     cwd=REPO, capture_output=True, text=True,
+                     env={**os.environ, "OBSERVER_DATA_DIR": str(TEST_DATA)})
+tail = (c07.stdout or "").strip().splitlines()[-1:] or [""]
+check("O34a 服务身份自检（observer/c07_version_test.py）随主套件一起跑",
+      c07.returncode == 0 and "fail=0" in tail[0], tail[0][:70] or (c07.stderr or "")[-70:])
+
+with TestClient(app) as c18:
+    ident = c18.get("/api/config").json().get("service_identity") or {}
+    check("O34b 服务身份在启动时冻结，并说明来源",
+          ident.get("api_version") == config.API_VERSION
+          and ident.get("repo_commit_source") in ("git_startup", "explicit_build", "unknown"),
+          str(ident)[:80])
+
+    r = c18.post("/api/runs", json={"seed": 11, "years": 3, "engine": "exp03",
+                                    "sigma_m": 0, "move_mort_m": 0, "label": "O34 版本"})
+    if r.status_code != 200:
+        uncov("O34c–f 运行版本身份", f"运行没起来：{r.status_code}")
+    else:
+        vid = r.json()["run_id"]
+        _finish(vid)
+        row = c18.get(f"/api/runs/{vid}").json()
+        ver = row["version"]
+        check("O34c 新运行把产出当时的契约版本与引擎身份一起存下来",
+              ver["recorded"]["api_version"] == config.API_VERSION
+              and ver["recorded"]["engine_sha256"]
+              and ver["recorded"]["engine_path"] == "exp03/verify3.py",
+              str(ver["recorded"])[:80])
+        check("O34d 刚跑完的记录与当前服务是同一版",
+              ver["matches_running_service"] is True
+              and ver["engine_source_unchanged"] is True, ver["note"][:50])
+
+        # 引擎源码换了一版之后回放：必须指出来，而不是默默照读。
+        # 这里**不动任何冻结文件**，只在隔离测试库里把记录的 sha256 改成另一份。
+        with store.connect() as _c:
+            _c.execute("UPDATE runs SET engine_sha256=? WHERE run_id=?",
+                       ("0" * 64, vid))
+        drift = c18.get(f"/api/runs/{vid}").json()["version"]
+        check("O34e 回放时引擎源码已经不是当时那份：明确指出来",
+              drift["engine_source_unchanged"] is False
+              and drift["matches_running_service"] is False
+              and "已经不是产出这条记录时那一份" in drift["note"],
+              drift["note"][:50])
+
+        # 没存身份的旧记录 / 预生成案例：未知就是 null
+        with store.connect() as _c:
+            _c.execute("UPDATE runs SET engine_sha256='', api_version='', repo_commit='' "
+                       "WHERE run_id=?", (vid,))
+        blank = c18.get(f"/api/runs/{vid}").json()["version"]
+        check("O34f 记录里没有可比对的身份：null（未知），不是 false",
+              blank["matches_running_service"] is None
+              and blank["engine_source_unchanged"] is None
+              and "未知，不等于不同" in blank["note"], blank["note"][:60])
+
+    preset = c18.get("/api/runs/preset-exp06-recip1000").json()
+    check("O34g 预生成案例同样如实：没存服务身份就说未知，不假装是当前版本产出的",
+          preset["version"]["matches_running_service"] is None
+          or preset["version"]["recorded"]["api_version"] is not None,
+          str(preset["version"]["matches_running_service"]))
+    check("O34h 预生成案例仍然带着引擎身份，可追溯到具体源码",
+          preset["version"]["recorded"]["engine_sha256"]
+          and preset["version"]["recorded"]["engine_path"] == "exp06/verify6.py")
+
 # ---------------------------------------------------------------- 冻结目录
 print("\nO12 冻结基线未被改动")
 for rev, d in (("20da486", "exp01"), ("c5a1f18", "exp02"), ("6b6af4f", "exp03")):

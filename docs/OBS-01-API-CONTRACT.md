@@ -204,10 +204,33 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 |---|---|
 | `engines` 增加 `exp01`、`exp02` | **新增**；exp01 无波动/迁移死亡参数，exp02 只有 `sigma_m` |
 | `GET /api/config.service_identity` | **新增**；启动时冻结，不把磁盘 HEAD 的后续变化当成已加载 UI |
+| run 行新增 `api_version` | **新增**；产出这条记录时服务的契约版本（旧记录与预生成案例为空字符串） |
+| `GET /api/runs/{id}.version` | **新增**；这条记录是哪一版产出的、与当前服务是否同一版，见 §6.1 |
 | `/year/{t}` 省略引擎没有的账本键 | **省略不是 0**；UI 写「未记录」 |
 | `/relations.engine_supports` | **新增**；无援助机制时空边集是能力事实 |
 | `/band/{id}.engine_supports` | **新增**；与 `/relations` 同一份口径，援助字段为空同样是能力事实，不要显示成"0 笔援助" |
 | 不支持的参数传非 0 → `400` | 与 obs-1.2 起的规则相同，现覆盖到 exp01/exp02 |
+
+### 6.1 一条记录的版本身份 `GET /api/runs/{id}.version`
+
+```json
+{"recorded": {"repo_commit": "205cad5d488c", "api_version": "obs-1.8", "engine": "exp03",
+              "engine_sha256": "…", "engine_path": "exp03/verify3.py",
+              "baseline_commit": "6b6af4f"},
+ "service_now": {"repo_commit": "…", "repo_commit_source": "git_startup",
+                 "api_version": "obs-1.8", "engine_sha256": "…"},
+ "matches_running_service": true, "engine_source_unchanged": true,
+ "note": "与当前服务是同一版本身份"}
+```
+
+- `recorded` 是**产出当时**写下的身份，只读，不随磁盘变化；`service_now` 是当前进程的
+  身份（同样启动时冻结）。
+- `engine_source_unchanged` 单独给出：记录里的 `engine_sha256` 与磁盘上那份现在的
+  sha256 一比，就知道回放用的代码还是不是当时那份。`false` 时请在界面上说清楚。
+- **`matches_running_service` 只在记录里存了服务身份（`repo_commit` 或 `api_version`）
+  时才给 true/false；否则是 `null`。** 预生成案例与更早版本写的记录就是 `null` ——
+  "不知道"不等于"不一样"，**不要据此说它过时了**。只有引擎源码对得上不足以断定同一版服务。
+- `repo_commit` 记录里存的是短哈希、当前身份是全长，比对按较短的那个比前缀。
 
 EXP-01/02 冻结源码一个字节都不改。`pop_start` 若引擎没有该字段，则在 **t=0 状态**上对在世群体人口求和，并在 `meta.pop_start_note` 写明来源。
 

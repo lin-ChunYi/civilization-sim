@@ -94,3 +94,20 @@ EXP-01 与 EXP-02 各跑 40 年，用**它们自己的** `state_hash` / `full_di
 - 去掉"不支持的参数传非 0 就拒绝"→ O33g/g2 红 2 项。
 
 本轮 `observer/run_tests.py` 247 项全过（含 O33 的 34 项），`ops/test_dispatch.py` 97 项全过。
+
+---
+
+## 7. 一条记录是哪一版产出的（C07，`GET /api/runs/{id}.version`）
+
+字段定义见契约 §6.1。要点只有三条：
+
+1. `recorded` 是产出当时写下的，`service_now` 是当前进程的（都在启动时冻结）。
+2. `engine_source_unchanged: false` = 回放用的引擎源码已经不是当时那份，请在界面上说清楚。
+3. **`matches_running_service: null` 是"未知"，不是"不一样"。** 预生成案例与
+   obs-1.8 之前写的记录都会是 `null`（那时候没存服务身份），别把它们显示成"过时版本"。
+   只有引擎 sha256 对得上**不足以**断定是同一版服务。
+
+实测：刚跑完的运行 `matches_running_service = true`；
+把记录里的 `engine_sha256` 改成另一份后 `engine_source_unchanged = false` 并给出说明；
+把身份字段清空后回到 `null`；`preset-exp06-recip1000` 就是 `null`（但引擎身份仍可追溯到
+`exp06/verify6.py`）。检查见 O34 组 8 项 + `observer/c07_version_test.py` 16 项。

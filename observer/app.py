@@ -227,6 +227,7 @@ def get_run(run_id: str):
         raise HTTPException(404, "没有这次运行")
     run["years_recorded"] = max(store.year_count(run_id) - 1, 0)
     run["cancel"] = store.cancel_stage(run)
+    run["version"] = _run_version(run)
     run["meta"] = store.read_meta(run_id)
     # obs-1.5：这次运行**实际用的**引擎、参数（带标签与单位）、代码版本与状态，
     # 一次给全，前端不用再去拼 /api/config。
@@ -266,6 +267,70 @@ def _with_event_ids(rec):
         e.setdefault("id", "t%s-%s-%s" % (rec["t"], e.get("type", "event"), i))
         e.setdefault("year", rec["t"])
     return rec
+
+
+def _run_version(run):
+    """这条记录**是哪一版产出的**，以及和现在跑着的服务是不是同一版。
+
+    三条都不猜：
+
+      * `recorded` 是记录里存着的身份（产出当时写下的），只读，不随磁盘变化；
+      * `service_now` 是**当前这个进程**的身份（启动时冻结，见 §6 的 service_identity）；
+      * `matches_running_service` 只在两边都知道时才给 true/false。
+        记录里没有这项身份（预生成案例、旧版本写的行）就是 `null` ——
+        **"不知道"不是"不一样"**，界面别据此说它过时了。
+
+    引擎源码是逐字节核对的：记录里存的 `engine_sha256` 与磁盘上那份现在的 sha256
+    一比就知道回放用的代码还是不是当时那份。
+    """
+    eng = run.get("engine") or config.DEFAULT_ENGINE
+    rec = {"repo_commit": run.get("repo_commit") or None,
+           "api_version": run.get("api_version") or None,
+           "engine": eng,
+           "engine_sha256": run.get("engine_sha256") or None,
+           "engine_path": run.get("engine_path") or None,
+           "baseline_commit": run.get("baseline_commit") or None}
+    try:
+        live_sha = adapter.engine_info(eng)["engine_sha256"]
+    except Exception:                                   # noqa: BLE001
+        live_sha = None
+    now = {"repo_commit": SERVICE_IDENTITY.get("repo_commit"),
+           "repo_commit_source": SERVICE_IDENTITY.get("repo_commit_source"),
+           "api_version": config.API_VERSION,
+           "engine_sha256": live_sha}
+
+    def cmp(a, b):
+        if not a or not b:
+            return None
+        # 记录里存的 repo_commit 是短哈希（旧字段就这么写的），当前身份是全长 ——
+        # 按**较短的那个**比前缀，别把同一个提交判成两版。
+        k = min(len(a), len(b))
+        return a[:k] == b[:k]
+
+    same_engine = cmp(rec["engine_sha256"], live_sha)
+    same_repo = cmp(rec["repo_commit"], now["repo_commit"]
+                    if now["repo_commit"] != "unknown" else None)
+    same_api = cmp(rec["api_version"], now["api_version"])
+    # **服务身份不知道就别下结论。** 只有引擎源码对得上不足以说"同一版服务"——
+    # 预生成案例就是这种：引擎认得出来，产出它的服务是哪一版根本没记。
+    service_parts = [x for x in (same_repo, same_api) if x is not None]
+    parts = service_parts + ([same_engine] if same_engine is not None else [])
+    matches = None if not service_parts else all(parts)
+    notes = []
+    if same_engine is False:
+        notes.append("回放用的引擎源码已经不是产出这条记录时那一份（engine_sha256 不同）")
+    if same_api is False:
+        notes.append("产出这条记录的服务契约版本与当前不同")
+    if same_repo is False:
+        notes.append("产出这条记录的仓库提交与当前服务不同")
+    if not service_parts:
+        notes.append("这条记录没有存下产出它的服务身份（预生成案例或更早版本写的），"
+                     "无法判断是否同一版 —— 未知，不等于不同"
+                     + ("；引擎源码本身仍然对得上" if same_engine else ""))
+    return {"recorded": rec, "service_now": now,
+            "matches_running_service": matches,
+            "engine_source_unchanged": same_engine,
+            "note": "；".join(notes) or "与当前服务是同一版本身份"}
 
 
 def _engine_supports(engine_name):
@@ -558,7 +623,8 @@ def post_run(body: NewRun):
                               aid_m=body.aid_m, recip_m=body.recip_m,
                               engine_name=body.engine,
                               engine=adapter.engine_info(body.engine),
-                              repo_commit=repo_commit())
+                              repo_commit=repo_commit(),
+                              api_version=config.API_VERSION)
     if run_id is None:
         act = store.active_run()
         raise HTTPException(409, "已有任务在跑" +
