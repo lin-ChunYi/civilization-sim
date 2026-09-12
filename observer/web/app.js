@@ -33,6 +33,10 @@ const S = {
   loadOverlay: null,
   lastOkT: 0,
   playWait: null,
+  relations: null,
+  relReqGen: 0,
+  relCache: new Map(),
+  relSel: null,
 };
 const PLAY_PENDING_MS = 700;
 function navResult(kind, extra) {
@@ -396,6 +400,53 @@ const DirectorLogic = {
   },
 };
 window.DirectorLogic = DirectorLogic;
+
+const NetworkLogic = {
+  layoutCircle(nodes, w, h) {
+    const list = nodes || [];
+    const n = list.length;
+    const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 40;
+    if (!n) return [];
+    if (n === 1) return [{ id: String(list[0].id), x: cx, y: cy, node: list[0] }];
+    return list.map((node, i) => {
+      const a = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+      return { id: String(node.id), x: cx + r * Math.cos(a), y: cy + r * Math.sin(a), node: node };
+    });
+  },
+  pairKind(edges, donor, receiver) {
+    const hasRev = (edges || []).some((e) =>
+      String(e.donor) === String(receiver) && String(e.receiver) === String(donor));
+    return hasRev ? "two-way" : "one-way";
+  },
+  idStr(x) { return x == null ? "" : String(x); },
+  futureSteps(traj, atYear) {
+    if (atYear == null) return [];
+    return (traj || []).filter((p) => p && p[0] > atYear);
+  },
+  sparkPath(sizes, w, h) {
+    const pts = (sizes || []).filter((p) => p && p.length >= 2);
+    if (pts.length < 2) return "";
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+    const minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+    const dx = Math.max(1, maxX - minX), dy = Math.max(1, maxY - minY);
+    return pts.map((p, i) => {
+      const x = ((p[0] - minX) / dx) * (w - 4) + 2;
+      const y = h - 2 - ((p[1] - minY) / dy) * (h - 4);
+      return (i ? "L" : "M") + x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+  },
+  migrateEndpoints(traj) {
+    const pts = (traj || []).filter((p) => p && p.length >= 2);
+    const out = [];
+    for (let i = 1; i < pts.length; i++) {
+      if (pts[i][1] === pts[i - 1][1]) continue;
+      out.push({ fromYear: pts[i - 1][0], from: pts[i - 1][1], toYear: pts[i][0], to: pts[i][1] });
+    }
+    return out;
+  },
+};
+window.NetworkLogic = NetworkLogic;
 
 function hashParams() {
   const out = {};
@@ -1188,23 +1239,84 @@ function renderSide() {
   loadBand(b.id);
 }
 
+function aidEventButtons(list) {
+  return (list || []).map((e) => {
+    const y = e.year != null ? e.year : DirectorLogic.yearFromEventId(e.id);
+    const ph = e.phase === "recip" ? "优先阶段" : "普通援助";
+    const rp = e.repay ? " · 回助" : "";
+    const lab = (y == null ? "年份未记录" : ("第 " + y + " 年")) + " · " + ph + rp + " · " + nf(e.kcal) + " kcal";
+    if (y == null || !e.id) return `<div class="muted">${esc(lab)}</div>`;
+    return `<button type="button" class="prior-jump" data-prior-year="${y}" data-prior-id="${esc(e.id)}">${esc(lab)}</button>`;
+  }).join(" ");
+}
 function applyBandDossier(d) {
   S.band = d;
   const box = $("bandmore"); if (!box) return;
-  const traj = (d.trajectory || []).map((p) => `第${p[0]}年→${p[1]}号格`).join("，");
-  const gone = d.extinct_at !== null
-    ? `（第 ${d.extinct_at} 年被移除，当年不在地图上）` : "";
   const scope = d.history_scope || {};
+  const atY = scope.mode === "as_of_year" ? scope.at_year : null;
+  const future = NetworkLogic.futureSteps(d.trajectory, atY);
   const scopeLine = scope.mode === "as_of_year"
     ? ("档案口径：截至第 " + scope.at_year + " 年。" + (scope.note ? " " + scope.note : ""))
     : ("档案口径：全档案。" + (scope.note ? " " + scope.note : "含该年之后发生的事。"));
+  const ends = NetworkLogic.migrateEndpoints(d.trajectory);
+  const mig = ends.length
+    ? ends.map((m) => `第${m.fromYear}年 ${m.from}号格 → 第${m.toYear}年 ${m.to}号格（端点，路线未记录）`).join("；")
+    : "无记录的位置变化";
+  const spark = NetworkLogic.sparkPath(d.sizes, 220, 32);
+  const sparkSvg = spark
+    ? `<svg class="spark" viewBox="0 0 220 32" aria-label="人口曲线"><path d="${spark}" fill="none" stroke="#6fb37c" stroke-width="1.6"/></svg>`
+    : `<span class="muted">人口曲线未记录</span>`;
+  const parent = d.parent
+    ? `<button type="button" class="prior-jump" data-b="${esc(String(d.parent))}">父群体 ${esc(String(d.parent))}</button>`
+    : "无记录";
+  const kids = (d.children && d.children.length)
+    ? d.children.map((p) => `<button type="button" class="prior-jump" data-b="${esc(String(p[1]))}">第${p[0]}年 ${esc(String(p[1]))}</button>`).join(" ")
+    : "无记录";
+  const given = d.aid_given || {};
+  const recv = d.aid_received || {};
+  const gone = d.extinct_at !== null ? `（第 ${d.extinct_at} 年被移除）` : "";
+  const st = d.state_at_year;
+  const stateLine = st
+    ? ("截至该年：第 " + st.year + " 年 · " + nf(st.size) + " 人 · " + st.cell + " 号格 · 储粮 " + nf(st.store) + " kcal")
+    : "截至该年的状态未记录";
   box.innerHTML = `<div class="muted">${esc(scopeLine)}</div>
-    <div><b>来源</b>：${esc(d.origin || "")}</div>
+    <div class="muted">${future.length ? "此口径不含未来轨迹。" : (scope.mode === "full" ? "全档案含该年之后的轨迹。" : "")}</div>
+    <div><b>来源</b>：${esc(d.origin || "未记录")}${d.born_at != null ? " · 第 " + d.born_at + " 年出现" : ""}</div>
     <div><b>存续</b>：第 ${d.first_seen} 年 至 第 ${d.last_seen} 年 ${gone}</div>
-    <div><b>分裂出</b>：${(d.children && d.children.length)
-      ? d.children.map((p) => `第${p[0]}年 ${esc(String(p[1]).slice(0, 8))}…`).join("，") : "无记录"}</div>
-    <div><b>迁移轨迹</b>：${esc(traj || "无记录")}</div>
-    <div style="margin-top:4px">${esc(d.source || "")}</div>`;
+    <div><b>谱系</b>：${parent} → 本群体 → ${kids}</div>
+    <div><b>人口曲线</b> ${sparkSvg}</div>
+    <div><b>移动端点</b>：${esc(mig)}</div>
+    <div class="muted">${esc(stateLine)}</div>
+    <h4 class="subh">援助往来（不是盟友）</h4>
+    <div>给出：${nf(given.transfers || 0)} 笔 · ${nf(given.kcal || 0)} kcal</div>
+    <div class="dir-related">${aidEventButtons(given.events)}</div>
+    <div>收到：${nf(recv.transfers || 0)} 笔 · ${nf(recv.kcal || 0)} kcal</div>
+    <div class="dir-related">${aidEventButtons(recv.events)}</div>
+    <details><summary>原始 id 与轨迹数组</summary>
+      <div class="muted">id=${esc(String(d.id))}</div>
+      <div class="muted">${esc(JSON.stringify(d.trajectory || []))}</div>
+      <div>${esc(d.source || "")}</div>
+    </details>`;
+  box.querySelectorAll("[data-b]").forEach((n) => {
+    n.addEventListener("click", (e) => {
+      e.preventDefault();
+      selectBand(n.dataset.b, { force: true, keepCell: true, rail: "dossier" });
+    });
+  });
+  box.querySelectorAll(".prior-jump[data-prior-year]").forEach((n) => {
+    n.addEventListener("click", (e) => {
+      e.preventDefault();
+      const y = +n.dataset.priorYear;
+      const pid = n.dataset.priorId;
+      if (!Number.isFinite(y)) return;
+      gotoYear(y).then(() => {
+        if (pid) {
+          const found = findEventByKey(pid, y);
+          if (found) focusEvent(found);
+        }
+      });
+    });
+  });
 }
 function bandScopeMatches(d, scope, year) {
   const hs = d && d.history_scope;
@@ -1244,16 +1356,164 @@ async function loadBand(id) {
   }
 }
 
+function relCacheKey(runId, scope, year) {
+  return String(runId) + "|rel|" + scope + "|" + (scope === "full" ? "full" : String(year));
+}
+function relAccept(epoch, runId, scope, year, req) {
+  if (stale(epoch, runId)) return false;
+  const nowScope = S.bandScope === "full" ? "full" : "as_of";
+  if (nowScope !== scope) return false;
+  if (scope !== "full" && S.t !== year) return false;
+  if (S.relReqGen !== req) return false;
+  return true;
+}
+function renderRelations(d) {
+  S.relations = d;
+  const scope = (d && d.history_scope) || {};
+  const totals = (d && d.totals) || {};
+  const diag = (d && d.diagnostics) || {};
+  const nodes = (d && d.nodes) || [];
+  const edges = (d && d.edges) || [];
+  if ($("net-scope-pill")) {
+    $("net-scope-pill").textContent = scope.mode === "full"
+      ? "全档案（含该年之后）"
+      : ("截至第 " + (scope.at_year != null ? scope.at_year : S.t) + " 年 · 不含未来");
+  }
+  if ($("net-totals")) {
+    $("net-totals").textContent = "节点 " + (totals.nodes || 0) + " · 有向边 " + (totals.edges || 0) +
+      " · 转移 " + (totals.transfers || 0) + " 笔 · " + nf(totals.kcal || 0) + " kcal";
+  }
+  if ($("net-note")) {
+    $("net-note").textContent = "有向边：A→B 与 B→A 分开。普通援助 / 优先阶段 / 回助笔数分列。" +
+      "分配改变 " + (diag.recip_changed_cellyears != null ? diag.recip_changed_cellyears : "未记录") +
+      " 次（格×年），不属于任何一条边。布局不是地理位置。";
+  }
+  if ($("rel-rail-summary")) {
+    $("rel-rail-summary").textContent = (scope.mode === "full" ? "全档案" : ("截至第 " + S.t + " 年")) +
+      "：有向边 " + (totals.edges || 0) + "，转移 " + (totals.transfers || 0) + " 笔。不是盟友或国家。";
+  }
+  if ($("net-year") && document.activeElement !== $("net-year")) $("net-year").value = String(S.t);
+  const svg = $("net-svg");
+  if (svg) {
+    const W = 720, H = 420;
+    const laid = NetworkLogic.layoutCircle(nodes, W, H);
+    const byId = {};
+    laid.forEach((p) => { byId[p.id] = p; });
+    let out = "";
+    edges.forEach((e, i) => {
+      const a = byId[String(e.donor)], b = byId[String(e.receiver)];
+      if (!a || !b) return;
+      const kind = NetworkLogic.pairKind(edges, e.donor, e.receiver);
+      const repay = (e.repay_transfers || 0) > 0;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - (kind === "two-way" ? 22 : 8);
+      const cls = "net-edge " + kind + (repay ? " repay" : "") + (S.relSel === i ? " on" : "");
+      out += `<path class="${cls}" data-ei="${i}" d="M${a.x.toFixed(1)},${a.y.toFixed(1)} Q${mx.toFixed(1)},${my.toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}"
+        stroke-width="${S.relSel === i ? 2.6 : 1.6}" marker-end="url(#arr)"/>`;
+    });
+    out = `<defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6" fill="#d4b06a"/></marker></defs>` + out;
+    laid.forEach((p) => {
+      const on = S.selBand && String(S.selBand) === p.id;
+      out += `<circle class="net-node" data-b="${esc(p.id)}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${on ? 11 : 8}"
+        fill="${on ? "#e8a04a" : (p.node.alive_at_year ? "#6fb37c" : "#5c645c")}" stroke="#f3deaa" stroke-width="${on ? 2 : 1}"/>
+        <text x="${p.x.toFixed(1)}" y="${(p.y - 14).toFixed(1)}" text-anchor="middle" font-size="10" fill="#e8eadc">${esc(p.node.name || p.id.slice(0, 8))}</text>`;
+    });
+    svg.innerHTML = out;
+    svg.querySelectorAll(".net-node").forEach((n) => n.addEventListener("click", () => {
+      selectBand(n.getAttribute("data-b"), { force: true, rail: "dossier" });
+      showTab("world");
+    }));
+    svg.querySelectorAll(".net-edge").forEach((n) => n.addEventListener("click", () => {
+      const ei = +n.getAttribute("data-ei");
+      S.relSel = ei;
+      const e = edges[ei];
+      if (!e) return;
+      const card = $("net-edge-card");
+      if (card) {
+        card.hidden = false;
+        const nrm = (e.phase_counts && e.phase_counts.normal) || 0;
+        const recp = (e.phase_counts && e.phase_counts.recip) || 0;
+        const evs = (e.event_ids || []).map((id) => {
+          const y = DirectorLogic.yearFromEventId(id);
+          return y == null ? esc(id)
+            : `<button type="button" class="prior-jump" data-prior-year="${y}" data-prior-id="${esc(id)}">${esc(id)}</button>`;
+        }).join(" ");
+        card.innerHTML = `<div class="dir-title">有向往来 · ${esc(String(e.donor))} → ${esc(String(e.receiver))}</div>
+          <div class="dir-meta">${nf(e.transfers)} 笔 · ${nf(e.kcal)} kcal · 普通 ${nrm} · 优先阶段 ${recp} · 回助 ${nf(e.repay_transfers || 0)}</div>
+          <div class="dir-meta">最近 ${e.last_year != null ? ("第 " + e.last_year + " 年") : "未记录"} · 事件 ${evs || "未记录"}</div>
+          <p class="muted">这不是盟友。A→B 与 B→A 若都存在，是两条边。</p>`;
+        card.querySelectorAll(".prior-jump").forEach((b) => b.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          const y = +b.dataset.priorYear, pid = b.dataset.priorId;
+          showTab("world");
+          if (Number.isFinite(y)) gotoYear(y).then(() => {
+            const found = findEventByKey(pid, y);
+            if (found) focusEvent(found);
+          });
+        }));
+      }
+      renderRelations(S.relations);
+    }));
+  }
+  const tbl = $("net-table");
+  if (tbl) {
+    tbl.innerHTML = `<tr><th>供给方</th><th>接收方</th><th>笔数</th><th>kcal</th><th>普通</th><th>优先</th><th>回助</th><th>最近年</th></tr>` +
+      edges.map((e) => `<tr data-donor="${esc(String(e.donor))}" data-recv="${esc(String(e.receiver))}">
+        <td class="clickable" data-b="${esc(String(e.donor))}">${esc(String(e.donor))}</td>
+        <td class="clickable" data-b="${esc(String(e.receiver))}">${esc(String(e.receiver))}</td>
+        <td>${nf(e.transfers)}</td><td>${nf(e.kcal)}</td>
+        <td>${(e.phase_counts && e.phase_counts.normal) || 0}</td>
+        <td>${(e.phase_counts && e.phase_counts.recip) || 0}</td>
+        <td>${nf(e.repay_transfers || 0)}</td>
+        <td>${e.last_year != null ? e.last_year : "未记录"}</td></tr>`).join("");
+    tbl.querySelectorAll("[data-b]").forEach((n) => n.addEventListener("click", () => {
+      selectBand(n.dataset.b, { force: true, rail: "dossier" });
+      showTab("world");
+    }));
+  }
+  if ($("net-raw")) $("net-raw").textContent = JSON.stringify({
+    history_scope: scope, totals: totals, diagnostics: diag,
+    nodes: nodes.map((n) => n.id),
+    edges: edges.map((e) => ({ donor: e.donor, receiver: e.receiver, event_ids: e.event_ids })),
+  }, null, 2);
+}
+async function loadRelations() {
+  if (!S.run) return { ok: false, reason: "no-run" };
+  const myRun = S.run.run_id, myEpoch = S.epoch;
+  const myScope = S.bandScope === "full" ? "full" : "as_of";
+  const myYear = S.t;
+  const myReq = ++S.relReqGen;
+  const key = relCacheKey(myRun, myScope, myYear);
+  const accept = () => relAccept(myEpoch, myRun, myScope, myYear, myReq);
+  const cached = S.relCache.get(key);
+  if (cached && accept()) renderRelations(cached);
+  const q = myScope === "full" ? "" : ("?at_year=" + myYear);
+  try {
+    const d = await api(`/api/runs/${myRun}/relations` + q);
+    if (!accept()) return { ok: false, reason: "stale" };
+    S.relCache.set(key, d);
+    if (!accept()) return { ok: false, reason: "stale" };
+    renderRelations(d);
+    return { ok: true };
+  } catch (e) {
+    if (!accept()) return { ok: false, reason: "stale" };
+    if ($("rel-rail-summary")) $("rel-rail-summary").textContent = "关系读取失败：" + e.message;
+    if ($("net-note")) $("net-note").textContent = "关系读取失败：" + e.message;
+    return { ok: false, reason: e.message };
+  }
+}
+
 function showRail(name) {
   const tabs = document.querySelectorAll("#rail-tabs button");
   if (!tabs.length) return;
   tabs.forEach((x) => x.classList.toggle("on", x.dataset.rail === name));
-  ["chronicle", "dossier", "help"].forEach((n) => {
+  ["chronicle", "dossier", "network", "help"].forEach((n) => {
     const pane = $("pane-" + n); if (!pane) return;
     const on = n === name;
     pane.hidden = !on;
     pane.classList.toggle("on", on);
   });
+  if (name === "network") loadRelations();
 }
 function selectBand(id, opts) {
   opts = opts || {};
@@ -1325,6 +1585,7 @@ function commitYear(t, wait) {
   });
   renderDirectorChrome();
   renderYearFailBar();
+  loadRelations();
 }
 function yearNavAlive(myEpoch, myRun, myOp) {
   return opAlive(myOp) && !stale(myEpoch, myRun);
@@ -2180,7 +2441,11 @@ async function openRun(id) {
   cancelFx();
   S.selEvent = null;
   S.bandCache = new Map();
+  S.relCache = new Map();
   S.bandReqGen += 1;
+  S.relReqGen += 1;
+  S.relations = null;
+  S.relSel = null;
   let run, ser;
   try {
     run = await api(`/api/runs/${id}`);
@@ -2251,14 +2516,15 @@ function showTab(name) {
     name = "world";
     setTimeout(() => { const p = $("events"); if (p) p.scrollIntoView({ block: "start" }); }, 0);
   }
-  if (["world", "metrics", "runs", "progress"].indexOf(name) < 0) name = "world";
-  ["world", "metrics", "events", "runs", "progress"].forEach((t) => {
+  if (["world", "network", "metrics", "runs", "progress"].indexOf(name) < 0) name = "world";
+  ["world", "network", "metrics", "events", "runs", "progress"].forEach((t) => {
     const el = $("tab-" + t); if (el) el.hidden = t !== name;
   });
   document.querySelectorAll("#tabs button, .hud-actions [data-tab]").forEach((b) =>
     b.classList.toggle("on", b.dataset.tab === name));
   setHash({ tab: name });
   if (name === "metrics") renderCharts();
+  if (name === "network") loadRelations();
   if (name === "progress") renderMilestones().catch((e) => flash(e.message, true));
 }
 
@@ -2377,7 +2643,19 @@ async function boot() {
     S.bandScope = b.dataset.scope === "full" ? "full" : "as_of";
     setHash({ archive: S.bandScope === "full" ? "full" : "" });
     if (S.selBand) loadBand(S.selBand);
+    loadRelations();
     renderSide();
+  });
+  if ($("b-open-network")) $("b-open-network").addEventListener("click", () => { showTab("network"); loadRelations(); });
+  if ($("net-use-play")) $("net-use-play").addEventListener("click", () => {
+    if ($("net-year")) $("net-year").value = String(S.t);
+    loadRelations();
+  });
+  if ($("net-year")) $("net-year").addEventListener("change", () => {
+    const parsed = OverviewLogic.parseStrictInt($("net-year").value, { name: "年份", min: 0 });
+    if (!parsed.ok) { flash(parsed.error, true); return; }
+    bumpOp();
+    gotoYear(parsed.value, { opGen: S.opGen }).then(() => loadRelations());
   });
   $("speed").addEventListener("change", (e) => { S.speed = +e.target.value; });
   $("scrub").addEventListener("input", (e) => {
@@ -2392,7 +2670,7 @@ async function boot() {
   if (railTabs) railTabs.addEventListener("click", (e) => {
     const b = e.target.closest("[data-rail]"); if (!b) return;
     document.querySelectorAll("#rail-tabs button").forEach((x) => x.classList.toggle("on", x === b));
-    ["chronicle", "dossier", "help"].forEach((name) => {
+    ["chronicle", "dossier", "network", "help"].forEach((name) => {
       const pane = $("pane-" + name); if (!pane) return;
       const on = name === b.dataset.rail;
       pane.hidden = !on;
@@ -2649,7 +2927,7 @@ window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, rend
   setPlayMode, focusEvent, cancelFx, loadBand, gotoEventYear, stepEventYear, findEventByKey,
   bumpOp, opAlive, bandAccept, bandCacheKey, applyBandDossier, setPlaying, tickEvents, tick,
   navResult, beginYearLoad, endYearLoad, afterPlayStep, retryYear, reapNavUi, renderYearFailBar,
-  pendingCurrentYear, PLAY_PENDING_MS };
+  pendingCurrentYear, PLAY_PENDING_MS, loadRelations, renderRelations, NetworkLogic };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {

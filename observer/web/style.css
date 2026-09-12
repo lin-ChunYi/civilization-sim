@@ -232,6 +232,17 @@ footer{color:var(--muted);font-size:12px;padding:12px 24px 28px;text-align:cente
 .year-display.pulse{animation:yearpulse .35s ease}
 
 .cell.hover{stroke:#f3deaa;stroke-width:2}
+.net-panel{margin:10px 12px}
+.net-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0}
+.net-toolbar input{width:72px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:#0c1410;color:var(--ink)}
+.net-svg{width:100%;height:min(52vh,440px);background:rgba(10,16,14,.45);border:1px solid var(--line2);border-radius:10px}
+.net-node{cursor:pointer}
+.net-edge{cursor:pointer;fill:none}
+.net-edge.one-way{stroke:#6fb37c}
+.net-edge.two-way{stroke:#6eb8b4}
+.net-edge.repay{stroke:#d4b06a}
+.net-edge.on{stroke:#f3deaa;stroke-width:2.6}
+.spark{width:100%;height:36px}
 .year-fail{margin:6px 0 4px;padding:6px 10px;border:1px solid var(--danger);border-radius:8px;
   background:rgba(196,92,82,.12);display:flex;gap:8px;align-items:center;flex-wrap:wrap;
   font-size:12.5px;color:#f0b8b2}

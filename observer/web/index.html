@@ -22,6 +22,7 @@
   <div class="hud-actions">
     <select id="run-switch" class="run-switch" aria-label="切换运行"></select>
     <button type="button" class="btn ghost" data-tab="runs" id="btn-worlds">新世界</button>
+    <button type="button" class="btn ghost" data-tab="network" id="btn-network">关系网</button>
     <button type="button" class="btn ghost" data-tab="metrics" id="btn-intel">情报</button>
     <button type="button" class="btn ghost" data-tab="progress" id="btn-roadmap">路线图</button>
     <details class="tokbox">
@@ -34,6 +35,7 @@
 
 <nav class="modes" id="tabs">
   <button data-tab="world" class="on">沙盘</button>
+  <button data-tab="network">关系网</button>
   <button data-tab="metrics">情报分析</button>
   <button data-tab="runs">创世 / 运行</button>
   <button data-tab="progress">开发路线</button>
@@ -108,6 +110,7 @@
       <div class="rail-tabs" id="rail-tabs">
         <button type="button" data-rail="chronicle" class="on">卷宗</button>
         <button type="button" data-rail="dossier">档案</button>
+        <button type="button" data-rail="network">关系</button>
         <button type="button" data-rail="help">口径</button>
       </div>
       <div class="rail-pane on" id="pane-chronicle">
@@ -159,6 +162,12 @@
             <div class="tablewrap compact"><table id="bandtable"></table></div>
           </div>
         </div>
+      </div>
+      <div class="rail-pane" id="pane-network" hidden>
+        <div class="panel-kicker">RELATIONS</div>
+        <p class="muted" id="rel-rail-note">只记录谁给过谁食物。不是盟友、敌人或国家。布局不是地图位置。</p>
+        <div id="rel-rail-summary" class="muted">打开运行后显示截至当前回放年的往来。</div>
+        <button type="button" class="btn small" id="b-open-network">打开关系网</button>
       </div>
       <div class="rail-pane" id="pane-help" hidden>
         <div class="help-copy">
@@ -221,6 +230,25 @@
     <summary>模型版本、参数与能量账（技术详情）</summary>
     <div id="tech-body" class="muted">打开一次运行后显示。</div>
   </details>
+</section>
+
+<section id="tab-network" hidden>
+  <div class="panel glass net-panel">
+    <div class="panel-kicker">AID RELATIONS · NOT GEOGRAPHY</div>
+    <div class="net-toolbar">
+      <label>截至第 <input id="net-year" type="number" min="0" step="1" value="0" aria-label="关系网年份"> 年</label>
+      <button type="button" class="btn small" id="net-use-play">用回放年</button>
+      <span class="pill" id="net-scope-pill">默认不含未来</span>
+      <span class="pill" id="net-totals">—</span>
+    </div>
+    <p class="muted" id="net-note">有向边：A→B 与 B→A 分开。普通援助 / 优先阶段 / 回助笔数分列。分配改变（recip.changed）是运行级诊断，不属于边。</p>
+    <svg id="net-svg" class="net-svg" viewBox="0 0 720 420" role="img" aria-label="援助关系网"></svg>
+    <div id="net-edge-card" class="director-card" hidden></div>
+    <div class="tablewrap compact" style="margin-top:8px"><table id="net-table"></table></div>
+    <details class="tech-details"><summary>原始字段与 64 位 id</summary>
+      <pre id="net-raw" class="muted" style="white-space:pre-wrap"></pre>
+    </details>
+  </div>
 </section>
 
 <section id="tab-metrics" hidden>
