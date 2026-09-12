@@ -134,6 +134,7 @@
         <button type="button" data-type="split">分裂</button>
         <button type="button" data-type="extinct">群体消失</button>
         <button type="button" data-type="share">信息交换</button>
+        <button type="button" data-type="aid">食物援助</button>
       </div>
     </div>
     <p class="muted" id="ev-load-note"></p>
@@ -180,6 +181,7 @@
       <label>SIGMA_M 资源再生年际波动（‰）<input id="f-sigma" type="text" inputmode="numeric" value="400" autocomplete="off"></label>
       <label>MOVE_MORT_M 迁移死亡强度（‰）<input id="f-mort" type="text" inputmode="numeric" value="50" autocomplete="off"></label>
       <label id="f-share-wrap" hidden>SHARE_M 同格信息交换参与概率（‰）<input id="f-share" type="text" inputmode="numeric" value="0" autocomplete="off"></label>
+      <label id="f-aid-wrap" hidden>食物援助比例 AID_M（‰）<input id="f-aid" type="text" inputmode="numeric" value="0" autocomplete="off"></label>
       <label>信息条件（对照臂）<select id="f-arm"></select></label>
       <label>备注（可空）<input id="f-label" type="text" maxlength="60" placeholder="例如：对照 MORT=50"></label>
       <button id="b-start" class="btn primary">开始模拟</button>

@@ -54,7 +54,7 @@ const OverviewLogic = {
     return { text: (d > 0 ? "较开局 +" : "较开局 ") + d + u, dir: Math.sign(d) };
   },
   eventTypeCounts(events) {
-    const out = { migrate: 0, split: 0, extinct: 0, share: 0, other: 0, total: 0 };
+    const out = { migrate: 0, split: 0, extinct: 0, share: 0, aid: 0, other: 0, total: 0 };
     (events || []).forEach((e) => {
       if (e && out[e.type] != null) out[e.type] += 1;
       else out.other += 1;
@@ -108,20 +108,23 @@ const OverviewLogic = {
       sentences.push("这是开局。当前共有 " + (agg.bands == null ? "—" : agg.bands) +
         " 个群体、" + (agg.pop == null ? "—" : agg.pop) + " 人。");
       sentences.push("第 0 年没有上一年度，不显示同比变化。");
-      if (ev.total === 0) sentences.push("本年没有记录到迁移、分裂、群体消失或信息交换事件。");
+      if (ev.total === 0) sentences.push("本年没有记录到迁移、分裂、群体消失、信息交换或食物援助事件。");
       else {
         sentences.push("记录到 " + ev.migrate + " 次迁移、" + ev.split +
-          " 次群体分裂、" + ev.extinct + " 次群体消失、" + ev.share + " 次信息交换。");
+          " 次群体分裂、" + ev.extinct + " 次群体消失、" + ev.share +
+          " 次信息交换、" + ev.aid + " 条食物援助（逐笔转移）。");
       }
+      OverviewLogic._appendAidLedger(sentences, input.aid);
       return { sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md };
     }
     sentences.push("本年出生 " + births + " 人，非迁移死亡（模型的原规则死亡） " +
       demo + " 人，迁移死亡 " + md + " 人。");
     if (ev.total === 0) {
-      sentences.push("本年没有记录到迁移、分裂、群体消失或信息交换事件。");
+      sentences.push("本年没有记录到迁移、分裂、群体消失、信息交换或食物援助事件。");
     } else {
       sentences.push("记录到 " + ev.migrate + " 次迁移、" + ev.split +
-        " 次群体分裂、" + ev.extinct + " 次群体消失、" + ev.share + " 次信息交换。");
+        " 次群体分裂、" + ev.extinct + " 次群体消失、" + ev.share +
+        " 次信息交换、" + ev.aid + " 条食物援助（逐笔转移）。");
     }
     sentences.push("当前共有 " + agg.bands + " 个群体、" + agg.pop + " 人。");
     if (input.ledgerMig != null && input.ledgerMig !== ev.migrate) {
@@ -129,7 +132,14 @@ const OverviewLogic = {
         " 次，已记录的迁移事件 " + ev.migrate +
         " 条；人数与事件条数不能混加，也不强行对齐。");
     }
+    OverviewLogic._appendAidLedger(sentences, input.aid);
     return { sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md };
+  },
+  _appendAidLedger(sentences, aid) {
+    if (!aid) return;
+    sentences.push("援助账本：援助活动 " + aid.events + " 次（格×年，一次多人援助算 1），" +
+      "逐笔转移 " + aid.transfers + " 笔（一个供给方给一个接收方算 1）。" +
+      "活动次数与转移笔数不是同一个计数，不能相加或互相替代。");
   },
 };
 window.OverviewLogic = OverviewLogic;
@@ -288,6 +298,7 @@ function renderOverview() {
     const sum = OverviewLogic.buildYearSummary({
       t: S.t, year: rec.year, agg: rec.agg, events: rec.events,
       ledgerMig: rec.year ? rec.year.mig_total : null,
+      aid: rec.aid || null,
     });
     $("year-summary").textContent = sum.sentences.join("");
   }
@@ -320,7 +331,10 @@ function renderTech() {
     ["种子 / 年数", S.run.seed + " / " + S.run.years],
     ["SIGMA_M", S.run.sigma_m + "‰"],
     ["MOVE_MORT_M", S.run.move_mort_m + "‰"],
-    ["SHARE_M", (S.run.share_m == null ? "无此参数" : S.run.share_m + "‰")],
+    ["SHARE_M", engineHasParam(runEngineName(S.run), "share_m")
+      ? (S.run.share_m ?? 0) + "‰（本次运行实际值）" : "无此参数"],
+    ["AID_M", engineHasParam(runEngineName(S.run), "aid_m")
+      ? (S.run.aid_m ?? 0) + "‰（本次运行实际值）" : "无此参数"],
     ["信息条件", arm ? arm.label : S.run.arm],
     ["model_run_id", S.run.model_run_id || "（尚未写入）"],
     ["full_digest", S.run.full_digest || "（尚未写入）"],
@@ -332,11 +346,20 @@ function renderTech() {
     if (rec.integrity.share_ledger_error != null) {
       rows.push(["信息账误差", String(rec.integrity.share_ledger_error)]);
     }
+    if (rec.integrity.aid_ledger_error != null) {
+      rows.push(["援助账误差", String(rec.integrity.aid_ledger_error)]);
+    }
     if (rec.share) {
       rows.push(["本年信息交换（采纳/拒绝）",
         rec.share.adopted + " / " + rec.share.rejected +
         "（收到 " + rec.share.received + "）"]);
       rows.push(["累计采纳", String(rec.share.cum_adopted)]);
+    }
+    if (rec.aid) {
+      rows.push(["援助活动次数", rec.aid.events + " 次（格×年）"]);
+      rows.push(["逐笔转移", rec.aid.transfers + " 笔"]);
+      rows.push(["本年援助食物", rec.aid.kcal + " kcal"]);
+      rows.push(["累计援助活动 / 转移", rec.aid.cum_events + " 次 / " + rec.aid.cum_transfers + " 笔"]);
     }
     rows.push(["累计吃掉", py(rec.cum.out_eat) + " 人年口粮"]);
     rows.push(["累计腐损", py(rec.cum.out_spoil) + " 人年口粮"]);
@@ -506,6 +529,11 @@ function renderSide() {
     rows.push(["决策因交换而改变", rec.share.decision_changed == null
       ? `<span class="na">未记录</span>` : `${nf(rec.share.decision_changed)} <small>次</small>`]);
   }
+  if (rec.aid) {
+    rows.push(["援助活动次数", `${nf(rec.aid.events)} <small>次（格×年）</small>`]);
+    rows.push(["逐笔转移", `${nf(rec.aid.transfers)} <small>笔</small>`]);
+    rows.push(["本年援助食物", kcalCell(rec.aid.kcal)]);
+  }
   $("side-now").innerHTML = rows.map(([k, v]) =>
     `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
   const crows = [
@@ -518,12 +546,19 @@ function renderSide() {
     ["累计吃掉", kcalCell(cum.out_eat)],
     ["累计腐损", kcalCell(cum.out_spoil)],
   ];
+  if (rec.aid) {
+    crows.push(["累计援助活动", `${nf(rec.aid.cum_events)} <small>次（格×年）</small>`]);
+    crows.push(["累计逐笔转移", `${nf(rec.aid.cum_transfers)} <small>笔</small>`]);
+    crows.push(["累计援助食物", kcalCell(rec.aid.cum_kcal)]);
+  }
   $("side-cum").innerHTML = crows.map(([k, v]) =>
     `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
   const ok = (v) => v === 0 ? `<span style="color:var(--ok)">0 ✓</span>` : `<span class="err">${v} ✗</span>`;
   $("side-int").innerHTML =
     `<div class="k">能量守恒误差</div><div class="v">${ok(rec.integrity.conservation_error)}</div>
      <div class="k">人口恒等误差</div><div class="v">${ok(rec.integrity.population_identity_error)}</div>
+     ${rec.integrity.aid_ledger_error != null
+       ? `<div class="k">援助账误差</div><div class="v">${ok(rec.integrity.aid_ledger_error)}</div>` : ""}
      <div class="k">状态哈希</div><div class="v"><small>${esc(rec.integrity.state_hash.slice(0, 16))}…</small></div>`;
 
   const selWrap = $("side-sel"), h = $("side-sel-h");
@@ -762,7 +797,7 @@ function renderCharts() {
 
 /* ---------------- 事件 ---------------- */
 function TYPE_LABEL(t) {
-  return ({ migrate: "迁移", split: "分裂", extinct: "群体消失", share: "信息交换" })[t] || t;
+  return ({ migrate: "迁移", split: "分裂", extinct: "群体消失", share: "信息交换", aid: "食物援助" })[t] || t;
 }
 function renderEvents() {
   const box = $("events");
@@ -807,7 +842,7 @@ function renderEvents() {
   if (!filtered.length) {
     box.innerHTML = `<div class="emptystate">${S.evScope === "year"
       ? (S.t === 0 ? "开局" : "第 " + S.t + " 年") + "没有可核实的" +
-        (S.evFilter === "all" ? "迁移、分裂、群体消失或信息交换" : TYPE_LABEL(S.evFilter)) + "事件。"
+        (S.evFilter === "all" ? "迁移、分裂、群体消失、信息交换或食物援助" : TYPE_LABEL(S.evFilter)) + "事件。"
       : "已加载范围内没有符合筛选的事件。"}</div>`;
   } else {
     box.innerHTML = filtered.map((e) => `<div class="ev ${esc(e.type)}" data-t="${e.t}"
@@ -840,6 +875,12 @@ function renderEvents() {
     } else {
       $("ev-ledger-note").textContent = "累计事件只统计当前回放年份及以前。出生人数不等于事件条数。";
     }
+    if (rec.aid) {
+      const listedAid = OverviewLogic.eventTypeCounts(rec.events).aid;
+      $("ev-ledger-note").textContent += " 援助活动 " + rec.aid.events +
+        " 次（格×年）；逐笔转移 " + rec.aid.transfers + " 笔；已记录食物援助事件 " +
+        listedAid + " 条。活动次数与转移笔数不是同一个计数。";
+    }
   }
 
   if (rec) {
@@ -869,14 +910,15 @@ function jumpToEvent(ev) {
 /* ---------------- 运行记录 ---------------- */
 function renderRuns() {
   const head = `<tr><th>运行</th><th>状态</th><th>引擎</th><th>seed</th><th>年数</th><th>SIGMA_M</th>
-    <th>MOVE_MORT_M</th><th>SHARE_M</th><th>信息条件</th><th>已算/目标</th><th>创建时间</th><th>模型版本</th><th>操作</th></tr>`;
+    <th>MOVE_MORT_M</th><th>SHARE_M</th><th>AID_M</th><th>信息条件</th><th>已算/目标</th><th>创建时间</th><th>模型版本</th><th>操作</th></tr>`;
   $("runtable").innerHTML = head + S.runs.map((r) => `<tr class="${S.run && S.run.run_id === r.run_id ? "on" : ""}">
     <td class="clickable" data-open="${esc(r.run_id)}">${esc(r.label || r.run_id)}
       ${r.kind === "preset" ? '<span class="badge s-off">预生成</span>' : ""}</td>
     <td>${statusBadge(r.status)}</td>
     <td>${esc(r.engine || "exp03")}</td><td>${r.seed}</td><td>${r.years}</td>
     <td>${r.sigma_m}‰</td><td>${r.move_mort_m}‰</td>
-    <td>${r.share_m == null || r.engine === "exp03" ? "—" : r.share_m + "‰"}</td>
+    <td>${engineHasParam(r.engine || "exp03", "share_m") ? (r.share_m ?? 0) + "‰" : "—"}</td>
+    <td>${engineHasParam(r.engine || "exp03", "aid_m") ? (r.aid_m ?? 0) + "‰" : "—"}</td>
     <td>${S.cfg.arms[r.arm] ? esc(S.cfg.arms[r.arm].label) : esc(r.arm)}</td>
     <td>${r.years_recorded}/${r.years}</td><td>${tsfmt(r.created_at)}</td>
     <td><small>${esc(r.engine_path || "")} · ${esc((r.engine_sha256 || "").slice(0, 8))}</small></td>
@@ -961,6 +1003,7 @@ function showTab(name) {
     name = "world";
     setTimeout(() => { const p = $("event-panel"); if (p) p.scrollIntoView({ block: "start" }); }, 0);
   }
+  if (["world", "metrics", "runs", "progress"].indexOf(name) < 0) name = "world";
   ["world", "metrics", "events", "runs", "progress"].forEach((t) => {
     const el = $("tab-" + t); if (el) el.hidden = t !== name;
   });
@@ -1073,9 +1116,12 @@ async function boot() {
 }
 
 function syncEngineForm() {
-  const wrap = $("f-share-wrap");
-  if (!wrap || !$("f-engine")) return;
-  wrap.hidden = !engineHasParam($("f-engine").value, "share_m");
+  if (!$("f-engine")) return;
+  const name = $("f-engine").value;
+  const shareWrap = $("f-share-wrap");
+  const aidWrap = $("f-aid-wrap");
+  if (shareWrap) shareWrap.hidden = !engineHasParam(name, "share_m");
+  if (aidWrap) aidWrap.hidden = !engineHasParam(name, "aid_m");
 }
 
 async function startRun() {
@@ -1094,10 +1140,16 @@ async function startRun() {
     if (!share.ok) { flash(share.error, true); return; }
     share_m = share.value;
   }
+  let aid_m = 0;
+  if (engineHasParam(engine, "aid_m")) {
+    const aid = OverviewLogic.parseStrictInt($("f-aid").value, { name: "AID_M", min: 0, max: 1000 });
+    if (!aid.ok) { flash(aid.error, true); return; }
+    aid_m = aid.value;
+  }
   const body = {
     seed: seed.value, years: years.value, sigma_m: sigma.value,
     move_mort_m: mort.value, arm: $("f-arm").value, label: $("f-label").value.trim(),
-    engine: engine, share_m: share_m,
+    engine: engine, share_m: share_m, aid_m: aid_m,
   };
   $("b-start").disabled = true;
   try {
@@ -1112,7 +1164,7 @@ async function startRun() {
   }
 }
 
-window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot };
+window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot, startRun };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {

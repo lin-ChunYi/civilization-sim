@@ -107,6 +107,20 @@ window.__OBS_MANUAL_BOOT__ = true;
       agg: { pop: 120, bands: 6 }, events: [{ type: "share" }, { type: "share" }], ledgerMig: 0
     });
     ok("L32 摘要写出信息交换次数", /2 次信息交换/.test(sShare.sentences.join("")));
+    const eva = L.eventTypeCounts([{ type: "aid" }, { type: "aid" }, { type: "share" }]);
+    ok("L33 食物援助单独计数，不混进信息交换", eva.aid === 2 && eva.share === 1 && eva.total === 3);
+    const sAid = L.buildYearSummary({
+      t: 73, year: { births_cum: 1, deaths_demo_cum: 0, mig_deaths_cum: 0 },
+      agg: { pop: 120, bands: 6 },
+      events: [{ type: "aid" }, { type: "aid" }],
+      ledgerMig: 0,
+      aid: { events: 1, transfers: 2, kcal: 1000 }
+    });
+    const aidBlob = sAid.sentences.join("");
+    ok("L34 摘要区分援助活动次数与逐笔转移笔数",
+      /援助活动 1 次/.test(aidBlob) && /逐笔转移 2 笔/.test(aidBlob) && /2 条食物援助/.test(aidBlob));
+    ok("L35 小数 AID_M 被拒绝", !L.parseStrictInt("100.5", { name: "AID_M" }).ok);
+    ok("L36 AID_M=1000 通过", L.parseStrictInt("1000", { name: "AID_M", min: 0, max: 1000 }).ok);
   } catch (e) {
     out.push("FAIL 自检脚本本身出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
   }

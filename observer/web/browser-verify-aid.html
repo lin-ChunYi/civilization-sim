@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>OBS-01 EXP-05 网页启动验收</title>
+<style>body{font:13px/1.5 monospace;background:#111;color:#ddd;padding:8px}#result{white-space:pre-wrap}#mount{background:#f3efe6;color:#111;max-height:280px;overflow:auto}</style>
+</head>
+<body>
+<pre id="result">running…</pre>
+<div id="mount"></div>
+<script>window.__OBS_MANUAL_BOOT__ = true;</script>
+<script>
+(async () => {
+  const realFetch = window.fetch.bind(window);
+  const out = [];
+  const ok = (name, cond, detail) => out.push((cond ? "PASS" : "FAIL") + " " + name + (detail ? " :: " + detail : ""));
+  const txt = (sel) => (document.querySelector(sel) || { textContent: "" }).textContent.replace(/\s+/g, " ").trim();
+  const hp = {};
+  (location.hash || "").replace(/^#/, "").split("&").forEach((kv) => {
+    const [k, v] = kv.split("="); if (k) hp[k] = decodeURIComponent(v || "");
+  });
+  try {
+    const html = await realFetch("/static/index.html").then((r) => r.text());
+    const body = html.split("<body>")[1].split("</body>")[0].replace(/<script[\s\S]*?<\/script>/g, "");
+    document.getElementById("mount").innerHTML = body;
+    await new Promise((res, rej) => {
+      const el = document.createElement("script");
+      el.src = "/static/app.js?aid=" + Date.now(); el.onload = res; el.onerror = () => rej(new Error("app.js"));
+      document.head.appendChild(el);
+    });
+    const O = window.__obs;
+    await O.boot();
+
+    if (hp.inspect) {
+      await O.openRun(hp.inspect);
+      await O.gotoYear(73);
+      const rec = O.S.years.get(O.ykey(hp.inspect, 73));
+      const aidEv = ((rec && rec.events) || []).filter((e) => e.type === "aid");
+      ok("I0 打开的是网页启动的那次运行", O.S.run && O.S.run.run_id === hp.inspect);
+      ok("I1 台账 AID_M=1000 engine=exp05", O.S.run && O.S.run.aid_m === 1000 && O.S.run.engine === "exp05",
+        JSON.stringify(O.S.run && { engine: O.S.run.engine, aid_m: O.S.run.aid_m, share_m: O.S.run.share_m }));
+      ok("I2 详情是本次运行实际 AID_M", /1000‰（本次运行实际值）/.test(txt("#tech-body")), txt("#tech-body").slice(0, 240));
+      ok("I3 第 73 年有食物援助事件", aidEv.length > 0,
+        "n=" + aidEv.length + " types=" + ((rec && rec.events) || []).map((e) => e.type).join(","));
+      ok("I4 列表标签为食物援助", txt("#events").indexOf("食物援助") >= 0, txt("#events").slice(0, 160));
+      ok("I5 侧栏区分活动次数与逐笔转移",
+        txt("#side-now").indexOf("援助活动次数") >= 0 && txt("#side-now").indexOf("逐笔转移") >= 0
+        && txt("#side-now").indexOf("次（格×年）") >= 0 && txt("#side-now").indexOf("笔") >= 0,
+        txt("#side-now"));
+      ok("I6 摘要区分活动次数与逐笔转移",
+        /援助活动 \d+ 次/.test(txt("#year-summary")) && /逐笔转移 \d+ 笔/.test(txt("#year-summary")),
+        txt("#year-summary"));
+      if (rec && rec.aid) {
+        ok("I7 账本活动次数 ≠ 混用转移笔数（字段分开存在）",
+          rec.aid.events != null && rec.aid.transfers != null,
+          "events=" + rec.aid.events + " transfers=" + rec.aid.transfers);
+      } else ok("I7 账本活动次数 ≠ 混用转移笔数（字段分开存在）", false, "缺 aid 段");
+    } else {
+      ok("A0 引擎列表含 exp05", !!(O.S.cfg.engines && O.S.cfg.engines.exp05));
+      ok("A1 exp05 含 aid_m", (O.S.cfg.engines.exp05.engine_params || []).indexOf("aid_m") >= 0);
+
+      document.getElementById("f-engine").value = "exp05";
+      document.getElementById("f-engine").dispatchEvent(new Event("change"));
+      ok("A2 选 exp05 显示 AID_M", document.getElementById("f-aid-wrap").hidden === false);
+      document.getElementById("f-engine").value = "exp03";
+      document.getElementById("f-engine").dispatchEvent(new Event("change"));
+      ok("A3 选 exp03 隐藏 AID_M", document.getElementById("f-aid-wrap").hidden === true);
+
+      document.getElementById("f-engine").value = "exp05";
+      document.getElementById("f-engine").dispatchEvent(new Event("change"));
+      document.getElementById("f-seed").value = "4242";
+      document.getElementById("f-years").value = "300";
+      document.getElementById("f-sigma").value = "400";
+      document.getElementById("f-mort").value = "50";
+      document.getElementById("f-share").value = "1000";
+      document.getElementById("f-label").value = "网页启动验收 EXP-05 aid1000";
+      document.getElementById("f-aid").value = "100.5";
+      const before = O.S.runs.length;
+      await O.startRun();
+      ok("A4 小数 AID_M 不会提交", O.S.runs.length === before);
+
+      document.getElementById("f-aid").value = "1000";
+      await O.startRun();
+      const run = O.S.run;
+      ok("A5 网页 startRun 成功", !!(run && run.run_id), run && run.run_id);
+      ok("A6 提交了 aid_m=1000 且台账是实际值",
+        run && run.aid_m === 1000 && run.engine === "exp05" && run.share_m === 1000
+        && run.seed === 4242 && run.years === 300,
+        JSON.stringify(run && { id: run.run_id, engine: run.engine, aid_m: run.aid_m, share_m: run.share_m, seed: run.seed, years: run.years }));
+      out.push("RUN_ID " + ((run && run.run_id) || ""));
+    }
+  } catch (e) {
+    out.push("FAIL 脚本出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
+  }
+  const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
+  out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
+  document.getElementById("result").textContent = out.join("\n");
+})();
+</script>
+</body></html>
