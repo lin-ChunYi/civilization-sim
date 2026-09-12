@@ -12,7 +12,7 @@ mkdirSync(SHOT, { recursive: true });
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9341;
 const RUN = "preset-exp06-recip1000";
-const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v5#tab=world&run=" + RUN + "&t=0";
+const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v6#tab=world&run=" + RUN + "&t=0";
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
   `--remote-debugging-port=${PORT}`,

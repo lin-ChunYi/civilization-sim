@@ -349,16 +349,18 @@ html.skin-console #pane-help{display:none !important}
   html.skin-console .rail-pane.on,html.skin-console .rail-pane:not([hidden]){display:block !important}
 }
 @media (max-width:900px){
-  #tab-world{height:calc(100dvh - 96px);padding-bottom:58px}
+  #tab-world{height:calc(100dvh - 52px);padding-bottom:58px}
+  .overview{display:none}
   .play-dock{position:fixed;left:0;right:0;bottom:0;padding-bottom:max(6px, env(safe-area-inset-bottom))}
   .play-dock .tlctl .btn{min-width:40px;min-height:36px}
-  .rail{position:fixed;left:8px;right:8px;bottom:62px;max-height:36vh;z-index:34;
+  .rail{position:fixed;left:8px;right:8px;bottom:62px;max-height:28vh;z-index:34;
     display:none;height:auto}
   .rail.open{display:flex}
+  .rail.open .year-summary,.rail.open .year-metrics,.rail.open .panel-kicker,
+  .rail.open #ev-load-note,.rail.open #ev-ledger-note{display:none}
   .sandtable{min-height:0;flex:1;height:100%;padding:6px}
   .mapbox,#map{min-height:0;flex:1}
   .console{display:none}
-  .overview{grid-template-columns:repeat(3,minmax(0,1fr));padding:4px 8px 0}
   .ov-s{display:none}
 }
 @media (max-width:620px){

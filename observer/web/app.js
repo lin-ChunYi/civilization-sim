@@ -535,7 +535,7 @@ const UnitArt = {
     if (kind === 1) {
       legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-3.4,6.6 L-5.2,12.2" : "M-3.2,6.6 L-4.0,12.0"}" stroke="${pal.hair}" stroke-width="2.7" stroke-linecap="round" fill="none"/>`
         + `<path class="unit-leg unit-leg-r" d="${walk ? "M3.4,6.6 L5.2,12.2" : "M3.2,6.6 L4.0,12.0"}" stroke="${pal.hair}" stroke-width="2.7" stroke-linecap="round" fill="none"/>`;
-      tunic = `<path class="unit-tunic" d="M-8.4,-1.0 C-9.2,4.6 -7.2,9.0 -4.6,9.8 L4.6,9.8 C7.2,9.0 9.2,4.6 8.4,-1.0 C4.6,-2.8 -4.6,-2.8 -8.4,-1.0Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.85"/>`;
+      tunic = `<path class="unit-tunic" d="M-8.4,-1.0 C-9.2,4.6 -7.2,9.0 -4.6,9.8 L4.6,9.8 C7.2,9.0 9.2,4.6 8.4,-1.0 C4.6,-2.8 -4.6,-2.8 -8.4,-1.0Z" fill="${pal.cloth}" stroke="#2a1810" stroke-width="0.85"/>`;
       sash = `<path class="unit-sash" d="M-7.2,2.0 L7.4,3.2 L6.8,5.4 L-7.6,4.2Z" fill="${pal.sash}"/>`;
       head = `<circle class="unit-head" cx="0" cy="-5.6" r="4.55" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.75"/>`
         + `<path class="unit-hair" d="M-4.4,-6.2 C-3.4,-9.4 3.4,-9.4 4.4,-6.2 C2.0,-7.4 -2.0,-7.4 -4.4,-6.2Z" fill="${pal.hair}"/>`
@@ -543,7 +543,7 @@ const UnitArt = {
     } else if (kind === 2) {
       legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-2.4,7.6 L-3.8,13.4" : "M-2.2,7.6 L-2.8,13.2"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`
         + `<path class="unit-leg unit-leg-r" d="${walk ? "M2.4,7.6 L3.8,13.4" : "M2.2,7.6 L2.8,13.2"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`;
-      tunic = `<path class="unit-tunic" d="M-7.6,-2.4 C-9.6,2.8 -8.8,10.4 -3.6,11.2 L3.6,11.2 C8.8,10.4 9.6,2.8 7.6,-2.4 C3.2,-4.6 -3.2,-4.6 -7.6,-2.4Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.8"/>`;
+      tunic = `<path class="unit-tunic" d="M-7.6,-2.4 C-9.6,2.8 -8.8,10.4 -3.6,11.2 L3.6,11.2 C8.8,10.4 9.6,2.8 7.6,-2.4 C3.2,-4.6 -3.2,-4.6 -7.6,-2.4Z" fill="${pal.cloth}" stroke="#2a1810" stroke-width="0.8"/>`;
       sash = `<path class="unit-sash" d="M-4.8,3.4 L5.2,4.2 L4.8,6.0 L-5.2,5.2Z" fill="${pal.sash}"/>`;
       head = `<circle class="unit-head" cx="0" cy="-7.2" r="3.9" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.6"/>`
         + `<path class="unit-hair" d="M-4.6,-6.4 C-5.2,-11.6 5.2,-11.6 4.6,-6.4 C2.4,-8.8 -2.4,-8.8 -4.6,-6.4Z" fill="${pal.hair}"/>`
@@ -552,7 +552,7 @@ const UnitArt = {
     } else if (kind === 3) {
       legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-2.8,6.4 L-4.8,11.6" : "M-2.6,6.4 L-3.4,11.4"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`
         + `<path class="unit-leg unit-leg-r" d="${walk ? "M2.8,6.4 L4.8,11.6" : "M2.6,6.4 L3.4,11.4"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`;
-      tunic = `<path class="unit-tunic" d="M-5.8,-1.2 C-6.2,3.4 -5.0,7.4 -3.4,8.2 L3.4,8.2 C5.0,7.4 6.2,3.4 5.8,-1.2 C3.2,-2.6 -3.2,-2.6 -5.8,-1.2Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.8"/>`;
+      tunic = `<path class="unit-tunic" d="M-5.8,-1.2 C-6.2,3.4 -5.0,7.4 -3.4,8.2 L3.4,8.2 C5.0,7.4 6.2,3.4 5.8,-1.2 C3.2,-2.6 -3.2,-2.6 -5.8,-1.2Z" fill="${pal.cloth}" stroke="#2a1810" stroke-width="0.8"/>`;
       sash = `<path class="unit-sash" d="M-5.0,0.6 L5.2,1.4 L4.8,2.8 L-5.4,2.0Z" fill="${pal.sash}"/>`
         + `<path class="unit-sash" d="M-5.0,3.6 L5.2,4.4 L4.8,5.6 L-5.4,4.8Z" fill="${pal.accent}" opacity="0.85"/>`;
       head = `<circle class="unit-head" cx="0.6" cy="-6.2" r="3.7" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.7"/>`
@@ -561,7 +561,7 @@ const UnitArt = {
     } else {
       legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-2.2,8.0 L-3.6,14.2" : "M-2.0,8.0 L-2.8,14.0"}" stroke="${pal.hair}" stroke-width="2.15" stroke-linecap="round" fill="none"/>`
         + `<path class="unit-leg unit-leg-r" d="${walk ? "M2.2,8.0 L3.6,14.2" : "M2.0,8.0 L2.8,14.0"}" stroke="${pal.hair}" stroke-width="2.15" stroke-linecap="round" fill="none"/>`;
-      tunic = `<path class="unit-tunic" d="M-5.6,-2.4 C-6.0,4.8 -4.6,10.2 -3.0,11.2 L3.0,11.2 C4.6,10.2 6.0,4.8 5.6,-2.4 C3.2,-4.0 -3.2,-4.0 -5.6,-2.4Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.8"/>`;
+      tunic = `<path class="unit-tunic" d="M-5.6,-2.4 C-6.0,4.8 -4.6,10.2 -3.0,11.2 L3.0,11.2 C4.6,10.2 6.0,4.8 5.6,-2.4 C3.2,-4.0 -3.2,-4.0 -5.6,-2.4Z" fill="${pal.cloth}" stroke="#2a1810" stroke-width="0.8"/>`;
       sash = `<path class="unit-sash" d="M-4.8,1.8 L4.8,3.0 L4.4,4.8 L-5.2,3.6Z" fill="${pal.sash}"/>`;
       head = `<circle class="unit-head" cx="0" cy="-7.4" r="4.05" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.7"/>`
         + `<path class="unit-hair" d="M-3.8,-8.2 C-3.2,-12.0 3.2,-12.0 3.8,-8.2 C1.6,-9.6 -1.6,-9.6 -3.8,-8.2Z" fill="${pal.hair}"/>`
@@ -602,7 +602,7 @@ const UnitArt = {
       : "";
     return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-silhouette="${this.silhouetteName(v)}" data-pose="${esc(pose)}" data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
       <title>${esc(name)} · 群体代表（${this.silhouetteName(v)} · ${nParty}人造型）· ${size}人。这是群体的可视替身，不是独立个人生平。</title>
-      <ellipse class="unit-camp" cx="0" cy="14.0" rx="${campRx}" ry="3.8" fill="${pal.cloth}" fill-opacity="0.34" stroke="${pal.sash}" stroke-width="1.05"/>
+      <path class="unit-camp" d="M0,15.2 L${campRx},11.2 L0,7.2 L-${campRx},11.2 Z" fill="${pal.cloth}" fill-opacity="0.5" stroke="#2a1810" stroke-width="1.15"/>
       <g class="unit-body unit-${esc(pose)}">${party}</g>
       ${on ? `<circle class="unit-ring" cx="0" cy="2" r="17.2" fill="none" stroke="${pal.accent}" stroke-width="1.55"/>` : ""}
       ${banner}
@@ -1130,13 +1130,22 @@ function hexPath(cx, cy) {
   }
   return d + "Z";
 }
+function hexTopEdge(cx, cy) {
+  const pts = [];
+  for (let k = 5; k <= 7; k++) {
+    const i = k % 6;
+    const a = Math.PI / 180 * (60 * i - 90);
+    pts.push((cx + R * Math.cos(a)).toFixed(1) + "," + (cy + R * Math.sin(a)).toFixed(1));
+  }
+  return "M" + pts.join(" L");
+}
 function hexSkirtPath(cx, cy) {
   const pts = [];
   for (let k = 0; k < 6; k++) {
     const a = Math.PI / 180 * (60 * k - 90);
     pts.push([cx + R * Math.cos(a), cy + R * Math.sin(a)]);
   }
-  const drop = 6;
+  const drop = 8;
   const q = (i) => pts[i][0].toFixed(1) + "," + (pts[i][1] + drop).toFixed(1);
   return "M" + pts[1][0].toFixed(1) + "," + pts[1][1].toFixed(1)
     + "L" + pts[2][0].toFixed(1) + "," + pts[2][1].toFixed(1)
@@ -1157,7 +1166,7 @@ function cellCenter(c) {
 }
 function ramp(f) {
   f = Math.max(0, Math.min(1, f));
-  const a = [18, 32, 26], b = [111, 179, 124], c = [212, 176, 106];
+  const a = [48, 54, 28], b = [96, 112, 44], c = [186, 128, 58];
   const mix = (p, q, t) => p.map((v, i) => Math.round(v + (q[i] - v) * t));
   const rgb = f < 0.55 ? mix(a, b, f / 0.55) : mix(b, c, (f - 0.55) / 0.45);
   return "rgb(" + rgb.join(",") + ")";
@@ -1215,7 +1224,7 @@ function renderMap() {
 
   let out = `<defs>
     <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-      <rect width="7" height="7" fill="#141a16"/><line x1="0" y1="0" x2="0" y2="7" stroke="#3a433c" stroke-width="3"/>
+      <rect width="7" height="7" fill="#1c1610"/><line x1="0" y1="0" x2="0" y2="7" stroke="#5a4030" stroke-width="3"/>
     </pattern>
     <filter id="glow"><feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
   </defs>`;
@@ -1260,12 +1269,15 @@ function renderMap() {
     const selected = S.selCell === c.i;
     const hovered = S.hoverCell === c.i;
     const hot = eventCells.has(c.i) && (layer === "event" || layer === "flow");
-    const stroke = selected ? "#f3deaa" : hovered ? "#e6c888" : (hot ? "#d4b06a" : (S.skin === "console" ? "#2c4a48" : "#2a3530"));
-    const skirtFill = c.passable ? shadeFill(fill, 0.52) : "#0a0e0c";
+    const stroke = selected ? "#f3deaa" : hovered ? "#e6c888" : (hot ? "#d4b06a" : (S.skin === "console" ? "#2c4a48" : "#3a2818"));
+    const skirtFill = c.passable ? shadeFill(fill, 0.48) : "#1a120c";
     out += `<path class="cell-skirt" d="${hexSkirtPath(cx, cy)}" fill="${skirtFill}" stroke="none" pointer-events="none"/>`;
     out += `<path d="${hexPath(cx, cy)}" fill="${fill}" stroke="${stroke}"
-        stroke-width="${selected ? 2.8 : hovered ? 2 : hot ? 1.8 : 1}" data-cell="${c.i}" class="cell${hovered ? " hover" : ""}"${selected ? ' filter="url(#glow)"' : ""}>
+        stroke-width="${selected ? 2.8 : hovered ? 2 : hot ? 1.8 : 1.15}" data-cell="${c.i}" class="cell${hovered ? " hover" : ""}"${selected ? ' filter="url(#glow)"' : ""}>
         <title>${esc(title)}</title></path>`;
+    if (c.passable) {
+      out += `<path class="cell-lit" d="${hexTopEdge(cx, cy)}" fill="none" stroke="rgba(255,236,200,.22)" stroke-width="1.4" pointer-events="none"/>`;
+    }
     const lod = S.cam.k;
     const showNum = lod >= 1.45 || selected || S.hoverCell === c.i;
     if (c.passable && label && showNum) {
@@ -3362,7 +3374,11 @@ async function boot() {
   });
   bindMapCam();
   if ($("b-back-map")) $("b-back-map").addEventListener("click", () => { closeSheets(); });
-  if ($("b-open-rail")) $("b-open-rail").addEventListener("click", () => { showRail("chronicle"); });
+  if ($("b-open-rail")) $("b-open-rail").addEventListener("click", () => {
+    const rail = $("rail");
+    if (rail && rail.classList.contains("open")) closeSheets();
+    else showRail("chronicle");
+  });
   window.addEventListener("resize", () => { if (compactPlay()) closeSheets(); });
   if ($("b-motion")) $("b-motion").addEventListener("click", () => {
     S.reduceMotion = !S.reduceMotion;

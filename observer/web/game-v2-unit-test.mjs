@@ -85,7 +85,7 @@ ok("U16 party count follows group size not individuals",
 const mk2 = U.markup({ id: idA, name: "群体-ABC123", size: 20, cell: 10 }, 100, 80, { selected: true });
 ok("U17 twenty-person group is a two-figure camp with banner",
   /data-party="2"/.test(mk2) && /unit-camp/.test(mk2) && /unit-banner/.test(mk2)
-  && /unit-companion/.test(mk2) && /unit-lead/.test(mk2));
+  && /unit-companion/.test(mk2) && /unit-lead/.test(mk2) && /M0,15/.test(mk2));
 ok("U18 migrate stages stay on the endpoint segment",
   U.migrateStage(0) === "leave" && U.migrateStage(0.5) === "travel" && U.migrateStage(1) === "arrive");
 const pal = U.palette(idA);
