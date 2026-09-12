@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 import time
 from collections import defaultdict, deque
 from typing import Deque, Dict, Optional
@@ -125,12 +126,50 @@ def get_map():
     return adapter.map_geometry()
 
 
+_CANCEL_TIMERS: Dict[str, "threading.Timer"] = {}
+
+
+def arm_cancel_deadline(run_id: str) -> None:
+    """用户按下取消之后，安排**一次**到点检查。
+
+    只有这一处会安排它，而且只在用户明确取消之后 —— 没有轮询线程、没有后台监控，
+    没人取消就什么都不会跑。到点时调用的还是同一个 `enforce_cancels()`，
+    所以判据、身份核验、竞态保护完全一致。
+    """
+    old = _CANCEL_TIMERS.pop(run_id, None)
+    if old is not None:
+        old.cancel()
+
+    def fire():
+        _CANCEL_TIMERS.pop(run_id, None)
+        try:
+            store.enforce_cancels()
+        except Exception:                                   # noqa: BLE001
+            pass          # 到点检查失败不影响服务；下一次页面刷新还会再走一遍
+    timer = threading.Timer(config.CANCEL_GRACE_SEC + 0.5, fire)
+    timer.daemon = True
+    _CANCEL_TIMERS[run_id] = timer
+    timer.start()
+
+
+def settle_slot():
+    """每次要看"槽是不是真的被占着"之前先跑一遍。
+
+    顺序固定：**先收尾用户明确请求的取消，再回收没人在算的记录**。
+    反过来的话，一条用户取消、进程又刚好没了的运行会被记成"中断"，
+    把用户自己按下的取消写成了系统故障。
+    """
+    store.enforce_cancels()
+    store.reap_stale()
+
+
 @app.get("/api/runs", dependencies=[Depends(require_read)])
 def get_runs():
-    store.reap_stale()          # 顺手回收没人在算却占着槽的记录，列表才是真实状态
+    settle_slot()               # 顺手收尾取消 / 回收死记录，列表才是真实状态
     runs = store.list_runs()
     for r in runs:
         r["years_recorded"] = max(store.year_count(r["run_id"]) - 1, 0)
+        r["cancel"] = store.cancel_stage(r)
     return {"runs": runs, "active": store.active_run()}
 
 
@@ -140,6 +179,7 @@ def get_run(run_id: str):
     if not run:
         raise HTTPException(404, "没有这次运行")
     run["years_recorded"] = max(store.year_count(run_id) - 1, 0)
+    run["cancel"] = store.cancel_stage(run)
     run["meta"] = store.read_meta(run_id)
     # obs-1.5：这次运行**实际用的**引擎、参数（带标签与单位）、代码版本与状态，
     # 一次给全，前端不用再去拼 /api/config。
@@ -430,7 +470,8 @@ def _validate(body: NewRun) -> None:
 @app.post("/api/runs", dependencies=[Depends(require_write)])
 def post_run(body: NewRun):
     _validate(body)
-    reaped = store.reap_stale()   # 先回收死记录，再占槽：死进程不该把槽永久占死
+    settle_slot()                 # 先收尾取消、再回收死记录，然后才占槽
+    reaped = []                   # 卡住的取消不该把唯一的槽永久占死
     if reaped:
         print(f"[observer] 回收了 {len(reaped)} 个无人执行的任务槽：{reaped}")
     if store.run_count() >= config.MAX_RUNS:
@@ -464,17 +505,38 @@ def post_run(body: NewRun):
 
 @app.post("/api/runs/{run_id}/cancel", dependencies=[Depends(require_write)])
 def cancel_run(run_id: str):
+    """用户明确请求取消。**有界收尾**，不会一直占着唯一的任务槽。
+
+    正常的工作进程会在当前这一年算完后自己停下（那是干净的收尾，记录也最完整）；
+    如果它卡在某一步里读不到取消标志，协作窗口用完后会被停止 —— 前提是先核验过
+    那个进程号确实是这次运行的工作进程。身份查不到就一个信号都不发。
+    """
     run = store.get_run(run_id)
     if not run:
         raise HTTPException(404, "没有这次运行")
     if run["status"] not in ("queued", "running"):
         raise HTTPException(409, f"该运行状态为 {run['status']}，无需取消")
     store.request_cancel(run_id)
-    if not store._is_our_worker(run["pid"], run_id):
-        # 进程已经不在了，取消请求没人会读到：直接按“回收”处理，别让槽卡住
-        store.reap_stale()
-        return {"ok": True, "note": "该运行的工作进程已不在，任务槽已回收并标记为中断。"}
-    return {"ok": True, "note": "已请求取消，工作进程会在当前这一年算完后停下。"}
+    store.enforce_cancels()           # 进程已经不在 / 协作窗口早就用完了，这一下就收尾
+    after = store.get_run(run_id) or run
+    stage = store.cancel_stage(after)
+    if after["status"] in store.TERMINAL:
+        return {"ok": True, "run_id": run_id, "status": after["status"],
+                "cancel": stage, "note": after.get("cancel_note") or after.get("error") or
+                "已停止，任务槽已释放。"}
+    # 还在跑：安排一次**一次性**的到点检查，让收尾时间不依赖页面刷不刷新。
+    arm_cancel_deadline(run_id)
+    probe = store.probe_worker(after["pid"], run_id)
+    if probe == store.WORKER_UNKNOWN:
+        note = ("已记下取消请求，但暂时无法确认那个进程号还是不是这次运行的工作进程，"
+                "**不会**对身份不明的进程发信号；下一次检查会再看一遍。")
+    else:
+        note = ("已请求取消：工作进程会在当前这一年算完后自己停下；"
+                "若它卡住，最多 %.0f 秒后会被强制停止。已完整保存的年份都留着。"
+                % config.CANCEL_GRACE_SEC)
+    store.set_cancel_note(run_id, note)
+    return {"ok": True, "run_id": run_id, "status": after["status"],
+            "cancel": dict(stage, note=note), "note": note}
 
 
 @app.delete("/api/runs/{run_id}", dependencies=[Depends(require_write)])

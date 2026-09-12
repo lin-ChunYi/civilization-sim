@@ -56,8 +56,11 @@ def execute(run_id: str) -> int:
                     print(f"运行 {run_id} 已被服务端接管或判定结束，停止计算", file=sys.stderr)
                     return 4                                    # 被围栏拦下，不改状态
                 if state["cancel_requested"]:
+                    # 协作收尾：这一年还没开始算，前 k 年都是完整写入的。
+                    note = ("用户取消：工作进程在第 %d 年的边界上自己停下，"
+                            "前 %d 年完整保存，可以回放。" % (k, k))
                     store.worker_finish(run_id, pid, "canceled", finished_at=time.time(),
-                                        years_done=k, error="用户取消")
+                                        years_done=k, error=note, cancel_note=note)
                     return 0
                 adapter.step(st, eng)                           # 原样调用引擎的 step
                 store.append_year(fh, rec.year_record(st))

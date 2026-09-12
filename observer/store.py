@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS runs (
   arm           TEXT NOT NULL,
   years_done    INTEGER NOT NULL DEFAULT 0,
   cancel_requested INTEGER NOT NULL DEFAULT 0,
+  cancel_requested_at REAL,                           -- 用户按下取消的时刻（有界收尾的起算点）
+  cancel_note   TEXT NOT NULL DEFAULT '',             -- 取消收尾进行到哪一步（人话，给页面看）
   engine_sha256 TEXT NOT NULL DEFAULT '',
   engine_path   TEXT NOT NULL DEFAULT '',
   baseline_commit TEXT NOT NULL DEFAULT '',
@@ -78,7 +80,9 @@ def connect() -> sqlite3.Connection:
 MIGRATIONS = (("share_m", "INTEGER NOT NULL DEFAULT 0"),
               ("engine", "TEXT NOT NULL DEFAULT 'exp03'"),
               ("aid_m", "INTEGER NOT NULL DEFAULT 0"),
-              ("recip_m", "INTEGER NOT NULL DEFAULT 0"))
+              ("recip_m", "INTEGER NOT NULL DEFAULT 0"),
+              ("cancel_requested_at", "REAL"),
+              ("cancel_note", "TEXT NOT NULL DEFAULT ''"))
 
 
 def init_db() -> None:
@@ -239,9 +243,28 @@ def worker_finish(run_id: str, pid: int, status: str, **fields) -> bool:
         return cur.rowcount == 1
 
 
-def request_cancel(run_id: str) -> None:
+def request_cancel(run_id: str) -> Optional[float]:
+    """记下"用户明确要求取消"以及**第一次**要求的时刻，返回那个时刻。
+
+    时刻只记一次：再点一次取消不会把倒计时推后，否则反复点击等于永远不收尾。
+    只对还在活动的记录生效；终态记录一个字都不改。
+    """
+    now = time.time()
     with connect() as conn:
-        conn.execute("UPDATE runs SET cancel_requested=1 WHERE run_id=?", (run_id,))
+        conn.execute(
+            "UPDATE runs SET cancel_requested=1, "
+            "cancel_requested_at=COALESCE(cancel_requested_at, ?) "
+            "WHERE run_id=? AND status IN (?,?)", (now, run_id, *_STATUS_ACTIVE))
+        row = conn.execute("SELECT cancel_requested_at FROM runs WHERE run_id=?",
+                           (run_id,)).fetchone()
+    return row["cancel_requested_at"] if row else None
+
+
+def set_cancel_note(run_id: str, note: str) -> None:
+    """只写给人看的收尾说明，**不碰 status**。"""
+    with connect() as conn:
+        conn.execute("UPDATE runs SET cancel_note=? WHERE run_id=? AND status IN (?,?)",
+                     (note, run_id, *_STATUS_ACTIVE))
 
 
 def cancel_requested(run_id: str) -> bool:
@@ -494,6 +517,93 @@ def reap_stale() -> List[Dict[str, Any]]:
             _CACHE.pop(rid, None)
             reaped.append({"run_id": rid, "from": status, "why": why})
     return reaped
+
+
+# 取消收尾的三个阶段。**只有用户明确按过取消**的运行才会走到这里 ——
+# "暂时没看到进度"永远不是停掉一个正常计算的理由。
+CANCEL_COOPERATIVE = "cooperative"   # 还在协作窗口内：等工作进程算完这一年自己停
+CANCEL_ESCALATED = "escalated"       # 协作窗口用完了：已核验身份，强制停止
+CANCEL_UNCONFIRMED = "unconfirmed"   # 进程身份查不到：**不杀**，如实报告，等下一轮
+
+
+def cancel_stage(run: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
+    """这条运行的取消进行到哪一步了（纯读，不改任何状态）。"""
+    if not run or not run.get("cancel_requested"):
+        return {"requested": False, "stage": "none", "requested_at": None,
+                "seconds_left": None, "note": ""}
+    now = time.time() if now is None else now
+    at = run.get("cancel_requested_at")
+    left = None if at is None else max(0.0, config.CANCEL_GRACE_SEC - (now - at))
+    if run.get("status") in TERMINAL:
+        stage = "finished"
+    elif left is None or left > 0:
+        stage = CANCEL_COOPERATIVE
+    else:
+        stage = CANCEL_ESCALATED
+    return {"requested": True, "stage": stage, "requested_at": at,
+            "seconds_left": None if left is None else round(left, 1),
+            "note": run.get("cancel_note", "") or ""}
+
+
+def enforce_cancels() -> List[Dict[str, Any]]:
+    """把**用户明确请求的取消**在有界时间内收尾。
+
+    三条路，都不猜：
+
+      * 工作进程已确认不在（`gone`）—— 取消请求没人会读到，直接判 `canceled`；
+      * 工作进程确认是本次运行的（`alive`）—— 先给 `CANCEL_GRACE_SEC` 秒的协作窗口，
+        让它算完当前这一年自己停下（那条路会写 `canceled`）。窗口用完还在，
+        说明它卡在某一步里读不到取消标志：**这时才**停止它；
+      * 身份查不到（`unknown`，ps 超时 / 权限不足 / pid 可能被复用）—— **一个信号都不发**，
+        只写一条人话说明，等下一轮再看。
+
+    没有取消请求的运行一条都不碰 —— 这个函数里没有任何"多久没进度就杀"的判据。
+    与完成/启动的竞态由 `transition(..., allow_from=..., expect_pid=...)` 兜住：
+    工作进程要是抢先写了 `done`/`canceled`，这里的写入匹配不到行，赢家保持不变。
+    """
+    init_db()
+    with connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT run_id, pid, status, cancel_requested_at FROM runs "
+            "WHERE cancel_requested=1 AND status IN (?,?)", _STATUS_ACTIVE).fetchall()]
+    acted = []
+    now = time.time()
+    for r in rows:
+        rid, pid, status = r["run_id"], r["pid"], r["status"]
+        at = r["cancel_requested_at"] or now
+        probe = probe_worker(pid, rid)
+        if probe == WORKER_UNKNOWN:
+            set_cancel_note(rid, "已请求取消，但暂时无法确认那个进程号还是不是这次运行的"
+                                 "工作进程（可能已被系统回收并复用）。**不会**对身份不明的"
+                                 "进程发信号；下一次检查会再看一遍。")
+            acted.append({"run_id": rid, "action": CANCEL_UNCONFIRMED})
+            continue
+        if probe == WORKER_ALIVE:
+            waited = now - at
+            if waited < config.CANCEL_GRACE_SEC:
+                set_cancel_note(rid, "已请求取消：工作进程会在当前这一年算完后自己停下"
+                                     "（最多再等 %.0f 秒；超时就强制停止）。"
+                                     % max(0.0, config.CANCEL_GRACE_SEC - waited))
+                continue
+            # 协作窗口用完。身份已核验（ps 里能看到 observer.worker 和这个 run_id）才发信号。
+            stop_worker(int(pid), rid)
+            why = ("协作取消超时：请求取消 %.0f 秒后工作进程仍卡在同一步，已强制停止。"
+                   % waited)
+        else:
+            why = "取消时工作进程已经不在了。"
+        done = len(_lines(rid))
+        note = (why + "已完整保存的 %d 年仍可回放（写到一半的那一年不算数）；"
+                      "本版不做跨进程续跑，继续推进请新建运行。" % max(done - 1, 0))
+        if transition(rid, "canceled", allow_from=[status], expect_pid=pid,
+                      years_done=max(done - 1, 0), finished_at=time.time(),
+                      cancel_note=note, error=note):
+            _CACHE.pop(rid, None)
+            acted.append({"run_id": rid, "action": CANCEL_ESCALATED if probe == WORKER_ALIVE
+                          else "reaped", "why": why})
+        else:
+            # 这中间工作进程自己收尾了（或状态/pid 变了）—— 赢家不覆盖。
+            acted.append({"run_id": rid, "action": "already_settled"})
+    return acted
 
 
 def recover_interrupted() -> int:

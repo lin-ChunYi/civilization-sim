@@ -21,6 +21,9 @@ TEST_DATA = REPO / "observer" / "data_test"
 os.environ["OBSERVER_DATA_DIR"] = str(TEST_DATA)          # 子进程也会读到
 # 测试自己要发几十个写请求，先把限流放开；限流本身由 O22 单独测。
 os.environ.setdefault("OBSERVER_WRITE_RATE", "500")
+# O30 要一条**真的还在算**的运行才能验证协作取消：模型每秒能跑近千年，
+# 300 年的运行在请求发出去之前就结束了。只放宽测试库的年数上限，不动默认配置。
+os.environ.setdefault("OBSERVER_MAX_YEARS", "20000")
 shutil.rmtree(TEST_DATA, ignore_errors=True)
 
 from observer import adapter, config, presets, store  # noqa: E402
@@ -711,7 +714,7 @@ with TestClient(app) as c9:
           <= set(spec) and spec["recip_m"]["max"] == 1000
           and spec["recip_m"]["unit"] and spec["recip_m"]["min"] == 0,
           str(spec.get("recip_m"))[:80])
-    check("O27b 契约版本升到 obs-1.6", cfg["api_version"] == "obs-1.6", cfg["api_version"])
+    check("O27b 契约版本升到 obs-1.7", cfg["api_version"] == "obs-1.7", cfg["api_version"])
 
     runs = {r["run_id"]: r for r in c9.get("/api/runs").json()["runs"]}
     pair = ["preset-exp06-recip0", "preset-exp06-recip1000"]
@@ -1156,6 +1159,261 @@ with TestClient(app) as c11:
           ro["totals"]["edges"] == 0 and bo["extinct_at"] == 3
           and bo["aid_memory"] is None and bo["aid_given"]["transfers"] == 0,
           str(ro["totals"]))
+
+# ---------------------------------------------------------------- 取消的可靠性
+# 以前取消只设一个标志，工作进程在**年边界**才读它。进程活着但卡在某一步时，
+# 那个标志永远读不到，唯一的任务槽就再也放不出来。这一组把四条路都逼一遍。
+# 全部用隔离数据 + 本脚本自己起的测试子进程，不碰任何真实运行。
+print("\nO30 取消：协作收尾 / 卡住也能有界停止 / 身份不明绝不误杀 / 竞态不覆盖赢家")
+
+
+def fake_worker(run_id, ignore_term=True):
+    """起一个**本测试自己的**子进程，命令行里带 observer.worker 与 run_id ——
+    这正是 probe_worker 用来确认身份的两个特征。ignore_term=True 时它无视 SIGTERM，
+    用来检验"协作不成还能强制停止"这条路真的走得通。"""
+    code = ("import signal, time\n"
+            + ("signal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if ignore_term else "")
+            + "time.sleep(600)\n")
+    return subprocess.Popen([sys.executable, "-c", code, "observer.worker", run_id])
+
+
+def alive(proc):
+    return proc.poll() is None
+
+
+def make_row(rid, pid, status="running", cancel=0, cancel_at=None, years=50, age=0.0):
+    born = time.time() - age
+    with store.connect() as c:
+        c.execute("DELETE FROM runs WHERE run_id=?", (rid,))
+        c.execute("INSERT INTO runs (run_id,label,kind,status,created_at,started_at,seed,years,"
+                  "sigma_m,move_mort_m,share_m,aid_m,recip_m,engine,arm,years_done,pid,"
+                  "cancel_requested,cancel_requested_at) "
+                  "VALUES (?,?,'user',?,?,?,1,?,0,0,0,0,0,'exp03','memory',0,?,?,?)",
+                  (rid, "O30 隔离测试", status, born, born, years,
+                   pid, cancel, cancel_at))
+    store.run_dir(rid).mkdir(parents=True, exist_ok=True)
+
+
+# --- (1) 正常工作进程：用户取消后自己在年边界收尾 ---
+# 全程在**同一个** TestClient 里做：另开一个客户端会触发启动恢复，
+# 把还在算的那条直接标成 interrupted，测的就不是取消了。
+with store.connect() as _c:
+    _c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+with TestClient(app) as c12:
+    # 模型每秒能跑近千年，300 年的运行在请求发出去之前就结束了；这里要一条真的还在算的。
+    r = c12.post("/api/runs", json={"seed": 4242, "years": 6000, "sigma_m": 400,
+                                    "move_mort_m": 50, "engine": "exp03",
+                                    "label": "O30 协作取消"})
+    coop_id = r.json().get("run_id") if r.status_code == 200 else None
+    if coop_id is None:
+        uncov("O30a–e 协作取消", f"运行没起来：{r.status_code} {str(r.json())[:60]}")
+    else:
+        for _ in range(900):                      # 等它真的算起来，别在第 0 年就取消
+            row = store.get_run(coop_id)
+            if row["status"] == "running" and (row["years_done"] or 0) >= 50:
+                break
+            if row["status"] in ("done", "failed", "canceled", "interrupted"):
+                break
+            time.sleep(0.02)
+        row = store.get_run(coop_id)
+    if coop_id and row["status"] != "running":
+        uncov("O30a–e 协作取消", f"这次运行没来得及进入 running（{row['status']}）")
+    elif coop_id:
+        t0 = time.time()
+        resp = c12.post(f"/api/runs/{coop_id}/cancel")
+        check("O30a 取消请求被接受，并给出人话说明",
+              resp.status_code == 200 and resp.json()["ok"]
+              and resp.json()["cancel"]["requested"], str(resp.json())[:80])
+        for _ in range(1500):
+            if store.get_run(coop_id)["status"] in ("done", "failed", "canceled",
+                                                    "interrupted"):
+                break
+            time.sleep(0.02)
+        row = store.get_run(coop_id)
+        took = time.time() - t0
+        check("O30b 正常工作进程自己协作收尾为 canceled（不是被杀、不是中断）",
+              row["status"] == "canceled" and "自己停下" in (row["cancel_note"] or ""),
+              f'{row["status"]} / {took:.1f}s / {(row["cancel_note"] or "")[:36]}')
+        check("O30b2 协作收尾远远早于强制窗口（说明走的是协作那条路）",
+              took < config.CANCEL_GRACE_SEC, f"{took:.1f}s < {config.CANCEL_GRACE_SEC:.0f}s")
+        recorded = store.year_count(coop_id) - 1
+        check("O30c 已完整写入的年份一年不少地留着，且与 years_done 对得上",
+              recorded >= 50 and row["years_done"] == recorded,
+              f"记录 {recorded} 年 / years_done {row['years_done']}")
+        check("O30c2 取消的是这一条，不是把整次运行的历史丢掉",
+              recorded < 6000, f"{recorded} 年（上限 6000）")
+        ser = c12.get(f"/api/runs/{coop_id}/series")
+        y1 = c12.get(f"/api/runs/{coop_id}/year/1")
+        check("O30d 取消之后历史照常回放",
+              ser.status_code == 200 and len(ser.json()["series"]) == recorded + 1
+              and y1.status_code == 200, str(ser.status_code))
+        detail = c12.get(f"/api/runs/{coop_id}").json()
+        check("O30d2 接口给出取消口径（谁请求的、进行到哪一步）",
+              detail["cancel"]["requested"] and detail["cancel"]["stage"] == "finished"
+              and detail["cancel_note"], str(detail["cancel"])[:70])
+        check("O30e 任务槽真的放出来了，可以立刻新建运行",
+              store.active_run() is None
+              and c12.post("/api/runs", json={"seed": 5, "years": 1, "sigma_m": 0,
+                                              "move_mort_m": 0, "engine": "exp03",
+                                              "label": "O30 槽复用"}).status_code == 200)
+        for _ in range(900):
+            if (store.active_run() or {}).get("status") is None:
+                break
+            time.sleep(0.02)
+with store.connect() as _c:
+    _c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+
+# --- (2) 卡住的工作进程：协作窗口用完之后必须能在有界时间内停下 ---
+STUCK = "o30-stuck"
+proc = fake_worker(STUCK)
+make_row(STUCK, proc.pid, cancel=1, cancel_at=time.time() - config.CANCEL_GRACE_SEC - 1)
+store.years_path(STUCK).write_text(
+    "".join(json.dumps({"t": i, "stock": [1], "bands": [], "cum": {}, "year": {},
+                        "agg": {"pop": i}, "integrity": {}, "events": []},
+                       separators=(",", ":")) + "\n" for i in range(3))
+    + '{"t":3,"stock":[1],"ban', encoding="utf-8")     # 末尾故意留半条
+check("O30f 前提：这个假工作进程确实被认成本次运行的活进程",
+      store.probe_worker(proc.pid, STUCK) == store.WORKER_ALIVE,
+      store.probe_worker(proc.pid, STUCK))
+t0 = time.time()
+acted = store.enforce_cancels()
+took = time.time() - t0
+row = store.get_run(STUCK)
+check("O30g 卡住的工作进程在有界时间内被停止（先 TERM 后 KILL）",
+      row["status"] == "canceled" and not alive(proc) and took < 10,
+      f'{row["status"]} / {took:.1f}s / alive={alive(proc)}')
+check("O30h 停止原因写明是取消超时，不写成系统故障",
+      "超时" in (row["cancel_note"] or "") and "强制停止" in (row["cancel_note"] or ""),
+      (row["cancel_note"] or "")[:50])
+check("O30i 半条记录不算完成的年份（只认完整写入的 3 条：第 0..2 年）",
+      store.year_count(STUCK) == 3 and row["years_done"] == 2,
+      f'year_count={store.year_count(STUCK)} years_done={row["years_done"]}')
+check("O30j 槽被放出来了", store.active_run() is None)
+proc.kill()
+
+# --- (3) 没有用户取消时，绝不因为"暂时没进度"动一个正常进程 ---
+# 这条**故意**长得像"卡住的任务"：跑了很久、一年都没算出来、进度是 0。
+# 唯一的区别是**用户没有按过取消** —— 这就是唯一的判据，不许有第二条。
+CALM = "o30-no-cancel"
+calm = fake_worker(CALM)
+make_row(CALM, calm.pid, cancel=0, age=config.CANCEL_GRACE_SEC * 20 + 600)
+before = store.get_run(CALM)["status"]
+store.enforce_cancels()
+store.enforce_cancels()                   # 再来一轮，确认不是"第一轮宽限"
+time.sleep(0.3)
+row = store.get_run(CALM)
+check("O30k 没人取消时，哪怕它看起来'很久没进度'也一个信号都不发",
+      alive(calm) and row["status"] == before and not row["cancel_requested"],
+      f"alive={alive(calm)} status={row['status']} 已跑 "
+      f"{time.time() - row['started_at']:.0f}s 进度 {row['years_done']}")
+check("O30k2 也不会顺手给它写一条取消说明（它根本没被取消）",
+      not (row["cancel_note"] or ""), (row["cancel_note"] or "")[:40])
+calm.kill()
+with store.connect() as _c:
+    _c.execute("UPDATE runs SET status='interrupted' WHERE run_id=?", (CALM,))
+
+# --- (4) pid 被复用：命令行对不上，绝不发信号 ---
+REUSED = "o30-pid-reuse"
+victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+make_row(REUSED, victim.pid, cancel=1, cancel_at=time.time() - config.CANCEL_GRACE_SEC - 1)
+check("O30l 前提：这个 pid 的命令行不是本次运行的工作进程",
+      store.probe_worker(victim.pid, REUSED) == store.WORKER_GONE,
+      store.probe_worker(victim.pid, REUSED))
+store.enforce_cancels()
+time.sleep(0.3)
+check("O30m pid 被复用时不发任何信号，无关进程活得好好的", alive(victim),
+      "无关进程被误杀了")
+check("O30n 记录按'进程已经不在'如实收尾为 canceled",
+      store.get_run(REUSED)["status"] == "canceled"
+      and "已经不在" in (store.get_run(REUSED)["cancel_note"] or ""),
+      (store.get_run(REUSED)["cancel_note"] or "")[:40])
+victim.kill()
+
+# --- (5) 探测结果未知：不杀、不改状态、如实说 ---
+UNK = "o30-unknown"
+unk_proc = fake_worker(UNK)
+make_row(UNK, unk_proc.pid, cancel=1, cancel_at=time.time() - config.CANCEL_GRACE_SEC - 1)
+_real_probe = store.probe_worker
+store.probe_worker = lambda pid, rid: (store.WORKER_UNKNOWN if rid == UNK
+                                       else _real_probe(pid, rid))
+try:
+    store.enforce_cancels()
+finally:
+    store.probe_worker = _real_probe
+time.sleep(0.3)
+row = store.get_run(UNK)
+check("O30o 身份查不到时：不发信号、不改状态，只如实记一句话",
+      alive(unk_proc) and row["status"] == "running"
+      and "无法确认" in (row["cancel_note"] or ""),
+      f'alive={alive(unk_proc)} status={row["status"]} note={(row["cancel_note"] or "")[:24]}')
+check("O30p 未知不是失败：取消请求还在，下一轮还会再看",
+      bool(row["cancel_requested"]) and row["cancel_requested_at"] is not None)
+unk_proc.kill()
+time.sleep(0.4)
+store.enforce_cancels()              # 进程没了之后，同一条路自己收尾
+check("O30q 等进程真的没了，同一条判据把它收尾成 canceled",
+      store.get_run(UNK)["status"] == "canceled", store.get_run(UNK)["status"])
+
+# --- (6) 取消与完成的竞态：谁先写完谁算数，不覆盖赢家 ---
+RACE = "o30-race-done"
+race_proc = fake_worker(RACE)
+make_row(RACE, race_proc.pid, cancel=1, cancel_at=time.time() - config.CANCEL_GRACE_SEC - 1)
+_real_stop = store.stop_worker
+
+
+def stop_but_worker_wins(pid, rid, grace=3.0):
+    """模拟"就在要停它的一瞬间，工作进程自己把 done 写进去了"。"""
+    if rid == RACE:
+        store.worker_finish(rid, pid, "done", finished_at=time.time(), years_done=7,
+                            full_digest="race-digest")
+    return _real_stop(pid, rid, grace)
+
+
+store.stop_worker = stop_but_worker_wins
+try:
+    store.enforce_cancels()
+finally:
+    store.stop_worker = _real_stop
+row = store.get_run(RACE)
+check("O30r 工作进程抢先写完 done 时，取消收尾不把它覆盖成 canceled",
+      row["status"] == "done" and row["full_digest"] == "race-digest",
+      f'{row["status"]} / {row["full_digest"]}')
+check("O30s 竞态之后不留下半截状态（years_done 仍是赢家写的）",
+      row["years_done"] == 7, str(row["years_done"]))
+race_proc.kill()
+
+# --- (7) 反过来：取消先落地，迟到的工作进程改不回 done ---
+LATE = "o30-race-late"
+late_proc = fake_worker(LATE)
+make_row(LATE, late_proc.pid, cancel=1, cancel_at=time.time() - config.CANCEL_GRACE_SEC - 1)
+store.enforce_cancels()
+canceled_row = store.get_run(LATE)
+late_ok = store.worker_finish(LATE, late_proc.pid, "done", finished_at=time.time(),
+                              years_done=99, full_digest="late-digest")
+after = store.get_run(LATE)
+check("O30t 取消已经落地后，迟到的工作进程改不回 done",
+      canceled_row["status"] == "canceled" and not late_ok
+      and after["status"] == "canceled" and after["full_digest"] != "late-digest",
+      f'{after["status"]} / late_ok={late_ok}')
+late_proc.kill()
+
+# --- (8) 终态不回退：对已结束的运行按取消，什么都不应该变 ---
+TERM = "o30-terminal"
+make_row(TERM, None, status="done", cancel=0)
+with store.connect() as _c:
+    _c.execute("UPDATE runs SET years_done=12, full_digest='keep' WHERE run_id=?", (TERM,))
+store.request_cancel(TERM)
+store.enforce_cancels()
+row = store.get_run(TERM)
+with TestClient(app) as c13:
+    code = c13.post(f"/api/runs/{TERM}/cancel").status_code
+check("O30u 已结束的运行：取消不改状态、不清数据，接口如实回 409",
+      row["status"] == "done" and row["years_done"] == 12 and row["full_digest"] == "keep"
+      and not row["cancel_requested"] and code == 409,
+      f'{row["status"]} / {code}')
+with store.connect() as _c:
+    _c.execute("DELETE FROM runs WHERE run_id IN (?,?,?,?,?,?)",
+               (STUCK, REUSED, UNK, RACE, LATE, TERM))
 
 # ---------------------------------------------------------------- 探测未知 ≠ 死亡
 print("\nO23 进程探测：查不到不等于死了；回收前要比对状态与 pid")

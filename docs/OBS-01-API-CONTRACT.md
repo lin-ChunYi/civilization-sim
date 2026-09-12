@@ -3,7 +3,7 @@
 **这份文件是两边的唯一约定来源。** 后台（Python）与 UI 分支（`observer/web/`）分头改，
 靠它对齐；不各自实现一套数据格式。
 
-契约版本 **`obs-1.6`**，由 `GET /api/config` 的 `api_version` 字段给出。
+契约版本 **`obs-1.7`**，由 `GET /api/config` 的 `api_version` 字段给出。
 **新增字段 → 小版本 +1；删除或改变已有字段的含义 → 必须先改这份文件并知会对方，再动代码。**
 
 ---
@@ -47,7 +47,7 @@
 | 端点 | 说明 |
 |---|---|
 | `POST /api/runs` | body `{seed, years, sigma_m, move_mort_m, arm, label, engine, share_m, aid_m, recip_m}`，数值全部**严格整数**（`1.5`/`true` 会被 422 拒绝）；成功 `{run_id, status:"queued"}` |
-| `POST /api/runs/{id}/cancel` | 请求取消；若工作进程已不在，直接回收任务槽并标中断 |
+| `POST /api/runs/{id}/cancel` | 请求取消。有界收尾：正常进程在年边界自己停，卡住的在协作窗口用完后被停止，身份不明的**绝不发信号**。见 §6 |
 | `DELETE /api/runs/{id}` | 删除非预生成、非进行中的运行 |
 
 **状态码约定**：`400` 参数越界（含业务校验）、`422` 类型不对（pydantic）、`401` 缺令牌、
@@ -58,7 +58,7 @@
 ```
 run_id label kind status created_at started_at finished_at
 seed years sigma_m move_mort_m share_m aid_m recip_m engine arm
-years_done years_recorded cancel_requested
+years_done years_recorded cancel_requested cancel_requested_at cancel_note cancel
 engine_sha256 engine_path baseline_commit repo_commit model_run_id full_digest
 error pid
 ```
@@ -71,6 +71,11 @@ error pid
 - `error` 是人类可读文本，**可能包含用户输入或路径，展示前必须转义或用 textContent**。
 - `label` 由用户填写，服务端**原样保存不做转义**，同样按纯文本展示。
 - `pid` 仅供诊断，UI 不必显示。
+- **取消相关（obs-1.7 新增）**：`cancel` 是个对象
+  `{requested, stage, requested_at, seconds_left, note}`，`stage` ∈
+  `none | cooperative | escalated | finished`；`cancel_note` 是同一件事的人话版本
+  （**用户输入无关，但仍按纯文本展示**）。`cancel_requested` / `cancel_requested_at`
+  是原始字段，语义不变。详见 §6。
 - **`engine`（obs-1.2 新增）** ∈ `exp03 | exp04 | exp05 | exp06`，旧记录默认 `exp03`。
   `share_m` 对 `exp04` 起有意义，`aid_m` 对 `exp05` 起有意义，`recip_m` 只对 `exp06` 有意义；
   引擎没有的参数传非 0 会被 400 拒绝。**不要把引擎名和参数写死**，读 `engines` 里的
@@ -173,12 +178,56 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 1. 需要新增或改字段 → 在这份文件里写清：字段名、类型、含义、是否可为空、谁来产出。
 2. 后台实现 → `api_version` +0.1 → 在 `observer/TESTS.txt` 里留下回归结果。
 3. UI 适配 → 双方分支完成后**统一集成验收**：
-   `python3 observer/run_tests.py`（后台 161 项 + 浏览器回归）+ 页面实跑 + 截图。
+   `python3 observer/run_tests.py`（后台 185 项 + 浏览器回归）+ 页面实跑 + 截图。
 4. 冲突时以这份文件为准；没写进来的字段一律视为**不保证**，不要依赖。
 
 ---
 
-## 6. obs-1.6 的变化（历史卷宗与按年关系网）
+## 6. obs-1.7 的变化（取消的可靠性）
+
+以前取消只设一个标志，工作进程在**年边界**才读它。进程活着却卡在某一步时，
+那个标志永远读不到，唯一的任务槽就再也放不出来 —— 只能重启服务。
+
+### 6.1 `POST /api/runs/{id}/cancel`
+
+请求体为空。返回：
+
+```json
+{"ok": true, "run_id": "…", "status": "running",
+ "cancel": {"requested": true, "stage": "cooperative",
+            "requested_at": 1789201075.0, "seconds_left": 15.0, "note": "…"},
+ "note": "已请求取消：工作进程会在当前这一年算完后自己停下；若它卡住，最多 15 秒后会被强制停止。已完整保存的年份都留着。"}
+```
+
+`ok` 与 `note` 是 obs-1.6 就有的字段，语义不变；`run_id` / `status` / `cancel` 是新增的。
+非 `queued`/`running` 的运行仍然回 `409`。
+
+### 6.2 三条收尾路径（都不猜）
+
+| 工作进程的探测结果 | 做什么 |
+|---|---|
+| 确认是本次运行的活进程（`ps` 里能看到 `observer.worker` 和这个 run_id） | 先给 `CANCEL_GRACE_SEC` 秒**协作窗口**，让它算完当前这一年自己停（写 `canceled`）；窗口用完还在，说明它卡住了，这时才 SIGTERM → SIGKILL |
+| 确认已经不在 | 取消请求没人会读到，直接判 `canceled` |
+| **查不到**（`ps` 超时 / 权限不足 / pid 可能被复用） | **一个信号都不发**，只写一句人话说明，下一轮再看 |
+
+- `CANCEL_GRACE_SEC` 默认 15 秒，环境变量 `OBSERVER_CANCEL_GRACE` 可调。
+- **只有用户明确按过取消才会走到这里。** 没有取消请求时，这条路上没有任何
+  "多久没进度就停掉它"的判据 —— 一个算得慢的正常任务永远不会被动。
+- 收尾时间不依赖页面刷不刷新：取消请求会安排**一次性**的到点检查
+  （没有轮询线程、没有后台监控）。页面的 `/api/runs` 轮询也会顺手走一遍同一个函数。
+
+### 6.3 保证与不保证
+
+- **已完整写入的年份一年不少地留着**，`years_recorded` 仍是可回放年数的上界；
+  被强制停止时写到一半的那一年**不算数**（只认完整记录，与 obs-1.0 的口径一致）。
+- **终态不回退**：`done` / `failed` / `interrupted` / `canceled` 一旦写下就不再变。
+- **竞态不覆盖赢家**：工作进程抢先写完 `done` 的那一刻即使正在被停止，收尾写入也匹配不到行，
+  记录保持 `done`；反过来取消先落地时，迟到的工作进程也改不回 `done`（写入围栏）。
+- **不保证跨进程续跑**：取消就是结束，继续推进请新建运行。
+- 取消**不删除**任何已保存的记录；`DELETE /api/runs/{id}` 才是删除。
+
+
+## 7. obs-1.6 的变化（历史卷宗与按年关系网）
 
 **实操版交接说明（真实 curl / 真实响应 / 截至 83、124、125 年与全档案的差异）见
 [`OBS-01-HANDOFF-HISTORY.md`](OBS-01-HANDOFF-HISTORY.md)。**
@@ -256,7 +305,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 - 全部为新增字段，没有删改任何现有字段；`at_year` 省略时响应与 obs-1.5 一致。
 
 
-## 7. obs-1.5 的变化（供游戏界面直接使用的数据）
+## 8. obs-1.5 的变化（供游戏界面直接使用的数据）
 
 **实操版交接说明（真实请求 / 真实响应 / 可回放的运行编号与年份）见
 [`OBS-01-HANDOFF-EXP06.md`](OBS-01-HANDOFF-EXP06.md)。**
@@ -275,7 +324,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 同一对群体、同样总额、只是被拆成优先 + 普通两笔，不再算作分配改变。
 7 种子 300 年下计数由 118 降为 47（`SIGMA=0, RECIP=1000`）。请用 `changed`，不要自己数笔数。
 
-## 8. obs-1.4 的变化（EXP-06 接入）
+## 9. obs-1.4 的变化（EXP-06 接入）
 
 | 变化 | 兼容性 |
 |---|---|
@@ -294,7 +343,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 `observer/docs/screenshots/12-recip-aid.jpg`，第 128 年那条）。还没有做的是
 `aid_memory` 的关系展示与 `recip` 段的年度统计 —— 这两块的数据都已经在接口里了。
 
-## 9. obs-1.3 的变化（EXP-05 接入）
+## 10. obs-1.3 的变化（EXP-05 接入）
 
 | 变化 | 兼容性 |
 |---|---|
@@ -316,7 +365,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 2. `showTab()` 遇到未登记的 tab 名（例如旧链接里的 `#tab=events`）会把所有分区都隐藏，
    页面变成空白。给它一个兜底（未知就回到 `world`）会更稳。这两条都不影响数据正确性。
 
-## 10. obs-1.2 的变化（EXP-04 接入）
+## 11. obs-1.2 的变化（EXP-04 接入）
 
 | 变化 | 兼容性 |
 |---|---|
@@ -334,7 +383,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 `exp03/verify3.py`。正确的来源是该次运行自己的 `run.engine` / `run.engine_path` /
 `run.engine_sha256`（早就在 run 行里，obs-1.0 就有）。
 
-## 11. 更早（obs-1.1）的变化
+## 12. 更早（obs-1.1）的变化
 
 | 变化 | 兼容性 |
 |---|---|

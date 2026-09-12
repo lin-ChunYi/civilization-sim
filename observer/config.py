@@ -79,9 +79,13 @@ MAX_SEED = 2**31 - 1
 WRITE_RATE_LIMIT = int(os.environ.get("OBSERVER_WRITE_RATE", "12"))  # 每 IP 每分钟写请求数
 # 占了槽却迟迟没有工作进程接手：超过这个秒数就判定进程没起来，回收任务槽。
 QUEUE_GRACE_SEC = float(os.environ.get("OBSERVER_QUEUE_GRACE", "20"))
+# 用户按下取消之后，留给工作进程"算完这一年自己停"的协作窗口。
+# 超过这个秒数还在跑，说明它卡在某一步里读不到取消标志，才会去停止它。
+# **只有用户明确取消才起算**；没有取消请求时，这个值不参与任何判断。
+CANCEL_GRACE_SEC = float(os.environ.get("OBSERVER_CANCEL_GRACE", "15"))
 
 # API 契约版本。新增字段递增小版本；删改字段必须先改契约文档再动代码。
-API_VERSION = "obs-1.6"
+API_VERSION = "obs-1.7"
 
 # --- 访问保护 ---
 # 设了 OBSERVER_TOKEN：所有 /api 请求都要带令牌（服务端校验，前端不硬编码）。

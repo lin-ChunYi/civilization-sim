@@ -17,7 +17,7 @@ O2 指标与账本自洽（逐年）
   O3 实体 id 以字符串下发                                PASS   6 个群体
 
 O4 接口与持久化
-  O4a 合法参数可以启动运行                                 PASS   {'run_id': '6e197d18b6db', 'status': 'queued'}
+  O4a 合法参数可以启动运行                                 PASS   {'run_id': '755ac54f050d', 'status': 'queued'}
   O4b 子进程算完并落盘                                   PASS   状态=done
   O5 任选三个年份与独立重跑的快照/账本完全一致                       PASS   年份 [0, 30, 60] 全对
   O5b 服务端记录的 full_digest == 直接跑模型的结果             PASS   778398d1aa6c62e54c2cc187
@@ -27,7 +27,7 @@ O4 接口与持久化
   O7a 非法参数被服务端拒绝                                 PASS   [400, 400, 400, 400, 400, 422, 422]
   O7b 越界年份返回 404                                 PASS
   O7c 不存在的运行返回 404                               PASS
-  O8 有活着的任务在跑时拒绝重复启动                             PASS   {'detail': '已有任务在跑（6e197d18b6db，60/60 年）。本版同时只执行一个模拟任务，请等它结束
+  O8 有活着的任务在跑时拒绝重复启动                             PASS   {'detail': '已有任务在跑（755ac54f050d，60/60 年）。本版同时只执行一个模拟任务，请等它结束
   O9 重启后未完成任务被标为中断（不假装续跑）                        PASS   1 个 → interrupted
   O9b 中断的运行仍可回放已算出的年份                            PASS
   O10a 设了令牌后，写操作无令牌被拒                            PASS
@@ -36,7 +36,7 @@ O4 接口与持久化
   O11 预生成案例存在且被标记为 preset（不冒充实时任务）               PASS   ['preset-exp06-recip1000', 'preset-exp06-recip0', 'preset-s4242-sig400-mort50']
 
 O13 任务槽与状态转换
-  O13a 两个同时占槽的请求只有一个成功                           PASS   结果=['3eabe7455225', None]
+  O13a 两个同时占槽的请求只有一个成功                           PASS   结果=['cf2279d59b2f', None]
   O13b 工作进程 queued->running 只能成功一次               PASS
   O13c 写 pid 不会把 running 打回 queued               PASS   running
   O13d 被判中断后，旧工作进程改不回 done                       PASS   finish=False 状态=interrupted
@@ -68,8 +68,7 @@ O19 任务槽回收（进程没了就不该继续占着槽）
   O19e 活着的工作进程不会被误回收                             PASS   running
   O19f 进程被杀之后才回收                                 PASS   interrupted
   O19g0 前提：槽确实被一条死记录占着                           PASS
-[observer] 回收了 1 个无人执行的任务槽：[{'run_id': '7ee5f59a15ab', 'from': 'running', 'why': '工作进程已不在（被结束或异常退出）'}]
-  O19g 接口层：死记录被回收后新运行能启动                         PASS   200 {'run_id': '47957844f58e', 'status': 'queued'}
+  O19g 接口层：死记录被回收后新运行能启动                         PASS   200 {'run_id': 'f7e4ae2f4801', 'status': 'queued'}
   O19h 新运行正常跑完                                   PASS   done
 
 O20 状态转换表：终态不可逆
@@ -90,7 +89,7 @@ O24 EXP-04 引擎接入观察台（信息交换事件可展示）
   O24b exp03 引擎不接受 SHARE_M                       PASS   {'detail': '引擎 exp03 没有 SHARE_M 这个参数，要用同格信息交换请选 exp04'}
   O24c 未登记的引擎被拒                                  PASS
   O24d SHARE_M 越界被拒                              PASS
-  O24e exp04 运行可以启动                              PASS   {'run_id': '2c60f0973cb0', 'status': 'queued'}
+  O24e exp04 运行可以启动                              PASS   {'run_id': 'e924903bbf2c', 'status': 'queued'}
   O24f exp04 运行跑完                                PASS   done 
   O24g 年份记录里带信息账（share 段）                        PASS   ['t', 'stock', 'bands', 'cum', 'year', 'agg', 'integrity', 'events', 'share']
   O24h 信息账恒等误差为 0                                PASS   0
@@ -104,7 +103,7 @@ O25 EXP-05 引擎接入观察台（食物援助事件可展示）
   O25b exp04 引擎不接受 AID_M                         PASS   {'detail': '引擎 exp04 没有 AID_M 这个参数，要用同格食物援助请选 exp05'}
   O25c AID_M 越界被拒                                PASS
   O25d AID_M 非整数被拒（422）                          PASS
-  O25e exp05 运行可以启动                              PASS   {'run_id': '227ddc004f8f', 'status': 'queued'}
+  O25e exp05 运行可以启动                              PASS   {'run_id': '55bee56caefc', 'status': 'queued'}
   O25f exp05 运行跑完                                PASS   done 
   O25g 台账记下了 aid_m 与引擎                           PASS
       第 73 年的一条援助事件：群体-6876D3 向 群体-97AC8E 援助了 1379136 kcal（1.89 人年口粮），地点在第 14 号格
@@ -120,7 +119,7 @@ O26 EXP-06 引擎接入观察台（援助记忆与优先回助可展示）
   O26b exp05 引擎不接受 RECIP_M                       PASS   {'detail': '引擎 exp05 没有 RECIP_M 这个参数，要用优先回助请选 exp06'}
   O26c RECIP_M 越界被拒                              PASS
   O26d RECIP_M 非整数被拒（422）                        PASS
-  O26e exp06 运行可以启动                              PASS   {'run_id': '50b6beb01611', 'status': 'queued'}
+  O26e exp06 运行可以启动                              PASS   {'run_id': 'c42f6a10a7bc', 'status': 'queued'}
   O26f exp06 运行跑完                                PASS   done 
   O26g 台账记下了 recip_m                             PASS
       第 73 年的一条援助事件：群体-6876D3 向 群体-97AC8E 援助了 1379136 kcal（1.89 人年口粮），地点在第 14 号格
@@ -133,7 +132,7 @@ O26 EXP-06 引擎接入观察台（援助记忆与优先回助可展示）
 
 O27 供界面直接使用的数据：稳定 id / 回助依据 / 分配对照 / 能力表 / 对照案例
   O27a 引擎能力表给出范围/默认/单位                           PASS   {'label': '优先回助的预算比例', 'unit': '‰（千分之一）', 'min': 0, 'max': 1000, 'default': 0, '
-  O27b 契约版本升到 obs-1.6                            PASS   obs-1.6
+  O27b 契约版本升到 obs-1.7                            PASS   obs-1.7
   O27c 两条开/关优先回助的对照案例已装入且标为预生成                   PASS   [('preset-exp06-recip0', 0), ('preset-exp06-recip1000', 1000)]
   O27c2 预置案例记的是自己引擎的 sha256，不是默认引擎的              PASS   [('preset-exp06-recip0', '43c9338551a2'), ('preset-exp06-recip1000', '43c9338551a2')]
   O27d 单条运行返回实际引擎/参数/代码版本/状态                     PASS   ['seed', 'years', 'sigma_m', 'move_mort_m', 'share_m', 'aid_m', 'recip
@@ -190,6 +189,33 @@ O29 定向场景：消失年份、记录不全的运行、援助发生在记录�
   O29o recip.changed 记在诊断里，不加到任何一条边上             PASS
   O29p 同一份历史去掉援助段后照常读：边为 0，卷宗照给，不报错              PASS   {'nodes': 3, 'edges': 0, 'transfers': 0, 'kcal': 0}
 
+O30 取消：协作收尾 / 卡住也能有界停止 / 身份不明绝不误杀 / 竞态不覆盖赢家
+  O30a 取消请求被接受，并给出人话说明                           PASS   {'ok': True, 'run_id': 'a880f3ece140', 'status': 'canceled', 'cancel': {'request
+  O30b 正常工作进程自己协作收尾为 canceled（不是被杀、不是中断）         PASS   canceled / 0.0s / 用户取消：工作进程在第 371 年的边界上自己停下，前 371 年完整保
+  O30b2 协作收尾远远早于强制窗口（说明走的是协作那条路）                 PASS   0.0s < 15s
+  O30c 已完整写入的年份一年不少地留着，且与 years_done 对得上         PASS   记录 371 年 / years_done 371
+  O30c2 取消的是这一条，不是把整次运行的历史丢掉                     PASS   371 年（上限 6000）
+  O30d 取消之后历史照常回放                                PASS   200
+  O30d2 接口给出取消口径（谁请求的、进行到哪一步）                    PASS   {'requested': True, 'stage': 'finished', 'requested_at': 1789201270.36
+  O30e 任务槽真的放出来了，可以立刻新建运行                        PASS
+  O30f 前提：这个假工作进程确实被认成本次运行的活进程                   PASS   alive
+  O30g 卡住的工作进程在有界时间内被停止（先 TERM 后 KILL）           PASS   canceled / 0.0s / alive=False
+  O30h 停止原因写明是取消超时，不写成系统故障                       PASS   协作取消超时：请求取消 16 秒后工作进程仍卡在同一步，已强制停止。已完整保存的 2 年仍可回放（写
+  O30i 半条记录不算完成的年份（只认完整写入的 3 条：第 0..2 年）         PASS   year_count=3 years_done=2
+  O30j 槽被放出来了                                    PASS
+  O30k 没人取消时，哪怕它看起来'很久没进度'也一个信号都不发               PASS   alive=True status=running 已跑 900s 进度 0
+  O30k2 也不会顺手给它写一条取消说明（它根本没被取消）                  PASS
+  O30l 前提：这个 pid 的命令行不是本次运行的工作进程                 PASS   gone
+  O30m pid 被复用时不发任何信号，无关进程活得好好的                  PASS   无关进程被误杀了
+  O30n 记录按'进程已经不在'如实收尾为 canceled                 PASS   取消时工作进程已经不在了。已完整保存的 0 年仍可回放（写到一半的那一年不算数）
+  O30o 身份查不到时：不发信号、不改状态，只如实记一句话                  PASS   alive=True status=running note=已请求取消，但暂时无法确认那个进程号还是不是这次
+  O30p 未知不是失败：取消请求还在，下一轮还会再看                     PASS
+  O30q 等进程真的没了，同一条判据把它收尾成 canceled               PASS   canceled
+  O30r 工作进程抢先写完 done 时，取消收尾不把它覆盖成 canceled       PASS   done / race-digest
+  O30s 竞态之后不留下半截状态（years_done 仍是赢家写的）            PASS   7
+  O30t 取消已经落地后，迟到的工作进程改不回 done                   PASS   canceled / late_ok=False
+  O30u 已结束的运行：取消不改状态、不清数据，接口如实回 409              PASS   done / 409
+
 O23 进程探测：查不到不等于死了；回收前要比对状态与 pid
   O23a ps 超时 -> 探测结果是未知，不是死亡                     PASS   probe=unknown
   O23b 探测未知时不回收任务槽                               PASS   running
@@ -231,7 +257,7 @@ O12 冻结基线未被改动
   O12 exp03/ 与基线 6b6af4f 逐字节相同                   PASS
 
 ================================================================================================
-  通过 160 / 失败 0 / 未覆盖 1（共 161 项）
+  通过 185 / 失败 0 / 未覆盖 1（共 186 项）
   注：未覆盖项**不计入通过**。浏览器与线上部署的验收不在本脚本内，见 README 的验收记录。
 ================================================================================================
 无失败项，但有 1 项未覆盖 —— 不能称为“全部通过”。
