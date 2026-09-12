@@ -95,8 +95,13 @@ observer/
 ## API
 
 只读：`GET /api/health` `/api/config` `/api/milestones` `/api/map` `/api/runs`
-`/api/runs/{id}` `/api/runs/{id}/series` `/api/runs/{id}/year/{t}` `/api/runs/{id}/band/{band_id}`
+`/api/runs/{id}` `/api/runs/{id}/series` `/api/runs/{id}/year/{t}`
+`/api/runs/{id}/band/{band_id}[?at_year=N]` `/api/runs/{id}/relations[?at_year=N]`
 写：`POST /api/runs`（新建并启动）`POST /api/runs/{id}/cancel` `DELETE /api/runs/{id}`
+
+`at_year=N` 只读第 0..N 年已保存的记录 —— 回放到第 124 年时，档案里不会冒出第 125 年的迁移。
+省略即全档案。字段与口径见 [`../docs/OBS-01-API-CONTRACT.md`](../docs/OBS-01-API-CONTRACT.md) §6，
+实操交接见 [`../docs/OBS-01-HANDOFF-HISTORY.md`](../docs/OBS-01-HANDOFF-HISTORY.md)。
 
 ## 上限与访问保护
 

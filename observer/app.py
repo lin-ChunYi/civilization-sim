@@ -170,29 +170,132 @@ def get_year(run_id: str, t: int):
     rec = store.read_year(run_id, t)
     if rec is None:
         raise HTTPException(404, f"第 {t} 年还没有被计算出来（或超出本次运行范围）")
-    # 老记录里没有事件 id（obs-1.5 之前写的），按同一套规则补上，保证前端拿到的都有稳定标识
+    return _with_event_ids(rec)   # 老记录没有事件 id，按同一套规则补上
+
+
+def _with_event_ids(rec):
+    """老记录（obs-1.5 之前写的）没有事件 id，按同一规则补齐，前端不用分两套逻辑。"""
     for i, e in enumerate(rec.get("events", [])):
-        e.setdefault("id", f"t{rec['t']}-{e.get('type', 'event')}-{i}")
+        e.setdefault("id", "t%s-%s-%s" % (rec["t"], e.get("type", "event"), i))
         e.setdefault("year", rec["t"])
     return rec
 
 
-@app.get("/api/runs/{run_id}/band/{band_id}", dependencies=[Depends(require_read)])
-def get_band(run_id: str, band_id: str):
-    """某个群体的可记录轨迹。全部来自已保存的逐年记录与模型日志，不做任何推测。"""
+def _scope(run_id, at_year):
+    """确定"截至哪一年"。越界/负数一律 400 说清楚，不静默夹取。"""
+    recorded = max(store.year_count(run_id) - 1, 0)
+    if at_year is None:
+        return {"mode": "full", "at_year": None, "years_recorded": recorded,
+                "note": "未指定 at_year：返回全档案（含该年之后发生的事）"}, None
+    if at_year < 0 or at_year > recorded:
+        raise HTTPException(400, "at_year=%s 越界：这次运行已保存 0..%s 年" % (at_year, recorded))
+    return {"mode": "as_of_year", "at_year": at_year, "years_recorded": recorded,
+            "note": "只用第 0..%s 年已保存的记录；之后发生的出生/迁移/分裂/消失一律不计入"
+                    % at_year}, at_year
+
+
+def _years(run_id, upto):
+    for rec in store.iter_years(run_id):
+        if upto is not None and rec["t"] > upto:
+            break
+        yield _with_event_ids(rec)
+
+
+def _aid_events(rec):
+    return [e for e in rec.get("events", []) if e.get("type") == "aid"]
+
+
+@app.get("/api/runs/{run_id}/relations", dependencies=[Depends(require_read)])
+def get_relations(run_id: str, at_year: Optional[int] = None):
+    """**截至某一年**的真实援助往来汇总。
+
+    只把已保存的逐笔援助事件聚合起来：谁给过谁、多少 kcal、几笔、最近哪一年、
+    走优先还是普通阶段、其中几笔是回助、以及可追溯的事件 id。
+    这里**没有**"盟友""国家""联盟"这类东西 —— 只有实际发生过的食物转移。
+    `recip.changed` 是"格×年"的诊断计数，属于那一格那一年，**不归给任何一条边**，
+    所以它只作为运行级读数放在 diagnostics 里，也不能用 repay 笔数去替代它。
+    """
     if not store.get_run(run_id):
         raise HTTPException(404, "没有这次运行")
+    scope, upto = _scope(run_id, at_year)
+    edges = {}
+    names, last_seen, alive_cells = {}, {}, {}
+    recip_changed = 0
+    last_rec_t = None
+    for rec in _years(run_id, upto):
+        last_rec_t = rec["t"]
+        for b in rec.get("bands", []):
+            names[b["id"]] = b.get("name", b["id"])
+            last_seen[b["id"]] = rec["t"]
+        alive_cells = {b["id"]: b.get("cell") for b in rec.get("bands", [])}
+        recip_changed += (rec.get("recip") or {}).get("changed", 0) or 0
+        for e in _aid_events(rec):
+            d, r = str(e.get("donor")), str(e.get("receiver"))
+            key = d + "->" + r
+            edge = edges.setdefault(key, {
+                "donor": d, "receiver": r, "kcal": 0, "transfers": 0,
+                "last_year": None, "last_event_id": None,
+                "phase_counts": {"recip": 0, "normal": 0}, "repay_transfers": 0,
+                "event_ids": []})
+            edge["kcal"] += int(e.get("kcal") or 0)
+            edge["transfers"] += 1
+            edge["last_year"] = e.get("year", rec["t"])
+            edge["last_event_id"] = e.get("id")
+            phase = e.get("phase") or "normal"
+            edge["phase_counts"][phase] = edge["phase_counts"].get(phase, 0) + 1
+            if e.get("repay"):
+                edge["repay_transfers"] += 1
+            edge["event_ids"].append(e.get("id"))
+    node_ids = set(names) | {x for k in edges for x in (edges[k]["donor"], edges[k]["receiver"])}
+    nodes = [{"id": nid, "name": names.get(nid, nid),
+              "alive_at_year": nid in alive_cells,
+              "cell": alive_cells.get(nid),
+              "last_seen_year": last_seen.get(nid)}
+             for nid in sorted(node_ids)]
+    return {
+        "run_id": run_id, "history_scope": scope,
+        "as_of_record_year": last_rec_t,
+        "nodes": nodes,
+        "edges": sorted(edges.values(), key=lambda e: (-e["kcal"], e["donor"], e["receiver"])),
+        "totals": {"nodes": len(nodes), "edges": len(edges),
+                   "transfers": sum(e["transfers"] for e in edges.values()),
+                   "kcal": sum(e["kcal"] for e in edges.values())},
+        "diagnostics": {"recip_changed_cellyears": recip_changed,
+                        "note": "recip.changed 是格×年的诊断，不属于任何一条边；"
+                                "也不要用 repay_transfers 代替它 —— 回助在 RECIP_M=0 时"
+                                "同样会发生，那是碰巧"},
+        "source": "只聚合本次运行已保存的逐笔援助事件（模型日志 st['aid_log']）；"
+                  "不含任何推断出来的关系、称谓或立场",
+    }
+
+
+@app.get("/api/runs/{run_id}/band/{band_id}", dependencies=[Depends(require_read)])
+def get_band(run_id: str, band_id: str, at_year: Optional[int] = None):
+    """某个群体的卷宗。全部来自已保存的逐年记录与模型日志，不做任何推测。
+
+    带 `at_year=N` 时只用第 0..N 年的记录：那一年之后才发生的迁移、分裂、消失、
+    援助往来**一概不出现**（回放到第 124 年时，档案里不该已经写着第 125 年的迁移）。
+    不带参数则是全档案，`history_scope.mode` 会说清楚是哪一种。
+    """
+    if not store.get_run(run_id):
+        raise HTTPException(404, "没有这次运行")
+    scope, upto = _scope(run_id, at_year)
     traj, sizes = [], []
     name = band_id
     first_seen = last_seen = None
-    parent = None
-    born_at = None
+    parent = born_at = extinct_at = None
     children = []
-    extinct_at = None
-    for rec in store.iter_years(run_id):
+    aid_given = {"kcal": 0, "transfers": 0, "events": []}
+    aid_received = {"kcal": 0, "transfers": 0, "events": []}
+    aid_memory = None
+    alive_at = False
+    last_state = None
+    for rec in _years(run_id, upto):
         t = rec["t"]
+        present = False
         for b in rec["bands"]:
             if b["id"] == band_id:
+                present = True
                 name = b["name"]
                 if first_seen is None:
                     first_seen = t
@@ -200,22 +303,73 @@ def get_band(run_id: str, band_id: str):
                 sizes.append([t, b["size"], b["store"]])
                 if not traj or traj[-1][1] != b["cell"]:
                     traj.append([t, b["cell"]])
+                aid_memory = b.get("aid_memory")
+                last_state = {"year": t, "cell": b["cell"], "size": b["size"],
+                              "store": b["store"]}
+        alive_at = present
         for e in rec["events"]:
-            if e["type"] == "split" and e.get("band") == band_id:
+            kind = e.get("type")
+            if kind == "split" and e.get("band") == band_id:
                 parent, born_at = e.get("parent"), t
-            elif e["type"] == "split" and e.get("parent") == band_id:
+            elif kind == "split" and e.get("parent") == band_id:
                 children.append([t, e.get("band")])
-            elif e["type"] == "extinct" and e.get("band") == band_id:
+            elif kind == "extinct" and e.get("band") == band_id:
                 extinct_at = t
+            elif kind == "aid":
+                if str(e.get("donor")) == band_id:
+                    aid_given["kcal"] += int(e.get("kcal") or 0)
+                    aid_given["transfers"] += 1
+                    aid_given["events"].append(
+                        {"id": e.get("id"), "year": e.get("year", t),
+                         "receiver": str(e.get("receiver")), "kcal": e.get("kcal"),
+                         "phase": e.get("phase"), "repay": bool(e.get("repay"))})
+                elif str(e.get("receiver")) == band_id:
+                    aid_received["kcal"] += int(e.get("kcal") or 0)
+                    aid_received["transfers"] += 1
+                    aid_received["events"].append(
+                        {"id": e.get("id"), "year": e.get("year", t),
+                         "donor": str(e.get("donor")), "kcal": e.get("kcal"),
+                         "phase": e.get("phase"), "repay": bool(e.get("repay"))})
     if first_seen is None:
-        raise HTTPException(404, "这次运行里没有这个群体")
-    return {"id": band_id, "name": name, "first_seen": first_seen, "last_seen": last_seen,
+        raise HTTPException(404, "截至该年份的记录里没有这个群体"
+                            if upto is not None else "这次运行里没有这个群体")
+    # aid_memory 里的 last_year 是**引擎内部 tick**，比记录年份小 1，直接显示就会像
+    # "第 83 年的援助写成第 82 年"。展示年份一律从**本次范围内真实的援助事件**推出来：
+    # 老记录（obs-1.6 之前写的）没有这几个字段，这里补齐；新记录则用同一批事件复核一遍，
+    # 保证截到第 N 年时不会指向第 N 年之后的事件。
+    if isinstance(aid_memory, dict):
+        last_from = {}
+        for ev in aid_received["events"]:
+            last_from[ev["donor"]] = ev
+        fixed = {}
+        for donor, mem in aid_memory.items():
+            mem = dict(mem) if isinstance(mem, dict) else {"raw": mem}
+            ev = last_from.get(str(donor))
+            if ev:
+                mem["last_year_display"] = ev["year"]
+                mem["last_event_id"] = ev["id"]
+                mem["display_source"] = "本次运行的援助事件 " + str(ev["id"])
+            else:
+                mem["last_year_display"] = None
+                mem["last_event_id"] = None
+                mem["display_source"] = (
+                    "未记录：截至第 %s 年的已保存记录里没有 %s 给本群体的援助事件"
+                    % (upto if upto is not None else last_seen, donor))
+            fixed[str(donor)] = mem
+        aid_memory = fixed
+    return {"id": band_id, "name": name, "history_scope": scope,
+            "first_seen": first_seen, "last_seen": last_seen,
+            "alive_at_year": alive_at, "state_at_year": last_state,
             "origin": ("由 " + parent + " 分裂而来" if parent else
                        ("开局的初始群体" if first_seen == 0 else "未记录")),
             "parent": parent, "born_at": born_at, "children": children,
             "extinct_at": extinct_at, "trajectory": traj, "sizes": sizes,
+            "aid_given": aid_given, "aid_received": aid_received,
+            "aid_memory": aid_memory,
             "source": "全部来自本次运行已保存的逐年记录与模型日志；"
-                      "群体层的出生/死亡分项未记录，账本只记全局分项。"}
+                      "群体层的出生/死亡分项未记录，账本只记全局分项。"
+                      "aid_memory 里的 last_year 是引擎内部 tick，"
+                      "要显示请用 last_year_display / last_event_id。"}
 
 
 # ---------------------------------------------------------------- 写接口

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -710,7 +711,7 @@ with TestClient(app) as c9:
           <= set(spec) and spec["recip_m"]["max"] == 1000
           and spec["recip_m"]["unit"] and spec["recip_m"]["min"] == 0,
           str(spec.get("recip_m"))[:80])
-    check("O27b 契约版本升到 obs-1.5", cfg["api_version"] == "obs-1.5", cfg["api_version"])
+    check("O27b 契约版本升到 obs-1.6", cfg["api_version"] == "obs-1.6", cfg["api_version"])
 
     runs = {r["run_id"]: r for r in c9.get("/api/runs").json()["runs"]}
     pair = ["preset-exp06-recip0", "preset-exp06-recip1000"]
@@ -809,6 +810,352 @@ with TestClient(app) as c9:
           any(e.get("repay") for t in range(0, 151)
               for e in c9.get(f"/api/runs/{pair[0]}/year/{t}").json()["events"]
               if e["type"] == "aid"))
+
+# ---------------------------------------------------------------- 历史卷宗与关系网
+print("\nO28 截至某年的群体卷宗 / 援助关系汇总：不许把未来混进来")
+with TestClient(app) as c10:
+    PR = "preset-exp06-recip1000"
+    OLD = "preset-s4242-sig400-mort50"          # exp03：没有援助段的旧引擎运行
+
+    def band(bid, at=None):
+        u = f"/api/runs/{PR}/band/{bid}" + (f"?at_year={at}" if at is not None else "")
+        return c10.get(u)
+
+    def rel(run=PR, at=None):
+        u = f"/api/runs/{run}/relations" + (f"?at_year={at}" if at is not None else "")
+        return c10.get(u)
+
+    # 只读证据：调用前后记录文件与台账都不能变
+    pfile = store.run_dir(PR) / "years.jsonl"
+    before_file = (pfile.stat().st_mtime_ns, pfile.stat().st_size,
+                   hashlib.sha256(pfile.read_bytes()).hexdigest())
+    before_row = dict(store.get_run(PR))
+
+    full_all = rel().json()
+    check("O28a 省略 at_year = 全档案，并标明口径",
+          full_all["history_scope"]["mode"] == "full"
+          and full_all["history_scope"]["at_year"] is None,
+          str(full_all["history_scope"])[:60])
+
+    # 逐年重算一遍援助事件，和汇总对账（汇总不许自己造数）
+    def recount(upto=None):
+        agg, ids = {}, []
+        for t in range(0, store.year_count(PR)):
+            if upto is not None and t > upto:
+                break
+            for e in c10.get(f"/api/runs/{PR}/year/{t}").json()["events"]:
+                if e["type"] != "aid":
+                    continue
+                k = (str(e["donor"]), str(e["receiver"]))
+                a = agg.setdefault(k, [0, 0, 0, 0])
+                a[0] += int(e["kcal"]); a[1] += 1
+                a[2] += 1 if (e.get("phase") == "recip") else 0
+                a[3] += 1 if e.get("repay") else 0
+                ids.append(e["id"])
+        return agg, ids
+
+    agg_all, ids_all = recount()
+    api_all = {(e["donor"], e["receiver"]):
+               [e["kcal"], e["transfers"], e["phase_counts"].get("recip", 0),
+                e["repay_transfers"]] for e in full_all["edges"]}
+    check("O28b 关系汇总与逐笔记录完全对得上（kcal / 笔数 / 优先笔数 / 回助笔数）",
+          api_all == agg_all, f"{len(api_all)} 条边 vs 重算 {len(agg_all)} 条")
+    check("O28c 汇总的事件 id 都能在逐年记录里找到",
+          set(i for e in full_all["edges"] for i in e["event_ids"]) == set(ids_all),
+          f"{len(ids_all)} 笔")
+    check("O28d 节点 id 是字符串，64 位 id 不被截断/转成数字",
+          all(isinstance(n["id"], str) for n in full_all["nodes"])
+          and any(len(n["id"]) >= 19 and int(n["id"]) > 2**53
+                  for n in full_all["nodes"]),
+          str([n["id"] for n in full_all["nodes"][:2]]))
+
+    # 截至某年：只能是那一年之前发生过的事
+    CUT = 83
+    a83 = rel(at=CUT).json()
+    agg83, ids83 = recount(CUT)
+    api83 = {(e["donor"], e["receiver"]):
+             [e["kcal"], e["transfers"], e["phase_counts"].get("recip", 0),
+              e["repay_transfers"]] for e in a83["edges"]}
+    late = [i for e in a83["edges"] for i in e["event_ids"] if int(i.split("-")[0][1:]) > CUT]
+    check(f"O28e 截至第 {CUT} 年的汇总 == 前 {CUT} 年逐笔重算", api83 == agg83,
+          f"{len(api83)} vs {len(agg83)}")
+    check("O28f 截至某年的汇总里没有该年之后的事件（未来不泄漏）", not late, str(late[:3]))
+    check("O28g 截断后的总量确实小于全档案（不是原样返回）",
+          a83["totals"]["transfers"] < full_all["totals"]["transfers"],
+          f'{a83["totals"]["transfers"]} < {full_all["totals"]["transfers"]}')
+
+    # 群体卷宗：最初的真实抱怨 —— 回放到 124 年，档案里已经写着 125/131 年的迁移
+    MOVER = "7567856178022945294"
+    bf = band(MOVER).json()
+    b124 = band(MOVER, 124).json()
+    b125 = band(MOVER, 125).json()
+    fut_full = [x for x in bf["trajectory"] if x[0] > 124]
+    check("O28h 前提：这个群体在第 124 年之后确实又迁过（否则本组测试不承重）",
+          bool(fut_full), str(fut_full[:3]))
+    check("O28i 回放到第 124 年时，档案里没有 124 年之后的迁移",
+          all(x[0] <= 124 for x in b124["trajectory"])
+          and all(x[0] <= 124 for x in b124["sizes"]),
+          str([x for x in b124["trajectory"] if x[0] > 124][:3]))
+    check("O28j 年界：at_year=125 含第 125 年那一步，不含更晚的",
+          any(x[0] == 125 for x in b125["trajectory"])
+          and all(x[0] <= 125 for x in b125["trajectory"]),
+          str(b125["trajectory"][-2:]))
+    check("O28k 省略参数仍是全档案（老用法不变）",
+          bf["trajectory"] == b125["trajectory"] + [x for x in bf["trajectory"] if x[0] > 125]
+          and bf["history_scope"]["mode"] == "full")
+
+    # 未来的出生与消失都不能提前出现
+    leak = []
+    for t in (0, 40, 83, 124):
+        for b in c10.get(f"/api/runs/{PR}/year/{t}").json()["bands"]:
+            d = band(b["id"], t).json()
+            if d["born_at"] is not None and d["born_at"] > t:
+                leak.append(("born", b["id"], d["born_at"], t))
+            if d["extinct_at"] is not None and d["extinct_at"] > t:
+                leak.append(("extinct", b["id"], d["extinct_at"], t))
+            if any(ch[0] > t for ch in d["children"]):
+                leak.append(("child", b["id"], d["children"], t))
+            if any(e["year"] > t for e in d["aid_given"]["events"] + d["aid_received"]["events"]):
+                leak.append(("aid", b["id"], t))
+    check("O28l 截至第 N 年的卷宗里没有 N 年之后的出生 / 分裂 / 消失 / 援助",
+          not leak, str(leak[:2]))
+
+    # 消失：全档案里灭绝的群体，截到它还活着的年份时不能写成已消失
+    gone = [n["id"] for n in full_all["nodes"]
+            if band(n["id"]).json().get("extinct_at") is not None]
+    if not gone:
+        uncov("O28m 灭绝年份的截断", "这条预置案例里没有群体消失，前提缺失")
+    else:
+        g = gone[0]
+        gy = band(g).json()["extinct_at"]
+        early = band(g, gy - 1).json()
+        check("O28m 消失那年之前查，卷宗写还活着，不预告消失",
+              early["extinct_at"] is None and early["alive_at_year"] is True,
+              f"{g} 第 {gy} 年消失")
+
+    # 展示年份：必须来自真实事件，且不晚于截断年
+    mem_ok, mem_bad, mem_seen = True, [], 0
+    for t in (83, 124, 150):
+        for b in c10.get(f"/api/runs/{PR}/year/{t}").json()["bands"]:
+            d = band(b["id"], t).json()
+            for donor, m in (d.get("aid_memory") or {}).items():
+                mem_seen += 1
+                eid = m.get("last_event_id")
+                if eid is None:
+                    continue
+                y = int(eid.split("-")[0][1:])
+                src = [e for e in c10.get(f"/api/runs/{PR}/year/{y}").json()["events"]
+                       if e["id"] == eid]
+                if (y > t or m.get("last_year_display") != y or not src
+                        or str(src[0]["donor"]) != donor or str(src[0]["receiver"]) != b["id"]):
+                    mem_ok = False; mem_bad.append((b["id"], donor, eid, t))
+    if not mem_seen:
+        uncov("O28n 记忆的展示年份", "这几年里没有群体带着援助记忆，前提缺失")
+    else:
+        check("O28n 记忆的展示年份指向真实的那一笔援助，且不晚于截断年",
+              mem_ok, f"{mem_seen} 条记忆；越界 {mem_bad[:2]}")
+        one = None
+        for b in c10.get(f"/api/runs/{PR}/year/83").json()["bands"]:
+            m = (band(b["id"], 83).json().get("aid_memory") or {})
+            if m:
+                one = (b["id"], list(m.items())[0]); break
+        if one:
+            bid, (donor, m) = one
+            print(f"      第 83 年 {bid[:8]}… 记得 {donor[:8]}…："
+                  f"内部 tick last_year={m['last_year']} → 展示年份 "
+                  f"{m['last_year_display']}（事件 {m['last_event_id']}）")
+
+    # recip.changed 是格×年诊断，不归给关系边，也不能用 repay 代替
+    check("O28o 关系边上没有把'分配被改变'算成某一对的往来",
+          all("recip_changed" not in e and "changed" not in e for e in full_all["edges"])
+          and "recip_changed_cellyears" in full_all["diagnostics"])
+    repay_total = sum(e["repay_transfers"] for e in full_all["edges"])
+    check("O28p 诊断计数与回助笔数是两个数，没有互相顶替",
+          full_all["diagnostics"]["recip_changed_cellyears"] != repay_total
+          or repay_total == 0,
+          f'changed={full_all["diagnostics"]["recip_changed_cellyears"]} repay={repay_total}')
+
+    # 旧引擎：没有援助段也要正常读
+    old_rel = rel(OLD)
+    old_band = c10.get(f"/api/runs/{OLD}/year/0").json()["bands"][0]["id"]
+    ob = c10.get(f"/api/runs/{OLD}/band/{old_band}?at_year=10")
+    check("O28q 旧引擎（无援助段）的关系汇总是空的，不报错也不编造",
+          old_rel.status_code == 200 and old_rel.json()["totals"]["edges"] == 0
+          and old_rel.json()["totals"]["transfers"] == 0, str(old_rel.status_code))
+    check("O28r 旧引擎的群体卷宗照常读，援助字段如实为空",
+          ob.status_code == 200 and ob.json()["aid_memory"] is None
+          and ob.json()["aid_given"]["transfers"] == 0, str(ob.status_code))
+
+    # 缺年 / 越界 / 类型：一律说清楚，不静默夹取
+    codes = [band(MOVER, 999).status_code, band(MOVER, -1).status_code,
+             c10.get(f"/api/runs/{PR}/band/{MOVER}?at_year=abc").status_code,
+             rel(at=999).status_code, rel(at=-1).status_code,
+             c10.get(f"/api/runs/nope/relations").status_code,
+             c10.get(f"/api/runs/{PR}/band/nosuchband?at_year=10").status_code]
+    check("O28s 越界 400 / 非整数 422 / 不存在 404，都明确回答",
+          codes == [400, 400, 422, 400, 400, 404, 404], str(codes))
+    msg = band(MOVER, 999).json().get("detail", "")
+    check("O28t 越界提示写明这次运行到底存了多少年", "0..150" in msg, msg[:60])
+
+    # 截到群体出生之前：应当是 404，而不是一份空壳档案
+    newborn = [n["id"] for n in full_all["nodes"]
+               if (band(n["id"]).json().get("born_at") or 0) > 0]
+    if not newborn:
+        uncov("O28u 出生之前的查询", "这条预置案例里没有中途分裂出来的群体，前提缺失")
+    else:
+        nb = newborn[0]
+        by = band(nb).json()["born_at"]
+        check("O28u 群体出生之前查它，如实 404，不返回空壳档案",
+              band(nb, by - 1).status_code == 404 and band(nb, by).status_code == 200,
+              f"{nb[:8]}… 第 {by} 年出生")
+
+    after_file = (pfile.stat().st_mtime_ns, pfile.stat().st_size,
+                  hashlib.sha256(pfile.read_bytes()).hexdigest())
+    check("O28v 这些查询是只读的：记录文件与台账一字未改",
+          before_file == after_file and dict(store.get_run(PR)) == before_row,
+          "文件变了" if before_file != after_file else "")
+
+# ------------------------------------------------- 定向场景：长跑里撞不到的那几条
+# 预置那条 150 年里**一个群体都没有消失过**，挂在它身上的"消失年份截断"永远是绿的。
+# 所以这里手写一份隔离的记录（不跑任何模型、不碰冻结目录），把这几条路径逼出来。
+print("\nO29 定向场景：消失年份、记录不全的运行、援助发生在记录之外")
+HIST = "hist-probe"
+BIG_A = "18446744073709551557"     # 20 位，超过 2^53，前端一律按字符串处理
+BIG_B = "9223372036854775783"
+GONE = "1311768467463790320"
+store.run_dir(HIST).mkdir(parents=True, exist_ok=True)
+
+
+def _b(bid, cell, size, mem=None):
+    d = {"id": bid, "name": "群体-" + bid[:4], "cell": cell, "size": size, "store": 100}
+    if mem is not None:
+        d["aid_memory"] = mem
+    return d
+
+
+def _rec(t, bands, events, aid=True):
+    r = {"t": t, "stock": [1], "bands": bands, "cum": {}, "year": {},
+         "agg": {"pop": sum(b["size"] for b in bands)}, "integrity": {}, "events": events}
+    if aid:
+        r["aid"] = {"transfers": len([e for e in events if e["type"] == "aid"])}
+        r["recip"] = {"changed": 1 if t == 3 else 0}
+    return r
+
+
+def _aid(t, i, donor, recv, kcal, phase="normal", repay=False):
+    return {"id": f"t{t}-aid-{i}", "year": t, "type": "aid", "donor": donor,
+            "receiver": recv, "kcal": kcal, "cell": 0, "phase": phase,
+            "repay": repay, "source": "模型日志 st['aid_log']"}
+
+
+years = [
+    _rec(0, [_b(BIG_A, 0, 10), _b(BIG_B, 0, 10), _b(GONE, 1, 6)], []),
+    _rec(1, [_b(BIG_A, 0, 10), _b(BIG_B, 0, 10), _b(GONE, 1, 5)],
+         [_aid(1, 0, BIG_A, BIG_B, 500)]),
+    _rec(2, [_b(BIG_A, 0, 10), _b(BIG_B, 1, 10, {BIG_A: {"kcal": 500, "last_year": 1}}),
+             _b(GONE, 1, 3)], []),
+    # 第 3 年：GONE 消失；BIG_B 回助 BIG_A（优先阶段）
+    _rec(3, [_b(BIG_A, 0, 10), _b(BIG_B, 1, 10, {BIG_A: {"kcal": 500, "last_year": 1}})],
+         [{"id": "t3-extinct-0", "year": 3, "type": "extinct", "band": GONE, "cell": 1,
+           "source": "模型日志"},
+          _aid(3, 1, BIG_B, BIG_A, 300, phase="recip", repay=True)]),
+    # 第 4 年：BIG_A 记得 BIG_B 帮过（真实事件在第 3 年）；另有一条"记录之外"的旧账
+    _rec(4, [_b(BIG_A, 0, 10, {BIG_B: {"kcal": 300, "last_year": 2},
+                               GONE: {"kcal": 999, "last_year": 0}}),
+             _b(BIG_B, 1, 10, {BIG_A: {"kcal": 500, "last_year": 1}})], []),
+]
+store.years_path(HIST).write_text(
+    "\n".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) for r in years) + "\n",
+    encoding="utf-8")
+with store.connect() as _c:
+    _c.execute("DELETE FROM runs WHERE run_id=?", (HIST,))
+    _c.execute("INSERT INTO runs (run_id,label,kind,status,created_at,seed,years,sigma_m,"
+               "move_mort_m,share_m,aid_m,recip_m,engine,arm,years_done) "
+               "VALUES (?,?,'preset','interrupted',?,1,9,0,0,1000,1000,1000,'exp06','memory',5)",
+               (HIST, "定向场景：隔离记录", time.time()))
+
+with TestClient(app) as c11:
+    def hb(bid, at=None):
+        return c11.get(f"/api/runs/{HIST}/band/{bid}" + (f"?at_year={at}" if at is not None else ""))
+
+    check("O29a 前提：这份隔离记录里确实有群体消失",
+          hb(GONE).json()["extinct_at"] == 3, str(hb(GONE).json().get("extinct_at")))
+    check("O29b 消失那年之前查：写还活着，不预告消失",
+          hb(GONE, 2).json()["extinct_at"] is None
+          and hb(GONE, 2).json()["alive_at_year"] is True)
+    check("O29c 消失那年查：如实写已消失",
+          hb(GONE, 3).json()["extinct_at"] == 3
+          and hb(GONE, 3).json()["alive_at_year"] is False)
+    check("O29d 消失之后仍查得到它的历史（不是 404）",
+          hb(GONE, 4).status_code == 200 and hb(GONE, 4).json()["last_seen"] == 2)
+
+    # 声称 9 年、实际只存了 5 年：截到第 6 年应当明确报"只存了 0..4"
+    check("O29e 记录不全的运行：问到没存的年份，明说只存了多少",
+          hb(BIG_A, 6).status_code == 400 and "0..4" in hb(BIG_A, 6).json()["detail"],
+          hb(BIG_A, 6).json().get("detail", "")[:50])
+    check("O29f 存到哪查到哪：第 4 年正常返回", hb(BIG_A, 4).status_code == 200)
+
+    # 展示年份：真实事件推出来的（第 3 年），而不是记忆里的内部 tick（2）
+    m4 = hb(BIG_A, 4).json()["aid_memory"]
+    check("O29g 内部 tick 与展示年份分开：raw 保留 2，展示写 3 并挂上事件 id",
+          m4[BIG_B]["last_year"] == 2 and m4[BIG_B]["last_year_display"] == 3
+          and m4[BIG_B]["last_event_id"] == "t3-aid-1", str(m4.get(BIG_B))[:90])
+    check("O29h 记录里找不到出处的旧账，如实写未记录，不猜一个年份",
+          m4[GONE]["last_year_display"] is None and m4[GONE]["last_event_id"] is None
+          and "未记录" in m4[GONE]["display_source"], str(m4.get(GONE))[:90])
+    m2 = hb(BIG_B, 2).json()["aid_memory"]
+    check("O29i 截到第 2 年时，记忆只能指向第 2 年以前的那一笔",
+          m2[BIG_A]["last_year_display"] == 1 and m2[BIG_A]["last_event_id"] == "t1-aid-0",
+          str(m2.get(BIG_A))[:80])
+
+    r_all = c11.get(f"/api/runs/{HIST}/relations").json()
+    r_2 = c11.get(f"/api/runs/{HIST}/relations?at_year=2").json()
+    e_all = {(e["donor"], e["receiver"]): e for e in r_all["edges"]}
+    check("O29j 两个方向各算一条边，不合并成一条无向关系",
+          set(e_all) == {(BIG_A, BIG_B), (BIG_B, BIG_A)}, str(list(e_all))[:80])
+    back = e_all.get((BIG_B, BIG_A), {})
+    fore = e_all.get((BIG_A, BIG_B), {})
+    check("O29k 优先阶段与回助各自计数，来源是事件本身",
+          back.get("phase_counts") == {"recip": 1, "normal": 0}
+          and back.get("repay_transfers") == 1
+          and fore.get("phase_counts") == {"recip": 0, "normal": 1},
+          str(back.get("phase_counts")) + " / " + str(fore.get("phase_counts")))
+    check("O29l 截到第 2 年只剩先发生的那一条边",
+          [(e["donor"], e["receiver"]) for e in r_2["edges"]] == [(BIG_A, BIG_B)]
+          and r_2["totals"]["transfers"] == 1, str(r_2["totals"]))
+    check("O29m 已消失的群体在截断年之后标为不在世，但仍列在节点里",
+          any(n["id"] == GONE and n["alive_at_year"] is False for n in r_all["nodes"])
+          and any(n["id"] == GONE and n["alive_at_year"] is True for n in r_2["nodes"]))
+    check("O29n 64 位 id 原样返回，没有被当成数字",
+          all(isinstance(n["id"], str) for n in r_all["nodes"])
+          and {BIG_A, BIG_B} <= {n["id"] for n in r_all["nodes"]})
+    check("O29o recip.changed 记在诊断里，不加到任何一条边上",
+          r_all["diagnostics"]["recip_changed_cellyears"] == 1
+          and all("recip_changed" not in e for e in r_all["edges"]))
+
+    # 把同一份记录改成"没有援助段"，模拟旧引擎
+    plain = [dict(r) for r in years]
+    for r in plain:
+        r.pop("aid", None); r.pop("recip", None)
+        r["events"] = [e for e in r["events"] if e["type"] != "aid"]
+        r["bands"] = [{k: v for k, v in b.items() if k != "aid_memory"} for b in r["bands"]]
+    OLDR = "hist-probe-old"
+    store.run_dir(OLDR).mkdir(parents=True, exist_ok=True)
+    store.years_path(OLDR).write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) for r in plain) + "\n",
+        encoding="utf-8")
+    with store.connect() as _c:
+        _c.execute("DELETE FROM runs WHERE run_id=?", (OLDR,))
+        _c.execute("INSERT INTO runs (run_id,label,kind,status,created_at,seed,years,"
+                   "sigma_m,move_mort_m,share_m,aid_m,recip_m,engine,arm,years_done) "
+                   "VALUES (?,?,'preset','done',?,1,5,0,0,0,0,0,'exp03','memory',5)",
+                   (OLDR, "定向场景：旧引擎无援助段", time.time()))
+    ro = c11.get(f"/api/runs/{OLDR}/relations?at_year=3").json()
+    bo = c11.get(f"/api/runs/{OLDR}/band/{GONE}?at_year=3").json()
+    check("O29p 同一份历史去掉援助段后照常读：边为 0，卷宗照给，不报错",
+          ro["totals"]["edges"] == 0 and bo["extinct_at"] == 3
+          and bo["aid_memory"] is None and bo["aid_given"]["transfers"] == 0,
+          str(ro["totals"]))
 
 # ---------------------------------------------------------------- 探测未知 ≠ 死亡
 print("\nO23 进程探测：查不到不等于死了；回收前要比对状态与 pid")

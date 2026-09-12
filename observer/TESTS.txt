@@ -17,7 +17,7 @@ O2 指标与账本自洽（逐年）
   O3 实体 id 以字符串下发                                PASS   6 个群体
 
 O4 接口与持久化
-  O4a 合法参数可以启动运行                                 PASS   {'run_id': 'bbd712f7d008', 'status': 'queued'}
+  O4a 合法参数可以启动运行                                 PASS   {'run_id': '6e197d18b6db', 'status': 'queued'}
   O4b 子进程算完并落盘                                   PASS   状态=done
   O5 任选三个年份与独立重跑的快照/账本完全一致                       PASS   年份 [0, 30, 60] 全对
   O5b 服务端记录的 full_digest == 直接跑模型的结果             PASS   778398d1aa6c62e54c2cc187
@@ -27,7 +27,7 @@ O4 接口与持久化
   O7a 非法参数被服务端拒绝                                 PASS   [400, 400, 400, 400, 400, 422, 422]
   O7b 越界年份返回 404                                 PASS
   O7c 不存在的运行返回 404                               PASS
-  O8 有活着的任务在跑时拒绝重复启动                             PASS   {'detail': '已有任务在跑（bbd712f7d008，60/60 年）。本版同时只执行一个模拟任务，请等它结束
+  O8 有活着的任务在跑时拒绝重复启动                             PASS   {'detail': '已有任务在跑（6e197d18b6db，60/60 年）。本版同时只执行一个模拟任务，请等它结束
   O9 重启后未完成任务被标为中断（不假装续跑）                        PASS   1 个 → interrupted
   O9b 中断的运行仍可回放已算出的年份                            PASS
   O10a 设了令牌后，写操作无令牌被拒                            PASS
@@ -36,7 +36,7 @@ O4 接口与持久化
   O11 预生成案例存在且被标记为 preset（不冒充实时任务）               PASS   ['preset-exp06-recip1000', 'preset-exp06-recip0', 'preset-s4242-sig400-mort50']
 
 O13 任务槽与状态转换
-  O13a 两个同时占槽的请求只有一个成功                           PASS   结果=['9ffd3d2e6b97', None]
+  O13a 两个同时占槽的请求只有一个成功                           PASS   结果=['3eabe7455225', None]
   O13b 工作进程 queued->running 只能成功一次               PASS
   O13c 写 pid 不会把 running 打回 queued               PASS   running
   O13d 被判中断后，旧工作进程改不回 done                       PASS   finish=False 状态=interrupted
@@ -52,9 +52,9 @@ O15 只承认写完整的记录
 
 O16 接口层：运行中读取、半条记录、并发启动
   O16a 两个同时到达的启动请求只有一个成功                         PASS   [409, 200]
-  O16b 运行中读取没有 5xx，series 始终可用                   PASS   18 次请求；5xx=[] series异常=[] year异常=[]
+  O16b 运行中读取没有 5xx，series 始终可用                   PASS   16 次请求；5xx=[] series异常=[] year异常=[]
   O16b2 第 0 年未写出前的 404 是如实回答，写出后必为 200           PASS   算完前出现 3 次合理 404
-  O16c 至少读到过一次“运行中”的状态                           PASS   5 次
+  O16c 至少读到过一次“运行中”的状态                           PASS   4 次
   O16d 尾部半条不会让 series 报 500                      PASS   code=200
   O16e 完整年份照读，半条那年 404                           PASS   200/404
   O16f 列表里的已完成年数不含半条                             PASS   300 vs 300
@@ -68,8 +68,8 @@ O19 任务槽回收（进程没了就不该继续占着槽）
   O19e 活着的工作进程不会被误回收                             PASS   running
   O19f 进程被杀之后才回收                                 PASS   interrupted
   O19g0 前提：槽确实被一条死记录占着                           PASS
-[observer] 回收了 1 个无人执行的任务槽：[{'run_id': '6d88bce44bc2', 'from': 'running', 'why': '工作进程已不在（被结束或异常退出）'}]
-  O19g 接口层：死记录被回收后新运行能启动                         PASS   200 {'run_id': 'dc5c7f6d44c5', 'status': 'queued'}
+[observer] 回收了 1 个无人执行的任务槽：[{'run_id': '7ee5f59a15ab', 'from': 'running', 'why': '工作进程已不在（被结束或异常退出）'}]
+  O19g 接口层：死记录被回收后新运行能启动                         PASS   200 {'run_id': '47957844f58e', 'status': 'queued'}
   O19h 新运行正常跑完                                   PASS   done
 
 O20 状态转换表：终态不可逆
@@ -90,7 +90,7 @@ O24 EXP-04 引擎接入观察台（信息交换事件可展示）
   O24b exp03 引擎不接受 SHARE_M                       PASS   {'detail': '引擎 exp03 没有 SHARE_M 这个参数，要用同格信息交换请选 exp04'}
   O24c 未登记的引擎被拒                                  PASS
   O24d SHARE_M 越界被拒                              PASS
-  O24e exp04 运行可以启动                              PASS   {'run_id': '74b5a2187c56', 'status': 'queued'}
+  O24e exp04 运行可以启动                              PASS   {'run_id': '2c60f0973cb0', 'status': 'queued'}
   O24f exp04 运行跑完                                PASS   done 
   O24g 年份记录里带信息账（share 段）                        PASS   ['t', 'stock', 'bands', 'cum', 'year', 'agg', 'integrity', 'events', 'share']
   O24h 信息账恒等误差为 0                                PASS   0
@@ -104,7 +104,7 @@ O25 EXP-05 引擎接入观察台（食物援助事件可展示）
   O25b exp04 引擎不接受 AID_M                         PASS   {'detail': '引擎 exp04 没有 AID_M 这个参数，要用同格食物援助请选 exp05'}
   O25c AID_M 越界被拒                                PASS
   O25d AID_M 非整数被拒（422）                          PASS
-  O25e exp05 运行可以启动                              PASS   {'run_id': '22e22730a43f', 'status': 'queued'}
+  O25e exp05 运行可以启动                              PASS   {'run_id': '227ddc004f8f', 'status': 'queued'}
   O25f exp05 运行跑完                                PASS   done 
   O25g 台账记下了 aid_m 与引擎                           PASS
       第 73 年的一条援助事件：群体-6876D3 向 群体-97AC8E 援助了 1379136 kcal（1.89 人年口粮），地点在第 14 号格
@@ -120,20 +120,20 @@ O26 EXP-06 引擎接入观察台（援助记忆与优先回助可展示）
   O26b exp05 引擎不接受 RECIP_M                       PASS   {'detail': '引擎 exp05 没有 RECIP_M 这个参数，要用优先回助请选 exp06'}
   O26c RECIP_M 越界被拒                              PASS
   O26d RECIP_M 非整数被拒（422）                        PASS
-  O26e exp06 运行可以启动                              PASS   {'run_id': '1a6bcb644235', 'status': 'queued'}
+  O26e exp06 运行可以启动                              PASS   {'run_id': '50b6beb01611', 'status': 'queued'}
   O26f exp06 运行跑完                                PASS   done 
   O26g 台账记下了 recip_m                             PASS
       第 73 年的一条援助事件：群体-6876D3 向 群体-97AC8E 援助了 1379136 kcal（1.89 人年口粮），地点在第 14 号格
   O26h 援助事件带上了阶段与回助标记                            PASS   ['band', 'cell', 'donor', 'id', 'kcal', 'person_years', 'phase', 'receiver', 'repay', 'source', 'text', 'type', 'unrecorded', 'year']
   O26i 年份记录带 recip 段（含'分配改变'与'回助'两个不同计数）         PASS   {'budget': 5043224, 'kcal': 0, 'transfers': 0, 'changed': 0, 'repay_kcal': 0, 'repay_trans
   O26j 记忆账恒等误差为 0                                PASS
-      第 73 年 群体-97AC8E 的关系记录：75274360… {'kcal': 1379136, 'last_year': 72}
+      第 73 年 群体-97AC8E 的关系记录：75274360… {'kcal': 1379136, 'last_year': 72, 'last_year_display': 73, 'last_event_id': 't73-aid-2', 'display_source': '本次运行的援助事件 t73-aid-2'}
   O26k 关系记录可展示（谁以前帮过我、累计多少、最近哪一年）                PASS
   O26l exp03 的记录里没有 recip 段、群体也没有 aid_memory（前端要容忍缺席） PASS
 
 O27 供界面直接使用的数据：稳定 id / 回助依据 / 分配对照 / 能力表 / 对照案例
   O27a 引擎能力表给出范围/默认/单位                           PASS   {'label': '优先回助的预算比例', 'unit': '‰（千分之一）', 'min': 0, 'max': 1000, 'default': 0, '
-  O27b 契约版本升到 obs-1.5                            PASS   obs-1.5
+  O27b 契约版本升到 obs-1.6                            PASS   obs-1.6
   O27c 两条开/关优先回助的对照案例已装入且标为预生成                   PASS   [('preset-exp06-recip0', 0), ('preset-exp06-recip1000', 1000)]
   O27c2 预置案例记的是自己引擎的 sha256，不是默认引擎的              PASS   [('preset-exp06-recip0', '43c9338551a2'), ('preset-exp06-recip1000', '43c9338551a2')]
   O27d 单条运行返回实际引擎/参数/代码版本/状态                     PASS   ['seed', 'years', 'sigma_m', 'move_mort_m', 'share_m', 'aid_m', 'recip
@@ -146,6 +146,49 @@ O27 供界面直接使用的数据：稳定 id / 回助依据 / 分配对照 / �
       第 125 年第 0 号格：开优先 1 笔 / 关优先 2 笔
   O27i 分配对照可用，且关闭优先时恒不改变分配                       PASS   2/0
   O27j 对照的两条都确实发生过回助（所以'有往来'本身不能作为判据）            PASS
+
+O28 截至某年的群体卷宗 / 援助关系汇总：不许把未来混进来
+  O28a 省略 at_year = 全档案，并标明口径                    PASS   {'mode': 'full', 'at_year': None, 'years_recorded': 150, 'no
+  O28b 关系汇总与逐笔记录完全对得上（kcal / 笔数 / 优先笔数 / 回助笔数）   PASS   6 条边 vs 重算 6 条
+  O28c 汇总的事件 id 都能在逐年记录里找到                       PASS   19 笔
+  O28d 节点 id 是字符串，64 位 id 不被截断/转成数字              PASS   ['10431967184297706310', '10667665986038929304']
+  O28e 截至第 83 年的汇总 == 前 83 年逐笔重算                 PASS   2 vs 2
+  O28f 截至某年的汇总里没有该年之后的事件（未来不泄漏）                  PASS   []
+  O28g 截断后的总量确实小于全档案（不是原样返回）                     PASS   2 < 19
+  O28h 前提：这个群体在第 124 年之后确实又迁过（否则本组测试不承重）         PASS   [[125, 1], [131, 0]]
+  O28i 回放到第 124 年时，档案里没有 124 年之后的迁移              PASS   []
+  O28j 年界：at_year=125 含第 125 年那一步，不含更晚的          PASS   [[84, 0], [125, 1]]
+  O28k 省略参数仍是全档案（老用法不变）                          PASS
+  O28l 截至第 N 年的卷宗里没有 N 年之后的出生 / 分裂 / 消失 / 援助     PASS   []
+  O28m 灭绝年份的截断                                   未覆盖   这条预置案例里没有群体消失，前提缺失
+  O28n 记忆的展示年份指向真实的那一笔援助，且不晚于截断年                 PASS   13 条记忆；越界 []
+      第 83 年 90773107… 记得 75678561…：内部 tick last_year=82 → 展示年份 83（事件 t83-aid-3）
+  O28o 关系边上没有把'分配被改变'算成某一对的往来                    PASS
+  O28p 诊断计数与回助笔数是两个数，没有互相顶替                      PASS   changed=2 repay=3
+  O28q 旧引擎（无援助段）的关系汇总是空的，不报错也不编造                 PASS   200
+  O28r 旧引擎的群体卷宗照常读，援助字段如实为空                      PASS   200
+  O28s 越界 400 / 非整数 422 / 不存在 404，都明确回答          PASS   [400, 400, 422, 400, 400, 404, 404]
+  O28t 越界提示写明这次运行到底存了多少年                         PASS   at_year=999 越界：这次运行已保存 0..150 年
+  O28u 群体出生之前查它，如实 404，不返回空壳档案                   PASS   15560402… 第 68 年出生
+  O28v 这些查询是只读的：记录文件与台账一字未改                      PASS
+
+O29 定向场景：消失年份、记录不全的运行、援助发生在记录之外
+  O29a 前提：这份隔离记录里确实有群体消失                         PASS   3
+  O29b 消失那年之前查：写还活着，不预告消失                        PASS
+  O29c 消失那年查：如实写已消失                              PASS
+  O29d 消失之后仍查得到它的历史（不是 404）                      PASS
+  O29e 记录不全的运行：问到没存的年份，明说只存了多少                   PASS   at_year=6 越界：这次运行已保存 0..4 年
+  O29f 存到哪查到哪：第 4 年正常返回                          PASS
+  O29g 内部 tick 与展示年份分开：raw 保留 2，展示写 3 并挂上事件 id   PASS   {'kcal': 300, 'last_year': 2, 'last_year_display': 3, 'last_event_id': 't3-aid-1', 'displa
+  O29h 记录里找不到出处的旧账，如实写未记录，不猜一个年份                 PASS   {'kcal': 999, 'last_year': 0, 'last_year_display': None, 'last_event_id': None, 'display_s
+  O29i 截到第 2 年时，记忆只能指向第 2 年以前的那一笔                PASS   {'kcal': 500, 'last_year': 1, 'last_year_display': 1, 'last_event_id': 't1-aid-0
+  O29j 两个方向各算一条边，不合并成一条无向关系                      PASS   [('18446744073709551557', '9223372036854775783'), ('9223372036854775783', '18446
+  O29k 优先阶段与回助各自计数，来源是事件本身                       PASS   {'recip': 1, 'normal': 0} / {'recip': 0, 'normal': 1}
+  O29l 截到第 2 年只剩先发生的那一条边                         PASS   {'nodes': 3, 'edges': 1, 'transfers': 1, 'kcal': 500}
+  O29m 已消失的群体在截断年之后标为不在世，但仍列在节点里                 PASS
+  O29n 64 位 id 原样返回，没有被当成数字                      PASS
+  O29o recip.changed 记在诊断里，不加到任何一条边上             PASS
+  O29p 同一份历史去掉援助段后照常读：边为 0，卷宗照给，不报错              PASS   {'nodes': 3, 'edges': 0, 'transfers': 0, 'kcal': 0}
 
 O23 进程探测：查不到不等于死了；回收前要比对状态与 pid
   O23a ps 超时 -> 探测结果是未知，不是死亡                     PASS   probe=unknown
@@ -188,6 +231,7 @@ O12 冻结基线未被改动
   O12 exp03/ 与基线 6b6af4f 逐字节相同                   PASS
 
 ================================================================================================
-  通过 123 / 失败 0 / 未覆盖 0（共 123 项）
+  通过 160 / 失败 0 / 未覆盖 1（共 161 项）
   注：未覆盖项**不计入通过**。浏览器与线上部署的验收不在本脚本内，见 README 的验收记录。
 ================================================================================================
+无失败项，但有 1 项未覆盖 —— 不能称为“全部通过”。
