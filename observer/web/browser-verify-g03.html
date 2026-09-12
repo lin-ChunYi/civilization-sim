@@ -60,9 +60,13 @@
     click("#b-play");
     ok("C11 暂停取消回调", O.S.playing === false && O.S.fxTimers.length === 0, "timers=" + O.S.fxTimers.length);
 
-    await O.gotoYear(120);
-    const emptyNote = txt("#dir-mode-note") + txt("#events");
-    ok("C12 无事件年有说明且不补编", /没有可核实事件/.test(emptyNote), emptyNote.slice(0, 120));
+    await O.gotoYear(1);
+    const rec1 = O.S.years.get(O.ykey(exp06.run_id, 1));
+    ok("C12a t1 事件清单确实为空", !!(rec1 && Array.isArray(rec1.events) && rec1.events.length === 0),
+      rec1 && ("n=" + rec1.events.length));
+    const emptyNote = txt("#dir-mode-note") + txt("#events") + txt("#year-summary");
+    ok("C12b 无事件年有说明且不补编", rec1 && rec1.events.length === 0 && /没有可核实事件/.test(emptyNote),
+      emptyNote.slice(0, 160));
 
     await O.gotoYear(125);
     const rec125 = O.S.years.get(O.ykey(exp06.run_id, 125));

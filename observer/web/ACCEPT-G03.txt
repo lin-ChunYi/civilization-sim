@@ -1,0 +1,20 @@
+G03_FIX
+checkpoint: f5fea4b
+fixes: loadBand 口径/年份/请求世代围栏；gotoYear/focusEvent/tickEvents 的 opGen 贯穿 await，失败返回 {ok:false,reason:stale}，上层不当成功。
+
+node --check observer/web/app.js
+node observer/web/director-logic-test.mjs  SUMMARY pass=18 fail=0
+node observer/web/g03-race-test.mjs        SUMMARY pass=12 fail=0
+  OLD loadBand 晚到的 full 覆盖 as_of，轨迹含 125/131（红）
+  NEW loadBand selectedScope=as_of 且无未来轨迹（绿）
+  OLD A125→B0 泄漏 selEvent=t125-share-1 / 旧群体 / selCell=0（红）
+  NEW 返回 stale，B/0 无泄漏（绿）
+  OLD 播放 await 125 时暂停后 t=125、事件重现、timer=1（红）
+  NEW 暂停后 t=124、selEvent=t124-aid-0、镜头不动、timers=0（绿）
+  NEW 切逐年 / 手动改年同理不提交 125
+node observer/web/g03-extra-shots.mjs      SUMMARY pass=10 fail=0
+  空年是 preset-exp06-recip1000 t1：events.length=0、116人、6群体，文案含「没有可核实事件」
+  不把 t120（7条事件）当空年
+
+主控已手工：mode events 下一事件年 t1→4→12；t4-migrate-0 只写 18→10；刷新 t125-share-1 格0；原援助跳 t83-aid-3。
+本轮内存异步调序不是浏览器实测。CDP 截图仍在 screenshots/g03/（空年图已按 t1 重拍）。

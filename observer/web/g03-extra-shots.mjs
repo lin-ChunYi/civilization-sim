@@ -48,10 +48,18 @@ try {
     writeFileSync(join(SHOT, name), Buffer.from(r.result.data, "base64"));
     ok("shot " + name, true, "screenshots/g03/" + name);
   };
-  await ev(`(async function(){var O=window.__obs; await O.openRun('preset-exp06-recip1000'); await O.gotoYear(120); document.getElementById('mode-events').click(); return O.S.t;})()`);
-  await sleep(400);
-  const empty = await ev("document.getElementById('dir-mode-note').innerText");
-  ok("empty-year note", /没有可核实事件|事件年/.test(String(empty || "")), String(empty).slice(0, 120));
+  const emptyMeta = await ev(`(async function(){
+    var O=window.__obs; await O.openRun('preset-exp06-recip1000'); await O.gotoYear(1);
+    document.getElementById('mode-year').click();
+    var rec=O.S.years.get(O.ykey(O.S.run.run_id,1));
+    var n=rec && rec.events ? rec.events.length : -1;
+    var note=(document.getElementById('dir-mode-note')||{}).innerText||'';
+    var evs=(document.getElementById('events')||{}).innerText||'';
+    var sum=(document.getElementById('year-summary')||{}).innerText||'';
+    return {t:O.S.t,n:n,pop:rec&&rec.agg&&rec.agg.pop,bands:rec&&rec.agg&&rec.agg.bands,blob:note+evs+sum};
+  })()`);
+  ok("empty-year is t1 with 0 events", !!(emptyMeta && emptyMeta.t === 1 && emptyMeta.n === 0), JSON.stringify(emptyMeta));
+  ok("empty-year copy", !!(emptyMeta && emptyMeta.n === 0 && /没有可核实事件/.test(emptyMeta.blob || "")), (emptyMeta && emptyMeta.blob || "").slice(0, 160));
   await shot("desktop-empty-year.png");
 
   const aid = await ev(`(async function(){
@@ -94,7 +102,7 @@ try {
 
   await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await sleep(400);
-  await ev("(async function(){var O=window.__obs; await O.gotoYear(120); document.getElementById('mode-events').click(); return true;})()");
+  await ev("(async function(){var O=window.__obs; await O.gotoYear(1); document.getElementById('mode-year').click(); return O.S.years.get(O.ykey(O.S.run.run_id,1)).events.length;})()");
   await sleep(300);
   await shot("mobile-390-empty-year.png");
   ws.close();

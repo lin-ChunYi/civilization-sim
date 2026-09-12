@@ -26,7 +26,30 @@ const S = {
   fxRaf: null,
   _mapYear: null,
   _mapRun: null,
+  opGen: 0,
+  bandReqGen: 0,
+  bandCache: new Map(),
 };
+function bumpOp() {
+  S.opGen += 1;
+  return S.opGen;
+}
+function opAlive(op) {
+  return op === S.opGen;
+}
+function bandCacheKey(runId, bandId, scope, year) {
+  return String(runId) + "|" + String(bandId) + "|" + scope + "|" +
+    (scope === "full" ? "full" : String(year));
+}
+function bandAccept(epoch, runId, bandId, scope, year, req) {
+  if (stale(epoch, runId)) return false;
+  if (S.selBand !== bandId) return false;
+  const nowScope = S.bandScope === "full" ? "full" : "as_of";
+  if (nowScope !== scope) return false;
+  if (scope !== "full" && S.t !== year) return false;
+  if (S.bandReqGen !== req) return false;
+  return true;
+}
 const ykey = (runId, t) => `${runId}|${t}`;
 const bump = () => ++S.epoch;
 const stale = (myEpoch, myRun) =>
@@ -1128,39 +1151,59 @@ function renderSide() {
   loadBand(b.id);
 }
 
+function applyBandDossier(d) {
+  S.band = d;
+  const box = $("bandmore"); if (!box) return;
+  const traj = (d.trajectory || []).map((p) => `第${p[0]}年→${p[1]}号格`).join("，");
+  const gone = d.extinct_at !== null
+    ? `（第 ${d.extinct_at} 年被移除，当年不在地图上）` : "";
+  const scope = d.history_scope || {};
+  const scopeLine = scope.mode === "as_of_year"
+    ? ("档案口径：截至第 " + scope.at_year + " 年。" + (scope.note ? " " + scope.note : ""))
+    : ("档案口径：全档案。" + (scope.note ? " " + scope.note : "含该年之后发生的事。"));
+  box.innerHTML = `<div class="muted">${esc(scopeLine)}</div>
+    <div><b>来源</b>：${esc(d.origin || "")}</div>
+    <div><b>存续</b>：第 ${d.first_seen} 年 至 第 ${d.last_seen} 年 ${gone}</div>
+    <div><b>分裂出</b>：${(d.children && d.children.length)
+      ? d.children.map((p) => `第${p[0]}年 ${esc(String(p[1]).slice(0, 8))}…`).join("，") : "无记录"}</div>
+    <div><b>迁移轨迹</b>：${esc(traj || "无记录")}</div>
+    <div style="margin-top:4px">${esc(d.source || "")}</div>`;
+}
+function bandScopeMatches(d, scope, year) {
+  const hs = d && d.history_scope;
+  if (!hs || !hs.mode) return true;
+  if (scope === "full") return hs.mode === "full";
+  return hs.mode === "as_of_year" && (hs.at_year == null || hs.at_year === year);
+}
 async function loadBand(id) {
-  if (!S.run) return;
+  if (!S.run) return { ok: false, reason: "no-run" };
   const myRun = S.run.run_id, myEpoch = S.epoch, myBand = id;
-  const full = S.bandScope === "full";
-  const q = full ? "" : ("?at_year=" + S.t);
+  const myScope = S.bandScope === "full" ? "full" : "as_of";
+  const myYear = S.t;
+  const myReq = ++S.bandReqGen;
+  const key = bandCacheKey(myRun, myBand, myScope, myYear);
+  const accept = () => bandAccept(myEpoch, myRun, myBand, myScope, myYear, myReq);
+  const cached = S.bandCache.get(key);
+  if (cached && accept()) applyBandDossier(cached);
+  const q = myScope === "full" ? "" : ("?at_year=" + myYear);
   try {
     const d = await api(`/api/runs/${myRun}/band/${id}` + q);
-    if (stale(myEpoch, myRun) || S.selBand !== myBand) return;
-    S.band = d;
-    const box = $("bandmore"); if (!box) return;
-    const traj = (d.trajectory || []).map((p) => `第${p[0]}年→${p[1]}号格`).join("，");
-    const gone = d.extinct_at !== null
-      ? `（第 ${d.extinct_at} 年被移除，当年不在地图上）` : "";
-    const scope = d.history_scope || {};
-    const scopeLine = scope.mode === "as_of_year"
-      ? ("档案口径：截至第 " + scope.at_year + " 年。" + (scope.note ? " " + scope.note : ""))
-      : ("档案口径：全档案。" + (scope.note ? " " + scope.note : "含该年之后发生的事。"));
-    box.innerHTML = `<div class="muted">${esc(scopeLine)}</div>
-      <div><b>来源</b>：${esc(d.origin)}</div>
-      <div><b>存续</b>：第 ${d.first_seen} 年 至 第 ${d.last_seen} 年 ${gone}</div>
-      <div><b>分裂出</b>：${(d.children && d.children.length)
-        ? d.children.map((p) => `第${p[0]}年 ${esc(String(p[1]).slice(0, 8))}…`).join("，") : "无记录"}</div>
-      <div><b>迁移轨迹</b>：${esc(traj || "无记录")}</div>
-      <div style="margin-top:4px">${esc(d.source || "")}</div>`;
+    if (!accept()) return { ok: false, reason: "stale" };
+    if (!bandScopeMatches(d, myScope, myYear)) return { ok: false, reason: "scope-mismatch" };
+    S.bandCache.set(key, d);
+    if (!accept()) return { ok: false, reason: "stale" };
+    applyBandDossier(d);
+    return { ok: true };
   } catch (e) {
-    if (stale(myEpoch, myRun) || S.selBand !== myBand) return;
+    if (!accept()) return { ok: false, reason: "stale" };
     const box = $("bandmore");
-    if (!box) return;
-    if (e.status === 404 && !full) {
-      box.innerHTML = `<span class="muted">截至第 ${S.t} 年的记录里没有这个群体。不把它画在当年地图上，也不用后来的位置补。</span>`;
+    if (!box) return { ok: false, reason: e.message };
+    if (e.status === 404 && myScope !== "full") {
+      box.innerHTML = `<span class="muted">截至第 ${myYear} 年的记录里没有这个群体。不把它画在当年地图上，也不用后来的位置补。</span>`;
     } else {
       box.innerHTML = `<span class="err">轨迹读取失败：${esc(e.message)}</span>`;
     }
+    return { ok: false, reason: e.message };
   }
 }
 
@@ -1238,52 +1281,57 @@ function commitYear(t) {
   });
   renderDirectorChrome();
 }
+function yearNavAlive(myEpoch, myRun, myOp) {
+  return opAlive(myOp) && !stale(myEpoch, myRun);
+}
 async function gotoYear(t, opts) {
   opts = opts || {};
-  if (!S.run) return;
+  if (!S.run) return { ok: false, reason: "no-run" };
+  const myOp = opts.opGen != null ? opts.opGen : S.opGen;
+  if (!opAlive(myOp)) return { ok: false, reason: "stale" };
   const myRun = S.run.run_id;
   const myEpoch = bump();
   t = Math.max(0, Math.min(t, maxT()));
-  cancelFx({ keepStatic: !!opts.keepEvent && !!S.selEvent });
-  if (!opts.keepEvent && S.selEvent) {
-    const ey = DirectorLogic.yearFromEventId(S.selEvent);
-    if (ey != null && ey !== t) {
-      S.selEvent = null;
+  if (!yearNavAlive(myEpoch, myRun, myOp)) return { ok: false, reason: "stale" };
+  const finish = (hadRec) => {
+    if (!yearNavAlive(myEpoch, myRun, myOp)) return { ok: false, reason: "stale" };
+    cancelFx({ keepStatic: !!opts.keepEvent && !!S.selEvent });
+    if (!opts.keepEvent && S.selEvent) {
+      const ey = DirectorLogic.yearFromEventId(S.selEvent);
+      if (ey != null && ey !== t) S.selEvent = null;
     }
-  }
-  if (S.years.has(ykey(myRun, t))) {
-    if (stale(myEpoch, myRun)) return;
     commitYear(t);
-    renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents(); renderTech();
+    renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents();
+    if (hadRec) renderTech();
     if (!opts.quiet) renderCharts();
     if (S.evScope === "until") prefetchYears(myRun, t);
-    return;
+    return { ok: true, t: t };
+  };
+  if (S.years.has(ykey(myRun, t))) {
+    return finish(true);
   }
   setYearLoadOverlay(t, true);
   let rec;
   try { rec = await api(`/api/runs/${myRun}/year/${t}`); }
   catch (e) {
-    if (stale(myEpoch, myRun)) return;
+    if (!yearNavAlive(myEpoch, myRun, myOp)) return { ok: false, reason: "stale" };
     const pending = isPendingYearError(e, t);
     S.yearWait = { runId: myRun, t: t, pending: pending, status: e.status, message: e.message };
     commitYear(t);
     if (!pending) flash("读取第 " + t + " 年失败：" + e.message, true);
     renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents();
-    return;
+    return { ok: false, reason: e.message };
   }
   S.years.set(ykey(myRun, t), rec);
   delete S.yearMiss[yearMissKey(myRun, t)];
-  if (stale(myEpoch, myRun)) return;
-  commitYear(t);
-  renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents(); renderTech();
-  if (!opts.quiet) renderCharts();
-  if (S.evScope === "until") prefetchYears(myRun, t);
+  return finish(true);
 }
 function playDelay() {
   return Math.max(80, (S.playMode === "events" ? 900 : 600) / Math.max(S.speed || 1, 0.25));
 }
 function tick() {
   if (!S.playing) return;
+  const myOp = S.opGen;
   if (S.playMode === "events") {
     tickEvents();
     return;
@@ -1295,12 +1343,16 @@ function tick() {
     }
     setPlaying(false); return;
   }
-  gotoYear(S.t + 1, { quiet: true }).then(() => {
+  gotoYear(S.t + 1, { quiet: true, opGen: myOp }).then((gy) => {
+    if (!opAlive(myOp) || !gy || !gy.ok) return;
     renderCharts();
+    if (!opAlive(myOp) || !S.playing) return;
     S.timer = setTimeout(tick, playDelay());
   });
 }
 function setPlaying(v) {
+  const was = S.playing;
+  if (!v && was) bumpOp();
   S.playing = v;
   if ($("b-play")) {
     $("b-play").textContent = v ? "⏸ 暂停"
@@ -1312,6 +1364,7 @@ function setPlaying(v) {
       : "回放只读取已保存的记录，不会重新计算世界。";
   }
   clearTimeout(S.timer);
+  S.timer = null;
   if (!v) cancelFx({ keepStatic: !!S.selEvent });
   if (v) tick();
 }
@@ -1793,6 +1846,7 @@ function setPlayMode(mode, opts) {
     return;
   }
   if (!opts.keepPlaying) setPlaying(false);
+  bumpOp();
   cancelFx({ keepStatic: !!S.selEvent });
   S.playMode = next;
   setHash({ mode: next === "events" ? "events" : "" });
@@ -1805,15 +1859,18 @@ function setPlayMode(mode, opts) {
 }
 async function gotoEventYear(t) {
   setPlaying(false);
-  await gotoYear(t);
+  bumpOp();
+  const myOp = S.opGen;
+  const gy = await gotoYear(t, { opGen: myOp });
+  if (!opAlive(myOp) || !gy || !gy.ok) return { ok: false, reason: "stale" };
   const rec = recNow();
   if (rec && rec.events && rec.events.length) {
-    await focusEvent(Object.assign({}, rec.events[0], { t: t, _i: 0 }));
-  } else {
-    S.selEvent = null;
-    renderDirectorCard();
-    renderDirectorChrome();
+    return focusEvent(Object.assign({}, rec.events[0], { t: t, _i: 0 }), { opGen: myOp });
   }
+  S.selEvent = null;
+  renderDirectorCard();
+  renderDirectorChrome();
+  return { ok: true, t: t };
 }
 async function stepEventYear(dir) {
   const years = DirectorLogic.eventYearsFromSeries(S.series);
@@ -1825,12 +1882,13 @@ async function stepEventYear(dir) {
       runStatus: S.run ? S.run.status : "", rec: rec, t: S.t,
     });
     if ($("tl-note")) $("tl-note").textContent = st.text || "没有更多有记录的事件年。";
-    return;
+    return { ok: false, reason: "no-event-year" };
   }
-  await gotoEventYear(t);
+  return gotoEventYear(t);
 }
 async function tickEvents() {
   if (!S.playing) return;
+  const myOp = S.opGen;
   const years = DirectorLogic.eventYearsFromSeries(S.series);
   const rec0 = recNow();
   const st = DirectorLogic.eventModeStatus({
@@ -1847,12 +1905,16 @@ async function tickEvents() {
     const items = rec.events.map((e, i) => Object.assign({}, e, { t: S.t, _i: i }));
     const idx = items.findIndex((e) => DirectorLogic.eventKey(e, S.t, e._i) === S.selEvent);
     if (idx < 0) {
-      await focusEvent(items[0], { fromPlay: true, skipMap: mapIsCurrent() });
+      const fe = await focusEvent(items[0], { fromPlay: true, skipMap: mapIsCurrent(), opGen: myOp });
+      if (!opAlive(myOp) || !fe || !fe.ok) return;
+      if (!S.playing || !opAlive(myOp)) return;
       S.timer = setTimeout(tick, playDelay());
       return;
     }
     if (idx + 1 < items.length) {
-      await focusEvent(items[idx + 1], { fromPlay: true, skipMap: mapIsCurrent() });
+      const fe = await focusEvent(items[idx + 1], { fromPlay: true, skipMap: mapIsCurrent(), opGen: myOp });
+      if (!opAlive(myOp) || !fe || !fe.ok) return;
+      if (!S.playing || !opAlive(myOp)) return;
       S.timer = setTimeout(tick, playDelay());
       return;
     }
@@ -1867,33 +1929,42 @@ async function tickEvents() {
     setPlaying(false);
     return;
   }
-  await gotoYear(ny, { quiet: true });
+  const gy = await gotoYear(ny, { quiet: true, opGen: myOp });
+  if (!opAlive(myOp) || !gy || !gy.ok) return;
   const rec2 = recNow();
   if (!rec2) {
     if ($("tl-note")) $("tl-note").textContent = "第 " + ny + " 年的记录尚未加载，不把空清单当成 0 条事件。";
-    S.timer = setTimeout(tick, playDelay());
     return;
   }
   if (!rec2.events || !rec2.events.length) {
     if ($("tl-note")) $("tl-note").textContent = "第 " + ny + " 年曲线记有事件，但事件清单缺失。不补编。";
-    S.timer = setTimeout(tick, playDelay());
     return;
   }
-  await focusEvent(Object.assign({}, rec2.events[0], { t: ny, _i: 0 }), { fromPlay: true });
+  const fe = await focusEvent(Object.assign({}, rec2.events[0], { t: ny, _i: 0 }), { fromPlay: true, opGen: myOp });
+  if (!opAlive(myOp) || !fe || !fe.ok) return;
+  if (!S.playing || !opAlive(myOp)) return;
   S.timer = setTimeout(tick, playDelay());
 }
 async function focusEvent(ev, opts) {
   opts = opts || {};
-  if (!ev) return;
+  if (!ev) return { ok: false, reason: "no-event" };
   if (!opts.fromPlay && !opts.fromHash) setPlaying(false);
+  const myOp = opts.opGen != null ? opts.opGen : S.opGen;
+  if (!opAlive(myOp)) return { ok: false, reason: "stale" };
+  const myRun = S.run ? S.run.run_id : null;
   showTab("world");
   const t = ev.t != null ? ev.t : ev.year;
   cancelFx();
+  const myFx = S.fxGen;
   if (t != null && t !== S.t) {
-    await gotoYear(t, { quiet: opts.quiet, keepEvent: true });
+    const gy = await gotoYear(t, { quiet: opts.quiet, keepEvent: true, opGen: myOp });
+    if (!opAlive(myOp) || !gy || !gy.ok) return { ok: false, reason: "stale" };
   }
+  if (!opAlive(myOp)) return { ok: false, reason: "stale" };
+  if (!S.run || (myRun && S.run.run_id !== myRun)) return { ok: false, reason: "stale" };
+  if (t != null && S.t !== t) return { ok: false, reason: "stale" };
   const rec = recNow();
-  const resolved = (rec && rec.events && t === S.t)
+  const resolved = (rec && rec.events)
     ? findEventByKey(DirectorLogic.eventKey(ev, t, ev._i), S.t) || Object.assign({}, ev, { t: S.t })
     : Object.assign({}, ev, { t: t });
   S.selEvent = DirectorLogic.eventKey(resolved, resolved.t, resolved._i);
@@ -1921,7 +1992,8 @@ async function focusEvent(ev, opts) {
   renderDirectorCard();
   const evNode = document.querySelector('#events .ev[data-eid="' + S.selEvent + '"]');
   if (evNode && evNode.scrollIntoView) evNode.scrollIntoView({ block: "nearest" });
-  if (focus.locate && focus.cells.length) panToCell(focus.cells[0], S.fxGen);
+  if (focus.locate && focus.cells.length) panToCell(focus.cells[0], myFx);
+  return { ok: true };
 }
 
 function jumpToEvent(ev) {
@@ -1970,16 +2042,20 @@ function renderRuns() {
 }
 
 async function openRun(id) {
-  const myEpoch = bump();
   setPlaying(false);
+  bumpOp();
+  const myOp = S.opGen;
+  const myEpoch = bump();
   cancelFx();
   S.selEvent = null;
+  S.bandCache = new Map();
+  S.bandReqGen += 1;
   let run, ser;
   try {
     run = await api(`/api/runs/${id}`);
-    if (S.epoch !== myEpoch) return;
+    if (S.epoch !== myEpoch || !opAlive(myOp)) return { ok: false, reason: "stale" };
     ser = await api(`/api/runs/${id}/series`);
-    if (S.epoch !== myEpoch) return;
+    if (S.epoch !== myEpoch || !opAlive(myOp)) return { ok: false, reason: "stale" };
   } catch (e) {
     if (S.epoch === myEpoch) flash("打开运行失败：" + e.message, true);
     return;
@@ -2003,7 +2079,8 @@ async function openRun(id) {
   });
   renderOverview(); renderMap(); renderSide(); renderEvents(); renderStatus();
   renderDirectorCard(); renderDirectorChrome();
-  await gotoYear(0);
+  const gy = await gotoYear(0, { opGen: myOp });
+  if (!opAlive(myOp) || !gy || !gy.ok) return { ok: false, reason: "stale" };
   renderRuns(); renderCharts(); renderStatus(); renderOverview();
   prefetchYears(id, maxT());
 }
@@ -2140,19 +2217,22 @@ async function boot() {
   $("b-play").addEventListener("click", () => setPlaying(!S.playing));
   $("b-next").addEventListener("click", () => {
     setPlaying(false);
+    bumpOp();
     if (S.playMode === "events") stepEventYear(1);
-    else gotoYear(S.t + 1);
+    else gotoYear(S.t + 1, { opGen: S.opGen });
   });
   $("b-prev").addEventListener("click", () => {
     setPlaying(false);
+    bumpOp();
     if (S.playMode === "events") stepEventYear(-1);
-    else gotoYear(S.t - 1);
+    else gotoYear(S.t - 1, { opGen: S.opGen });
   });
   $("b-home").addEventListener("click", () => {
     setPlaying(false);
+    bumpOp();
     cancelFx();
     S.selEvent = null;
-    gotoYear(0);
+    gotoYear(0, { opGen: S.opGen });
   });
   if ($("b-prev-ev")) $("b-prev-ev").addEventListener("click", () => stepEventYear(-1));
   if ($("b-next-ev")) $("b-next-ev").addEventListener("click", () => stepEventYear(1));
@@ -2168,7 +2248,11 @@ async function boot() {
     renderSide();
   });
   $("speed").addEventListener("change", (e) => { S.speed = +e.target.value; });
-  $("scrub").addEventListener("input", (e) => { setPlaying(false); gotoYear(+e.target.value); });
+  $("scrub").addEventListener("input", (e) => {
+    setPlaying(false);
+    bumpOp();
+    gotoYear(+e.target.value, { opGen: S.opGen });
+  });
   $("b-start").addEventListener("click", startRun);
   if ($("recip-off")) $("recip-off").addEventListener("click", () => { $("f-recip").value = "0"; });
   if ($("recip-on")) $("recip-on").addEventListener("click", () => { $("f-recip").value = "1000"; });
@@ -2189,13 +2273,13 @@ async function boot() {
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") return;
     if (el && el.isContentEditable) return;
     if (e.key === "ArrowLeft") {
-      e.preventDefault(); setPlaying(false);
-      if (S.playMode === "events") stepEventYear(-1); else gotoYear(S.t - 1);
+      e.preventDefault(); setPlaying(false); bumpOp();
+      if (S.playMode === "events") stepEventYear(-1); else gotoYear(S.t - 1, { opGen: S.opGen });
     } else if (e.key === "ArrowRight") {
-      e.preventDefault(); setPlaying(false);
-      if (S.playMode === "events") stepEventYear(1); else gotoYear(S.t + 1);
+      e.preventDefault(); setPlaying(false); bumpOp();
+      if (S.playMode === "events") stepEventYear(1); else gotoYear(S.t + 1, { opGen: S.opGen });
     } else if (e.key === "Home") {
-      e.preventDefault(); setPlaying(false); cancelFx(); S.selEvent = null; gotoYear(0);
+      e.preventDefault(); setPlaying(false); bumpOp(); cancelFx(); S.selEvent = null; gotoYear(0, { opGen: S.opGen });
     } else if (e.key === " " || e.code === "Space") { e.preventDefault(); setPlaying(!S.playing); }
   });
   $("ev-scope").addEventListener("click", (e) => {
@@ -2430,7 +2514,8 @@ async function startRun() {
 }
 
 window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot, startRun, setLayer,
-  setPlayMode, focusEvent, cancelFx, loadBand, gotoEventYear, stepEventYear, findEventByKey };
+  setPlayMode, focusEvent, cancelFx, loadBand, gotoEventYear, stepEventYear, findEventByKey,
+  bumpOp, opAlive, bandAccept, bandCacheKey, applyBandDossier, setPlaying, tickEvents, tick };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {
