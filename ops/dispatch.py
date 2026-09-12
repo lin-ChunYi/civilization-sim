@@ -819,6 +819,43 @@ def find_by_token(token):
     return out
 
 
+def claim_candidate(job, pid):
+    """把一个候选 pid **确认**成这次派工的进程。返回 ('claimed' | 'gone' | 'unknown', 说明)。
+
+    这是认领路径上**唯一**写 `cli_pid` / `cli_birth` 的地方 —— 两个入口共用同一份判定，
+    免得各写一份、各漏一处。（`launch_cli` 与 `adopt_cli` 的身份是当场产生的，不走这里；
+    `adopt_cli` 的"只观察、不发信号"规则不受影响。）
+
+    关键在于：`ps -ax` 扫出来的那一行只是**找到人**，不等于**现在还是他**。
+    进程表扫完到这里之间，那个 pid 完全可能已经变成别的命令（真实观察到过：
+    扫描时是 CLI，再读一次已经是 `tail`）。所以这里**重新读一次**，
+    并拿**这一次读到的行**去核身份：
+
+      * 读不到（None）      -> gone：候选已经没了，不认领、不给任何权限；
+      * 读不了（unknown）   -> unknown：证实不了，不认领；
+      * 读到了但对不上      -> gone：那个 pid 现在是别人的，**绝不写 pid/birth**；
+      * 读到了且对得上      -> 才写 `cli_pid`；`cli_birth` 只在原来为空时补记，
+                             而且记的就是刚刚核验过的那一行。已记录的出生身份不许被洗。
+    """
+    line = proc_line(pid)
+    if line is None:
+        return 'gone', 'candidate pid %d is no longer running; not claimed' % pid
+    if line == 'unknown':
+        return 'unknown', ('candidate pid %d cannot be verified right now (ps unavailable / '
+                           'permission denied); not claimed' % pid)
+    verdict = cli_identity(job, line)
+    if verdict == 'mismatch':
+        return 'gone', ('candidate pid %d no longer matches this run\'s identity (it is a '
+                        'different command now); not claimed, no signal rights' % pid)
+    if verdict != 'match':
+        return 'unknown', ('candidate pid %d cannot be verified against a recorded identity; '
+                           'not claimed' % pid)
+    job['cli_pid'] = pid
+    if not (job.get('cli_birth') or '').strip():
+        job['cli_birth'] = line          # 记的就是刚核验过的那一行
+    return 'claimed', 'claimed pid %d after re-verifying its identity' % pid
+
+
 def resolve_cli(job):
     """认领落盘了、pid 还没写回来时，把"到底怎么回事"查清楚。
 
@@ -841,13 +878,25 @@ def resolve_cli(job):
         return 'unknown', ('more than one process matches this launch identity; refusing to '
                            'claim any of them')
     if len(real) == 1:
-        pid, _cmd = real[0]
-        line = proc_line(pid)
-        job['cli_pid'] = pid
-        # **绝不覆盖已经记下的出生身份** —— 那会把别的进程洗成自己的。
-        if not (job.get('cli_birth') or '').strip() and line not in (None, 'unknown'):
-            job['cli_birth'] = line
-        return 'alive', 'reclaimed pid %d after verifying the launch identity' % pid
+        outcome, why = claim_candidate(job, real[0][0])     # 共用的候选确认
+        if outcome == 'claimed':
+            return 'alive', why
+        if outcome == 'unknown':
+            return 'unknown', why
+        # 候选失效（已经变成别的命令，或已经没了）：不给信号权限，也不自动重派，
+        # 继续按日志判"确实跑过并结束了"还是"根本没有启动痕迹"。
+        found = [c for c in found if c[0] != real[0][0]]
+        decoys = len(found)
+        text, _ = journal_text(job)
+        tail = ' ' + why
+        if text.strip():
+            return 'gone', ('no live process matches this launch identity, but the journal has '
+                            'output: the process did run and is no longer in the process '
+                            'table.' + tail)
+        return 'no_launch_record', ('no pid, no process matching the launch identity and no '
+                                    'journal output: we cannot tell whether the CLI ever '
+                                    'started. Not treating this as dead, not relaunching.'
+                                    + tail)
     decoys = len(found)
     text, _ = journal_text(job)
     decoy_note = ('' if not decoys else
@@ -907,8 +956,9 @@ def launch_cli(job, root, queue):
         except OSError:
             pass
     _CLI_PROCS[job['task_id']] = proc
-    job['cli_pid'] = proc.pid
-    job['cli_birth'] = proc_line(proc.pid) if proc_line(proc.pid) != 'unknown' else ''
+    job['cli_pid'] = proc.pid                  # 自己 fork 出来的，pid 本身就是身份
+    born = proc_line(proc.pid)                 # 只读一次：两次读可能读到不同的东西
+    job['cli_birth'] = '' if born in (None, 'unknown') else born
     job['receipt_state'] = 'cli_running'
     job['receipt_detail'] = 'launched pid %s (%s session)' % (proc.pid, job['cli_session_mode'])
     atomic(root / 'queue.json', queue)
@@ -1361,15 +1411,11 @@ def cli_reclaim(job, root, queue):
         return
     real = [(pid, cmd) for pid, cmd in found if cli_command_matches(job, cmd)]
     if len(real) == 1:
-        pid, _cmd = real[0]
-        line = proc_line(pid)
-        birth = (job.get('cli_birth') or '').strip()
-        if birth and line not in (None, 'unknown') and line.strip() != birth:
-            return          # 出生身份对不上：那不是我们的进程，**绝不改写 cli_birth**
-        job['cli_pid'] = pid
-        if not birth and line not in (None, 'unknown'):
-            job['cli_birth'] = line
-        job['receipt_detail'] = 'reclaimed pid %d after verifying the launch identity' % pid
+        outcome, why = claim_candidate(job, real[0][0])     # 同一个候选确认，不再各写一份
+        if outcome != 'claimed':
+            job['receipt_detail'] = why                     # 失效候选：只记一句，不认领
+            return
+        job['receipt_detail'] = why
         if job['status'] == 'blocked' and job.get('receipt_state') in (
                 'unknown', 'cli_no_launch_record'):
             # 之前是"不知道"才被拦下的，现在认回来了：继续观察，不是别的结论。
