@@ -26,9 +26,13 @@ ENGINES = {
               "label": "EXP-03 迁移死亡代价（冻结基线）",
               "params": ["sigma_m", "move_mort_m"]},
     "exp04": {"path": REPO_ROOT / "exp04" / "verify4.py",
-              "baseline_commit": "本轮实现（待审）",
+              "baseline_commit": "68015cc（已审阅）",
               "label": "EXP-04 同格信息交换",
               "params": ["sigma_m", "move_mort_m", "share_m"]},
+    "exp05": {"path": REPO_ROOT / "exp05" / "verify5.py",
+              "baseline_commit": "本轮实现（待审）",
+              "label": "EXP-05 同格食物援助",
+              "params": ["sigma_m", "move_mort_m", "share_m", "aid_m"]},
 }
 DEFAULT_ENGINE = "exp03"
 # 兼容旧代码的别名
@@ -46,7 +50,7 @@ WRITE_RATE_LIMIT = int(os.environ.get("OBSERVER_WRITE_RATE", "12"))  # 每 IP �
 QUEUE_GRACE_SEC = float(os.environ.get("OBSERVER_QUEUE_GRACE", "20"))
 
 # API 契约版本。新增字段递增小版本；删改字段必须先改契约文档再动代码。
-API_VERSION = "obs-1.2"
+API_VERSION = "obs-1.3"
 
 # --- 访问保护 ---
 # 设了 OBSERVER_TOKEN：所有 /api 请求都要带令牌（服务端校验，前端不硬编码）。

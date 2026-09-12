@@ -32,8 +32,11 @@ def execute(run_id: str) -> int:
 
     try:
         eng = run["engine"] if "engine" in run.keys() else None
+        keys = run.keys()
         st = adapter.make_world(run["seed"], run["sigma_m"], run["move_mort_m"], run["arm"],
-                                engine=eng, share_m=run["share_m"] if "share_m" in run.keys() else 0)
+                                engine=eng,
+                                share_m=run["share_m"] if "share_m" in keys else 0,
+                                aid_m=run["aid_m"] if "aid_m" in keys else 0)
         ident = adapter.run_identity(st, eng)
         meta = adapter.static_run_meta(st)
         meta["engine"] = adapter.engine_info(eng)

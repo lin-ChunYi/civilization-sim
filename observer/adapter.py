@@ -44,8 +44,7 @@ def engine_info(name: str = None) -> Dict[str, Any]:
         "engine_path": str(cfg["path"].relative_to(config.REPO_ROOT)),
         "engine_sha256": sha,
         "baseline_commit": cfg["baseline_commit"],
-        "params_fingerprint": (v3.params_fingerprint(0, 0, 0) if "share_m" in cfg["params"]
-                               else v3.params_fingerprint(0, 0)),
+        "params_fingerprint": v3.params_fingerprint(*([0] * len(cfg["params"]))),
         "constants": {
             "NEED_PC": v3.NEED_PC, "MILLE": v3.MILLE, "SPLIT_SIZE": v3.SPLIT_SIZE,
             "SPOIL_M": v3.SPOIL_M, "MOVE_LOSS_M": v3.MOVE_LOSS_M,
@@ -53,6 +52,7 @@ def engine_info(name: str = None) -> Dict[str, Any]:
             "SHOCK_P_M": v3.SHOCK_P_M, "K_HALF": v3.K_HALF,
             "SIGMA_M_MAX": v3.SIGMA_M_MAX, "MOVE_MORT_M_MAX": v3.MOVE_MORT_M_MAX,
             **({"SHARE_M_MAX": v3.SHARE_M_MAX} if hasattr(v3, "SHARE_M_MAX") else {}),
+            **({"AID_M_MAX": v3.AID_M_MAX} if hasattr(v3, "AID_M_MAX") else {}),
         },
     }
 
@@ -80,13 +80,15 @@ def map_geometry(engine: str = None) -> Dict[str, Any]:
 # ---------------------------------------------------------------- 运行期
 
 def make_world(seed: int, sigma_m: int, move_mort_m: int, arm: str,
-               engine: str = None, share_m: int = 0):
+               engine: str = None, share_m: int = 0, aid_m: int = 0):
     """建世界。参数校验由引擎自己做（严格整数 + 范围），这里不重复实现一份。"""
     v3, _ = load_engine(engine)
     poison = config.ARMS[arm]["poison"]
-    if "share_m" in config.ENGINES[engine or config.DEFAULT_ENGINE]["params"]:
-        return v3.make_world(seed, poison, sigma_m, move_mort_m, share_m)
-    return v3.make_world(seed, poison, sigma_m, move_mort_m)
+    params = config.ENGINES[engine or config.DEFAULT_ENGINE]["params"]
+    extra = []
+    if "share_m" in params: extra.append(share_m)
+    if "aid_m" in params: extra.append(aid_m)
+    return v3.make_world(seed, poison, sigma_m, move_mort_m, *extra)
 
 
 def step(st, engine: str = None):
@@ -97,6 +99,11 @@ def step(st, engine: str = None):
 # EXP-04 才有的信息账字段。引擎没有就不出现在记录里（前端要容忍缺席）。
 SHARE_FIELDS = ("share_groups", "share_participants", "share_received",
                 "share_adopted", "share_rejected", "share_decision_changed")
+
+# EXP-05 才有的援助账字段。注意 aid_events（一次多人援助活动）与 aid_transfers（一笔转移）
+# 是两个不同的计数，不要合并。
+AID_FIELDS = ("aid_events", "aid_transfers", "aid_kcal", "aid_donors",
+              "aid_receivers", "aid_supply", "aid_demand")
 
 CUM_FIELDS = (
     "births_cum", "deaths_demo_cum", "mig_deaths_cum", "mig_total", "mig_regret",
@@ -121,6 +128,7 @@ class Recorder:
         self._prev_cells: Dict[str, int] = {}
         self._log_len = 0
         self._share_len = 0
+        self._aid_len = 0
         self._names: Dict[str, str] = {}
         self._birth_year: Dict[str, int] = {}
 
@@ -158,7 +166,8 @@ class Recorder:
                 "mem": {str(c): [b["mem"][c], b["memt"].get(c)] for c in sorted(b["mem"])},
             })
 
-        fields = tuple(CUM_FIELDS) + tuple(f for f in SHARE_FIELDS if f in st)
+        fields = (tuple(CUM_FIELDS) + tuple(f for f in SHARE_FIELDS if f in st)
+                  + tuple(f for f in AID_FIELDS if f in st))
         cum = {k: st[k] for k in fields}
         prev = self._prev_cum or {k: 0 for k in fields}
         year = {k: cum[k] - prev.get(k, 0) for k in fields}
@@ -176,6 +185,8 @@ class Recorder:
         }
         if "share_ledger_error" in dir(v3):
             integrity["share_ledger_error"] = v3.share_ledger_error(st)
+        if "aid_ledger_error" in dir(v3):
+            integrity["aid_ledger_error"] = v3.aid_ledger_error(st)
         events = self._events(st, t, cells_now)
         rec = {"t": t, "stock": stock, "bands": bands, "cum": cum, "year": year,
                "agg": agg, "integrity": integrity, "events": events}
@@ -188,6 +199,19 @@ class Recorder:
                 "rejected": year.get("share_rejected", 0),
                 "decision_changed": year.get("share_decision_changed", 0),
                 "cum_adopted": cum.get("share_adopted", 0),
+            }
+        if "aid_log" in st:                         # EXP-05：食物援助的当年统计
+            rec["aid"] = {
+                "events": year.get("aid_events", 0),        # 一次多人援助活动
+                "transfers": year.get("aid_transfers", 0),  # 逐笔转移
+                "kcal": year.get("aid_kcal", 0),
+                "donors": year.get("aid_donors", 0),
+                "receivers": year.get("aid_receivers", 0),
+                "supply": year.get("aid_supply", 0),
+                "demand": year.get("aid_demand", 0),
+                "cum_kcal": cum.get("aid_kcal", 0),
+                "cum_events": cum.get("aid_events", 0),
+                "cum_transfers": cum.get("aid_transfers", 0),
             }
         self._prev_cum = cum
         self._prev_cells = cells_now
@@ -224,6 +248,21 @@ class Recorder:
                             f"{self._names.get(r, r)}，地点在第 {cell} 号格",
                 })
             self._share_len = len(share_log)
+
+        aid_log = st.get("aid_log")                 # 来源四：模型记录的食物援助（EXP-05）
+        if aid_log is not None:
+            need_pc = load_engine(self.engine)[0].NEED_PC
+            for (tick, cell, donor, recv, amt) in aid_log[self._aid_len:]:
+                d, r = str(donor), str(recv)
+                out.append({
+                    "type": "aid", "source": "模型日志 st['aid_log']",
+                    "band": r, "donor": d, "receiver": r, "cell": cell,
+                    "kcal": amt, "person_years": amt / need_pc,
+                    "text": f"{self._names.get(d, d)} 向 {self._names.get(r, r)} "
+                            f"援助了 {amt} kcal（{amt / need_pc:.2f} 人年口粮），"
+                            f"地点在第 {cell} 号格",
+                })
+            self._aid_len = len(aid_log)
 
         for sid, cell in cells_now.items():          # 来源二：状态差分（可核实）
             old = self._prev_cells.get(sid)

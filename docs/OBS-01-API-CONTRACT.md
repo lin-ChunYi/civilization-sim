@@ -3,7 +3,7 @@
 **这份文件是两边的唯一约定来源。** 后台（Python）与 UI 分支（`observer/web/`）分头改，
 靠它对齐；不各自实现一套数据格式。
 
-契约版本 **`obs-1.2`**，由 `GET /api/config` 的 `api_version` 字段给出。
+契约版本 **`obs-1.3`**，由 `GET /api/config` 的 `api_version` 字段给出。
 **新增字段 → 小版本 +1；删除或改变已有字段的含义 → 必须先改这份文件并知会对方，再动代码。**
 
 ---
@@ -45,7 +45,7 @@
 
 | 端点 | 说明 |
 |---|---|
-| `POST /api/runs` | body `{seed, years, sigma_m, move_mort_m, arm, label, engine, share_m}`，数值全部**严格整数**（`1.5`/`true` 会被 422 拒绝）；成功 `{run_id, status:"queued"}` |
+| `POST /api/runs` | body `{seed, years, sigma_m, move_mort_m, arm, label, engine, share_m, aid_m}`，数值全部**严格整数**（`1.5`/`true` 会被 422 拒绝）；成功 `{run_id, status:"queued"}` |
 | `POST /api/runs/{id}/cancel` | 请求取消；若工作进程已不在，直接回收任务槽并标中断 |
 | `DELETE /api/runs/{id}` | 删除非预生成、非进行中的运行 |
 
@@ -56,7 +56,7 @@
 
 ```
 run_id label kind status created_at started_at finished_at
-seed years sigma_m move_mort_m share_m engine arm
+seed years sigma_m move_mort_m share_m aid_m engine arm
 years_done years_recorded cancel_requested
 engine_sha256 engine_path baseline_commit repo_commit model_run_id full_digest
 error pid
@@ -70,8 +70,10 @@ error pid
 - `error` 是人类可读文本，**可能包含用户输入或路径，展示前必须转义或用 textContent**。
 - `label` 由用户填写，服务端**原样保存不做转义**，同样按纯文本展示。
 - `pid` 仅供诊断，UI 不必显示。
-- **`engine`（obs-1.2 新增）** ∈ `exp03 | exp04`，旧记录默认 `exp03`。
-  `share_m` 只对 `exp04` 有意义，`exp03` 的运行恒为 0（提交非 0 会被 400 拒绝）。
+- **`engine`（obs-1.2 新增）** ∈ `exp03 | exp04 | exp05`，旧记录默认 `exp03`。
+  `share_m` 只对 `exp04`/`exp05` 有意义，`aid_m` 只对 `exp05` 有意义；
+  引擎没有的参数传非 0 会被 400 拒绝。**不要把引擎名和参数写死**，读 `engines` 里的
+  `engine_params` 决定给哪些控件。
   可用引擎与各自的参数列表由 `GET /api/config` 的 `engines` 给出，
   形如 `{exp04: {engine_label, engine_params:["sigma_m","move_mort_m","share_m"], ...}}`
   —— **前端据此决定给哪些参数控件，不要把引擎名和参数写死。**
@@ -98,6 +100,18 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
   在哪一格（`cell`）、传了对哪个格（`mem_cell`）的记忆、值是多少（`value` kcal）、
   那条记忆原本记于哪一年（`memt`，**照抄来源、不刷新**）"。
   `donor`/`receiver`/`band` 都是**字符串** id。`text` 是已经拼好的中文说明，可直接显示。
+- **`aid` 事件（obs-1.3 新增，只有 `engine=exp05` 的运行才有）**：
+  `{type:"aid", donor, receiver, cell, kcal, person_years, source, text, band}`
+  —— 即"**第 X 年（记录所在的 `t`）、哪个群体（`donor`）向哪个群体（`receiver`）、
+  在哪一格（`cell`）、援助了多少食物（`kcal`，整数；`person_years = kcal / 730000` 是换算值）**"。
+  `text` 是拼好的中文说明，可直接显示；**数量必须带单位**，两种单位都给了。
+- **`aid`（obs-1.3 新增）**：年份记录多一个顶层段
+  `{events, transfers, kcal, donors, receivers, supply, demand, cum_kcal, cum_events, cum_transfers}`。
+  **`events` 与 `transfers` 是两个计数，不能混为一谈**：
+  `events` = 当年发生过援助的"格 × 年"活动次数（一次多人援助算 1），
+  `transfers` = 逐笔转移的笔数（一个供给方给一个接收方算 1 笔）。
+  `supply` / `demand` 是当年参与格里的可援助预算与缺口合计（kcal）。
+  校验值在 `integrity.aid_ledger_error`（应恒为 0）。
 - **`share`（obs-1.2 新增，同上）**：年份记录多一个顶层段
   `{groups, participants, received, adopted, rejected, decision_changed, cum_adopted}`，
   前六项是**当年增量**，`cum_adopted` 是累计采纳数。恒等式 `received = adopted + rejected`，
@@ -152,7 +166,20 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 
 ---
 
-## 6. obs-1.2 的变化（EXP-04 接入）
+## 6. obs-1.3 的变化（EXP-05 接入）
+
+| 变化 | 兼容性 |
+|---|---|
+| `engine` 多一个取值 `exp05`；run 行新增 `aid_m` | **新增**；旧记录 `aid_m = 0` |
+| `POST /api/runs` 新增可选 `aid_m` | **可选**，不传等于 0，旧调用不受影响 |
+| 年份记录新增 `aid` 段与 `aid` 事件 | **只在 `engine=exp05` 时出现**；exp03/exp04 完全不变 |
+| `integrity` 新增 `aid_ledger_error` | 只在 exp05 出现 |
+
+没有任何字段被删除或改名。**建议 UI 这样用**：按 `run.engine` 决定显示哪些栏；
+援助列表直接渲染 `text`，要做统计就用 `aid` 段，**注意把"援助活动次数"和"转移笔数"
+分开显示**，不要相加也不要互相替代。
+
+## 7. obs-1.2 的变化（EXP-04 接入）
 
 | 变化 | 兼容性 |
 |---|---|
@@ -170,7 +197,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 `exp03/verify3.py`。正确的来源是该次运行自己的 `run.engine` / `run.engine_path` /
 `run.engine_sha256`（早就在 run 行里，obs-1.0 就有）。
 
-## 7. 上一轮（obs-1.1）的变化
+## 8. 更早（obs-1.1）的变化
 
 | 变化 | 兼容性 |
 |---|---|

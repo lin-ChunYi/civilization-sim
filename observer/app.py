@@ -212,7 +212,8 @@ class NewRun(BaseModel):
     arm: StrictStr = Field("memory", description="信息条件（对照臂）")
     label: StrictStr = Field("", description="备注")
     engine: StrictStr = Field(config.DEFAULT_ENGINE, description="模拟引擎：exp03 | exp04")
-    share_m: StrictInt = Field(0, description="SHARE_M：同格信息交换的参与概率，千分之一（仅 exp04）")
+    share_m: StrictInt = Field(0, description="SHARE_M：同格信息交换的参与概率，千分之一（exp04 起）")
+    aid_m: StrictInt = Field(0, description="AID_M：供给方愿意拿出的可援助余粮比例，千分之一（仅 exp05）")
 
 
 def _validate(body: NewRun) -> None:
@@ -227,6 +228,12 @@ def _validate(body: NewRun) -> None:
     elif body.share_m != 0:
         raise HTTPException(400, f"引擎 {body.engine} 没有 SHARE_M 这个参数，"
                                  f"要用同格信息交换请选 exp04")
+    if "aid_m" in params:
+        if not (v3.AID_M_MIN <= body.aid_m <= v3.AID_M_MAX):
+            raise HTTPException(400, f"AID_M 越界，合法范围 [{v3.AID_M_MIN}, {v3.AID_M_MAX}]")
+    elif body.aid_m != 0:
+        raise HTTPException(400, f"引擎 {body.engine} 没有 AID_M 这个参数，"
+                                 f"要用同格食物援助请选 exp05")
     if not (0 <= body.seed <= config.MAX_SEED):
         raise HTTPException(400, f"seed 越界，合法范围 [0, {config.MAX_SEED}]")
     if not (config.MIN_YEARS <= body.years <= config.MAX_YEARS):
@@ -257,6 +264,7 @@ def post_run(body: NewRun):
     run_id = store.claim_slot(seed=body.seed, years=body.years, sigma_m=body.sigma_m,
                               move_mort_m=body.move_mort_m, arm=body.arm,
                               label=body.label, kind="user", share_m=body.share_m,
+                              aid_m=body.aid_m,
                               engine_name=body.engine,
                               engine=adapter.engine_info(body.engine),
                               repo_commit=repo_commit())

@@ -151,6 +151,19 @@ docker run -p 8765:8765 -e OBSERVER_TOKEN=换成你的令牌 -v $PWD/observer-da
 两边的接口、口径与前端测试钩子写在 [`../docs/OBS-01-API-CONTRACT.md`](../docs/OBS-01-API-CONTRACT.md)，
 以那份文件为准，不各自实现一套。
 
+## EXP-05 接入（obs-1.3，新增字段全部向后兼容）
+
+`engine` 多一个取值 `exp05`（同格食物援助），`POST /api/runs` 多一个**可选**参数 `aid_m`。
+`engine=exp05` 的年份记录多一个 `aid` 段（当年活动次数 / 逐笔转移 / 数量 / 供给方 / 接收方 /
+预算 / 缺口 + 累计），事件列表多 `type:"aid"` 的条目：
+
+> 群体-7B4694 向 群体-90C5CA 援助了 3323254 kcal（4.55 人年口粮），地点在第 10 号格
+
+即**第 X 年、哪一格、谁给谁、多少食物**，两种单位都给了。
+**`events`（一次多人援助活动）与 `transfers`（一笔转移）是两个计数，不要混用。**
+exp03/exp04 的记录完全不变，前端必须容忍缺席。字段见
+[`../docs/OBS-01-API-CONTRACT.md`](../docs/OBS-01-API-CONTRACT.md) §2、§6。
+
 ## EXP-04 接入（obs-1.2，新增字段全部向后兼容）
 
 观察台现在能跑两个引擎：`exp03`（冻结基线）与 `exp04`（同格信息交换）。
@@ -203,7 +216,7 @@ docker run -p 8765:8765 -e OBSERVER_TOKEN=换成你的令牌 -v $PWD/observer-da
 
 ## 验收记录
 
-`python3 observer/run_tests.py` → **87 通过 / 0 失败 / 0 未覆盖，退出码 0**（实测，见 `TESTS.txt`）。
+`python3 observer/run_tests.py` → **100 通过 / 0 失败 / 0 未覆盖，退出码 0**（实测，见 `TESTS.txt`）。
 覆盖：记录层不干扰模型（逐年状态哈希 + 最终摘要 + 不加字段 + 不调 rng）、年度增量等于账本差值、
 人口恒等与能量守恒、三个年份与独立重跑逐字段一致、反复与乱序回放返回相同记录且不改写文件、
 非法参数被拒、单并发与并发启动、状态围栏与重启停旧进程、半条记录的读取与接口表现、

@@ -516,9 +516,8 @@ with store.connect() as c:
     c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
 with TestClient(app) as c6:
     cfg = c6.get("/api/config").json()
-    check("O24a /api/config 列出两个引擎",
-          sorted(cfg.get("engines", {})) == ["exp03", "exp04"] and
-          cfg["api_version"] == "obs-1.2", str(sorted(cfg.get("engines", {}))))
+    check("O24a /api/config 里有 exp04 引擎",
+          "exp04" in cfg.get("engines", {}), str(sorted(cfg.get("engines", {}))))
     bad = c6.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp03",
                                      "share_m": 500})
     check("O24b exp03 引擎不接受 SHARE_M", bad.status_code == 400, str(bad.json())[:60])
@@ -571,6 +570,63 @@ with TestClient(app) as c6:
         pre = next(x for x in c6.get("/api/runs").json()["runs"] if x["kind"] == "preset")
         rec3 = c6.get(f"/api/runs/{pre['run_id']}/year/1").json()
         check("O24k exp03 的记录里没有 share 段（前端要容忍缺席）", "share" not in rec3)
+
+# ---------------------------------------------------------------- EXP-05 接入
+print("\nO25 EXP-05 引擎接入观察台（食物援助事件可展示）")
+with store.connect() as c:
+    c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+with TestClient(app) as c7:
+    cfg = c7.get("/api/config").json()
+    check("O25a /api/config 列出三个引擎",
+          sorted(cfg.get("engines", {})) == ["exp03", "exp04", "exp05"] and
+          cfg["api_version"] == "obs-1.3", str(sorted(cfg.get("engines", {}))))
+    b1 = c7.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp04", "aid_m": 500})
+    check("O25b exp04 引擎不接受 AID_M", b1.status_code == 400, str(b1.json())[:60])
+    b2 = c7.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp05", "aid_m": 1001})
+    check("O25c AID_M 越界被拒", b2.status_code == 400)
+    b3 = c7.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp05", "aid_m": 1.5})
+    check("O25d AID_M 非整数被拒（422）", b3.status_code == 422)
+
+    r = c7.post("/api/runs", json={"seed": 4242, "years": 300, "sigma_m": 400,
+                                   "move_mort_m": 50, "engine": "exp05",
+                                   "share_m": 1000, "aid_m": 1000, "label": "EXP-05 接入"})
+    check("O25e exp05 运行可以启动", r.status_code == 200, str(r.json())[:60])
+    if r.status_code == 200:
+        rid5 = r.json()["run_id"]
+        for _ in range(900):
+            row = store.get_run(rid5)
+            if row["status"] in ("done", "failed", "canceled", "interrupted"):
+                break
+            time.sleep(0.05)
+        check("O25f exp05 运行跑完", row["status"] == "done",
+              f"{row['status']} {row['error'][:40]}")
+        check("O25g 台账记下了 aid_m 与引擎", row["aid_m"] == 1000 and row["engine"] == "exp05")
+        found = None
+        for t in range(row["years_done"] + 1):
+            rec = c7.get(f"/api/runs/{rid5}/year/{t}").json()
+            ev = [e for e in rec["events"] if e["type"] == "aid"]
+            if ev:
+                found = (t, rec, ev); break
+        if found:
+            t, rec, ev = found
+            e0 = ev[0]
+            print(f"      第 {t} 年的一条援助事件：{e0['text'][:74]}")
+            check("O25h 援助事件带齐“哪一年/谁给谁/多少/地点/来源”",
+                  all(k in e0 for k in ("donor", "receiver", "cell", "kcal",
+                                        "person_years", "source", "text")),
+                  str(sorted(e0)))
+            check("O25i 数量标了单位（kcal + 人年口粮换算）",
+                  isinstance(e0["kcal"], int) and e0["kcal"] > 0)
+            check("O25j 双方 id 是字符串",
+                  isinstance(e0["donor"], str) and isinstance(e0["receiver"], str))
+            check("O25k 年份记录带 aid 段，且活动数与笔数是两个计数",
+                  "aid" in rec and rec["aid"]["transfers"] >= rec["aid"]["events"] >= 1,
+                  str(rec["aid"]))
+            check("O25l 援助账恒等误差为 0", rec["integrity"].get("aid_ledger_error") == 0)
+        else:
+            uncov("O25h–l 援助事件", "这次运行里没有出现援助事件，前提缺失")
+        rec3 = c7.get(f"/api/runs/{next(x for x in c7.get('/api/runs').json()['runs'] if x['kind'] == 'preset')['run_id']}/year/1").json()
+        check("O25m exp03 的记录里没有 aid 段（前端要容忍缺席）", "aid" not in rec3)
 
 # ---------------------------------------------------------------- 探测未知 ≠ 死亡
 print("\nO23 进程探测：查不到不等于死了；回收前要比对状态与 pid")
