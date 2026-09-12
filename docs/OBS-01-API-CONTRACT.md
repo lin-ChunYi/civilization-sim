@@ -3,7 +3,7 @@
 **这份文件是两边的唯一约定来源。** 后台（Python）与 UI 分支（`observer/web/`）分头改，
 靠它对齐；不各自实现一套数据格式。
 
-契约版本 **`obs-1.4`**，由 `GET /api/config` 的 `api_version` 字段给出。
+契约版本 **`obs-1.5`**，由 `GET /api/config` 的 `api_version` 字段给出。
 **新增字段 → 小版本 +1；删除或改变已有字段的含义 → 必须先改这份文件并知会对方，再动代码。**
 
 ---
@@ -177,7 +177,26 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 
 ---
 
-## 6. obs-1.4 的变化（EXP-06 接入）
+## 6. obs-1.5 的变化（供游戏界面直接使用的数据）
+
+**实操版交接说明（真实请求 / 真实响应 / 可回放的运行编号与年份）见
+[`OBS-01-HANDOFF-EXP06.md`](OBS-01-HANDOFF-EXP06.md)。**
+
+| 变化 | 兼容性 |
+|---|---|
+| 每个事件新增 `id`（`t<年>-<类型>-<当年序号>`，同一次运行里唯一可复现）与 `year` | **新增字段**；老记录在读取时按同一规则补齐 |
+| 回助事件新增 `basis`：`{remembered_kcal, remembered_last_year, prior_events[], why, source}` | **新增字段**；只有 `repay=true` 的事件才有 |
+| `aid` 事件新增 `unrecorded`（动机/路线/因果未记录） | 新增字段 |
+| `recip` 段新增 `compare[]`：同一份援助前状态下开/关优先各算一遍的**逐笔**与**逐对总额** | 新增字段；只有 `engine=exp06` |
+| `GET /api/config` 的每个引擎新增 `params[]`：`{name, label, unit, min, max, default, note}` | **新增字段**；原有 `engine_params`（只有名字）保留不变 |
+| `GET /api/runs/{id}` 新增 `params_used[]`（带标签与单位的实际取值）与 `engine_label` | 新增字段 |
+| 预置案例新增两条：`preset-exp06-recip0` / `preset-exp06-recip1000`（**自然演化**，非构造） | 新增数据 |
+
+**`recip.changed` 的判据本批修正**：从"逐笔转移列表不同"改为"**逐对群体总额不同**"——
+同一对群体、同样总额、只是被拆成优先 + 普通两笔，不再算作分配改变。
+7 种子 300 年下计数由 118 降为 47（`SIGMA=0, RECIP=1000`）。请用 `changed`，不要自己数笔数。
+
+## 7. obs-1.4 的变化（EXP-06 接入）
 
 | 变化 | 兼容性 |
 |---|---|
@@ -196,7 +215,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 `observer/docs/screenshots/12-recip-aid.jpg`，第 128 年那条）。还没有做的是
 `aid_memory` 的关系展示与 `recip` 段的年度统计 —— 这两块的数据都已经在接口里了。
 
-## 7. obs-1.3 的变化（EXP-05 接入）
+## 8. obs-1.3 的变化（EXP-05 接入）
 
 | 变化 | 兼容性 |
 |---|---|
@@ -218,7 +237,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 2. `showTab()` 遇到未登记的 tab 名（例如旧链接里的 `#tab=events`）会把所有分区都隐藏，
    页面变成空白。给它一个兜底（未知就回到 `world`）会更稳。这两条都不影响数据正确性。
 
-## 8. obs-1.2 的变化（EXP-04 接入）
+## 9. obs-1.2 的变化（EXP-04 接入）
 
 | 变化 | 兼容性 |
 |---|---|
@@ -236,7 +255,7 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 `exp03/verify3.py`。正确的来源是该次运行自己的 `run.engine` / `run.engine_path` /
 `run.engine_sha256`（早就在 run 行里，obs-1.0 就有）。
 
-## 9. 更早（obs-1.1）的变化
+## 10. 更早（obs-1.1）的变化
 
 | 变化 | 兼容性 |
 |---|---|
