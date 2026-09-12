@@ -33,7 +33,10 @@ def install_presets() -> int:
         if old is not None:
             # 已经装过：只有内容确实变了（换了参数/重跑过）才刷新，否则跳过。
             # 以前这里无条件跳过，结果更新了预置数据、库里还是旧的一份。
-            if old["full_digest"] == info["full_digest"]:
+            # 摘要相同还不够：引擎代码变了（engine_sha256 变了）也要刷新，
+            # 否则界面上标的"引擎身份"会停留在旧版本。
+            if (old["full_digest"] == info["full_digest"]
+                    and old["engine_sha256"] == info["engine_sha256"]):
                 continue
             with store.connect() as conn:
                 conn.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
@@ -72,7 +75,8 @@ def build(seed: int, years: int, sigma_m: int, move_mort_m: int, arm: str,
     st = adapter.make_world(seed, sigma_m, move_mort_m, arm, engine=engine,
                             share_m=share_m, aid_m=aid_m, recip_m=recip_m)
     meta = adapter.static_run_meta(st)
-    meta["engine"] = adapter.engine_info()
+    meta["engine"] = adapter.engine_info(engine)   # 必须带上引擎名：
+    # 漏了它，预置案例会把**默认引擎**的代码版本记成自己的（本轮修）
     ident0 = adapter.run_identity(st)
     meta["model_run_id"] = ident0["model_run_id"]
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")

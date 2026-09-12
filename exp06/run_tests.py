@@ -31,17 +31,31 @@ def uncov(k, why): R[k] = 'UNCOVERED'; print(f"  => {k} 未覆盖：{why}")
 def ref_settle(spec, ids, memory, aid_m, recip_m):
     """按规格文字独立重写一遍结算，**不调用 verify6 的任何函数**。
     返回 [(供给方, 接收方, 数量, 阶段)]。"""
-    def share_out(keys, weight, total):
-        W = sum(weight[k] for k in keys)
-        if W <= 0 or total <= 0: return {k: 0 for k in keys}
-        if total >= W: return {k: weight[k] for k in keys}
+    def _split(keys, weight, total):
+        """把 total 按 weight 的相对比例整数分完（取整商 + 余数降序、id 升序）。"""
         out, rema, acc = {}, [], 0
+        W = sum(weight[k] for k in keys)
         for k in keys:
             q, r = divmod(weight[k] * total, W)
             out[k] = q; acc += q; rema.append((-r, k))
         for _, k in sorted(rema)[:total - acc]:
             out[k] += 1
         return out
+
+    def share_out(keys, weight, total):
+        """**普通阶段**用：weight 是上限（预算 / 缺口），够分时各拿全额。"""
+        W = sum(weight[k] for k in keys)
+        if W <= 0 or total <= 0: return {k: 0 for k in keys}
+        if total >= W: return {k: weight[k] for k in keys}
+        return _split(keys, weight, total)
+
+    def prio_out(keys, weight, total):
+        """**优先阶段**用：weight 只是相对优先权重，**不是上限**，永远把 total 分完。
+        参考实现原来在这里也用了 share_out，把引擎的同一个错误抄了一遍 ——
+        参考实现必须按规格文字写，而不是照抄被测实现。"""
+        W = sum(weight[k] for k in keys)
+        if W <= 0 or total <= 0: return {k: 0 for k in keys}
+        return _split(keys, weight, total)
 
     avail = {bid: store for bid, (size, store) in zip(ids, spec)}
     need = {bid: size * N for bid, (size, store) in zip(ids, spec)}
@@ -68,7 +82,7 @@ def ref_settle(spec, ids, memory, aid_m, recip_m):
             targets = [r for r in sorted(receivers) if r in mem and left_g[r] > 0]
             if not targets: continue
             w = {r: max(mem[r], 1) for r in targets}
-            alloc = share_out(targets, w, min(pb, sum(left_g[r] for r in targets)))
+            alloc = prio_out(targets, w, min(pb, sum(left_g[r] for r in targets)))
             for r in targets:
                 a = min(alloc[r], left_g[r])
                 if a > 0: prop[(d, r)] = a
@@ -401,6 +415,43 @@ print("  '分配改变' = 同一份援助前状态下，把 RECIP_M 换成 0 再
 mark('G11 两者可区分（RECIP=0 时改变数必为 0，开了之后 > 0）',
      zero['recip_changed'] == 0 and full['recip_changed'] > 0
      and zero['repay_transfers'] > 0)
+
+# ---------------------------------------------------------------- G14
+hdr("G14 优先预算大于历史权重总和时，权重不得变成回助额度上限")
+# 这是 2026-09-12 独立验收发现的阻塞缺陷的定向回归：
+#   优先阶段的权重是"记得对方帮过我多少"，它只决定**相对份额**，**不是上限**。
+#   旧实现把它传给了"权重即上限、够分各拿全额"的分配器，于是历史受助量
+#   意外成了本轮回助的天花板（预算 10N、缺口 10N，却只优先给出 1N）。
+BIG = [(10, 20 * N), (10, 0), (10, 0)]          # 供给方预算 10N；两个接收方缺口各 10N
+MEM_ONE = {0: {1: 1 * N}}                        # 只记得 1 号帮过自己 1N（远小于预算）
+st, P, ids = v.make_recip_scenario(BIG, MEM_ONE, aid_m=1000, recip_m=1000)
+v.step(st)
+prio = [(rec[3], rec[4]) for rec in st['aid_log'] if rec[5] == 'recip']
+prio_total = sum(a for _, a in prio)
+expect = min(10 * N, 10 * N)                     # min(优先预算, 目标缺口)
+print(f"  预算 {10 * N} / 旧帮助者缺口 {10 * N} / 历史权重 {1 * N}")
+print(f"  优先阶段实际给出 {prio_total}（期望 {expect}），收方是旧帮助者 = "
+      f"{all(r == ids[1] for r, _ in prio)}")
+print(f"  日志：{[(rec[4], rec[5]) for rec in st['aid_log']]}")
+mark('G14 权重不是上限：优先阶段给满 min(预算, 缺口)',
+     prio_total == expect and all(r == ids[1] for r, _ in prio))
+
+# ---------------------------------------------------------------- G15
+hdr("G15 历史权重同比缩放，不应改变任何结果")
+# 权重只表达"谁更优先"，等比例放大缩小是同一个相对关系，结果必须逐笔相同。
+# 旧实现下这条必然失败：它把权重当额度，×k 就会让优先阶段的给出量也 ×k。
+MEM_TWO = {0: {1: 1 * N, 2: 2 * N}}
+runs = {}
+for k in (1, 7, 1000):
+    mem = {0: {i: c * k for i, c in MEM_TWO[0].items()}}
+    st_k, _, _ = v.make_recip_scenario(BIG, mem, aid_m=1000, recip_m=1000)
+    v.step(st_k)
+    runs[k] = sorted((rec[2], rec[3], rec[4], rec[5]) for rec in st_k['aid_log'])
+same = runs[1] == runs[7] == runs[1000]
+print(f"  权重 ×1 / ×7 / ×1000 的逐笔结果相同 = {same}")
+print(f"  ×1    -> {[(a, ph) for _, _, a, ph in runs[1]]}")
+print(f"  ×1000 -> {[(a, ph) for _, _, a, ph in runs[1000]]}")
+mark('G15 权重同比缩放结果不变', same)
 
 # ---------------------------------------------------------------- G12
 hdr("G12 RECIP_M 参数校验 + 进入运行身份")
