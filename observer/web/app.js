@@ -1511,6 +1511,9 @@ async function boot() {
     S.skin = "console";
     document.documentElement.classList.add("skin-console");
   }
+  if (new URLSearchParams(location.search).get("tex") === "0") {
+    document.documentElement.classList.add("notex");
+  }
   $("token").value = S.token;
   $("tokbtn").addEventListener("click", () => {
     S.token = $("token").value.trim();

@@ -19,6 +19,15 @@ html.game,body{background:
   linear-gradient(180deg, #0a100e 0%, #070b0a 40%, #0c1410 100%);}
 .grain{pointer-events:none;position:fixed;inset:0;z-index:0;opacity:.07;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.tabletop{pointer-events:none;position:fixed;inset:0;z-index:0;
+  background:url("/static/assets/chronicle-jade-bronze.jpg") center center / cover no-repeat;
+  opacity:.32;mix-blend-mode:soft-light}
+html.notex .tabletop{display:none}
+.sandtable{background-image:
+  linear-gradient(rgba(8,12,10,.62), rgba(8,12,10,.55)),
+  url("/static/assets/chronicle-jade-bronze.jpg");
+  background-size:cover;background-position:center}
+html.notex .sandtable{background-image:none}
 main,header,nav,footer,.toast{position:relative;z-index:1}
 h3{margin:0 0 8px;font-size:14px;letter-spacing:.08em;font-weight:650;color:var(--gold2)}
 h3 small{font-weight:400;color:var(--muted);margin-left:6px;letter-spacing:0}
@@ -264,4 +273,6 @@ html.skin-console #pane-help{display:none !important}
   .kv{grid-template-columns:1fr}
   .kv .v{text-align:left}
   .hud-actions .btn.ghost{padding:4px 8px;font-size:12px}
+  .tabletop{opacity:.18;background-size:220% auto;background-position:center}
+  .sandtable{background-size:220% auto;background-position:center}
 }
