@@ -1643,7 +1643,7 @@ class TestCliIdentity(CliBase):
         self.assertEqual(probe, 'alive')
         self.assertEqual(job['cli_pid'], 4242)
         self.assertEqual(job['cli_birth'], self.BIRTH, '认领时没把出生身份记下来')
-        self.assertIn('verifying the launch identity', detail)
+        self.assertIn('identity', detail)      # 措辞无关：只要求认领时核过身份
 
     def test_R24k_reclaim_never_overwrites_a_recorded_birth(self):
         """已经记过出生身份时，认领路径不得拿另一个进程把它洗成自己的。"""
@@ -1678,6 +1678,140 @@ class TestCliIdentity(CliBase):
         paused = self.queue()['jobs']['G9']
         self.assertEqual(paused.get('pause_signal'), 'SIGINT')
         self.assertTrue(Path(paused['journal']).exists(), '暂停把日志弄丢了')
+
+
+# ------------- C06_R3：候选只是"找到人"，确认要用**当前这一次**读到的身份
+class TestCandidateConfirmation(CliBase):
+    """两个认领入口（`resolve_cli` / `cli_reclaim`）各写了一份判定，都漏了同一条不变量：
+    `ps -ax` 扫到候选时那是真 CLI，随后 `proc_line(pid)` 读到的已经是 `tail`/`cat`，
+    代码却把**新读到的那一行**存进 `cli_birth` 并当成自有，`cli_pause` 于是向它发 SIGINT。
+
+    本轮把候选确认收敛成一个共用的小函数 `claim_candidate()`，两个入口都走它。
+    下面按"二次读取读到什么"逐一过，并且**两个入口跑同一份用例**。
+    """
+    TOKEN = 'ciltok-G9-abc123'
+    BIN = '/Users/ecool/.grok/bin/grok'
+    PROMPT = '/tmp/ciltok-G9-abc123.txt'
+    CLI_CMD = BIN + ' --cwd /repo --resume 041d93f0 --prompt-file ' + PROMPT
+    SCAN_LINE = 'Fri Sep 12 10:00:00 2026 ' + CLI_CMD
+    TAIL_LINE = 'Fri Sep 12 11:30:00 2026 /usr/bin/tail -f /tmp/ciltok-G9-abc123.stdout.jsonl'
+
+    def cand_job(self, **extra):
+        journal = self.tmp / 'cand.jsonl'
+        journal.write_text('', encoding='utf-8')
+        job = {'task_id': 'G9', 'owner': 'grok', 'transport': 'grok-cli', 'status': 'running',
+               'owns_process': True, 'cli_pid': None, 'cli_token': self.TOKEN,
+               'cli_birth': '', 'cli_bin': self.BIN, 'cli_prompt_copy': self.PROMPT,
+               'cli_argv': [self.BIN, '--cwd', '/repo', '--prompt-file', self.PROMPT],
+               'cli': {'bin': self.BIN, 'graceful_cancel': True},
+               'journal': str(journal), 'receipt_state': 'unknown',
+               'dependencies': [], 'created_at': D.now()}
+        job.update(extra)
+        return job
+
+    def run_entry(self, entry, second_read, **extra):
+        """两个入口跑同一份用例：扫描时是真 CLI，二次读取由 second_read 决定。"""
+        job = self.cand_job(**extra)
+        if entry == 'reclaim':
+            job['status'] = 'blocked'
+        real_find, real_line = D.find_by_token, D.proc_line
+        D.find_by_token = lambda t: [(7777, self.CLI_CMD)]
+        D.proc_line = lambda pid, _s=second_read: _s
+        try:
+            if entry == 'resolve':
+                out = D.resolve_cli(job)
+            else:
+                D.cli_reclaim(job, self.root, {'jobs': {}})
+                out = (None, job.get('receipt_detail', ''))
+        finally:
+            D.find_by_token, D.proc_line = real_find, real_line
+        return job, out
+
+    def pause_signals(self, job, second_read):
+        sent = []
+        real_line, real_kill = D.proc_line, os.kill
+        D.proc_line = lambda pid, _s=second_read: _s
+        os.kill = lambda pid, sig: sent.append((pid, sig))
+        try:
+            D.cli_pause(dict(job, status='running', pause_notice_sent=False), self.root)
+        finally:
+            D.proc_line, os.kill = real_line, real_kill
+        return sent
+
+    def _assert_not_claimed(self, entry, second, label):
+        job, (probe, detail) = self.run_entry(entry, second)
+        self.assertIsNone(job['cli_pid'], '%s / %s：认领了一个已经不是自己的 pid' % (entry, label))
+        self.assertEqual(job['cli_birth'], '',
+                         '%s / %s：把二次读到的那一行写成了出生身份' % (entry, label))
+        self.assertNotIn('tail', job['cli_birth'] or '')
+        self.assertEqual(self.pause_signals(job, second), [],
+                         '%s / %s：向一个没确认的进程发了信号' % (entry, label))
+        if probe is not None:
+            self.assertNotEqual(probe, 'alive', '%s / %s：候选失效却报 alive' % (entry, label))
+        self.assertTrue(D.cli_unresolved(job), '%s / %s：结局未定却当成有结论' % (entry, label))
+
+    def test_R25_candidate_became_a_log_reader(self):
+        for entry in ('resolve', 'reclaim'):
+            self._assert_not_claimed(entry, self.TAIL_LINE, '二读变成 tail')
+
+    def test_R25b_candidate_disappeared_between_the_two_reads(self):
+        for entry in ('resolve', 'reclaim'):
+            self._assert_not_claimed(entry, None, '二读读不到')
+
+    def test_R25c_candidate_unverifiable_on_the_second_read(self):
+        for entry in ('resolve', 'reclaim'):
+            self._assert_not_claimed(entry, 'unknown', '二读读不了')
+
+    def test_R25d_candidate_still_the_same_cli_is_claimed(self):
+        for entry in ('resolve', 'reclaim'):
+            job, (probe, detail) = self.run_entry(entry, self.SCAN_LINE)
+            self.assertEqual(job['cli_pid'], 7777, '%s：真的还是同一个 CLI 却没认领' % entry)
+            self.assertEqual(job['cli_birth'], self.SCAN_LINE,
+                             '%s：认领时没把核验过的那一行记成出生身份' % entry)
+            self.assertIn('re-verifying', detail)
+            if probe is not None:
+                self.assertEqual(probe, 'alive')
+            self.assertEqual(self.pause_signals(job, self.SCAN_LINE), [(7777, signal.SIGINT)],
+                             '%s：确认过身份却不发 graceful cancel' % entry)
+
+    def test_R25e_recorded_birth_is_never_laundered_by_either_entry(self):
+        """已经记过出生身份时，两个入口都不许拿另一个进程把它洗成自己的。"""
+        other = self.SCAN_LINE.replace('10:00:00', '11:30:00')
+        for entry in ('resolve', 'reclaim'):
+            job, _ = self.run_entry(entry, other, cli_birth=self.SCAN_LINE)
+            self.assertEqual(job['cli_birth'], self.SCAN_LINE, '%s：出生身份被洗了' % entry)
+            self.assertIsNone(job['cli_pid'], '%s：认领了出生身份对不上的进程' % entry)
+            self.assertEqual(self.pause_signals(job, other), [])
+
+    def test_R25f_only_claim_candidate_writes_identity(self):
+        """认领路径上写 cli_pid / cli_birth 的地方只有一处 —— 免得再各补一份不一致的判定。
+        （launch/adopt 的身份是当场产生的，不走这条路。）"""
+        src = Path(D.__file__).read_text(encoding='utf-8')
+        body = src[src.index('def claim_candidate'):src.index('def launch_cli')]
+        self.assertIn("job['cli_pid'] = pid", body)
+        rest = src.replace(body, '')
+        for frag in ("job['cli_pid'] = pid", "job['cli_birth'] = line"):
+            self.assertNotIn(frag, rest, '认领身份的写入又散到别处了：%s' % frag)
+
+    def test_R25g_real_grok_argv_with_spaces_still_matches(self):
+        """真实 argv 里 `--allow Bash(git status*)` / `Edit(observer/web/**)` 带空格，
+        结构核对不能因此失手。"""
+        prompt = '/Users/ecool/.civ/prompts/ciltok-G03_FIX-9f.txt'
+        job = {'cli_bin': self.BIN, 'cli_prompt_copy': prompt, 'cli_argv': [self.BIN]}
+        command = (self.BIN + ' --cwd /Users/ecool/Desktop/civilization/civilization-sim'
+                   ' --resume 041d93f0-5eae-4cff-90b8-f52785f14553'
+                   ' --prompt-file ' + prompt +
+                   ' --output-format json --permission-mode acceptEdits'
+                   ' --allow Bash(git status*) --allow Bash(git add observer/web/*)'
+                   ' --allow Edit(/Users/ecool/Desktop/civilization/civilization-sim/observer/web/**)'
+                   ' --allow Edit(observer/web/**) --deny Bash(git push*)'
+                   ' --max-turns 100 --no-subagents --disable-web-search')
+        self.assertTrue(D.cli_command_matches(job, command),
+                        'allow 规则里的空格把结构核对弄失手了')
+        _, only_cmd = D.split_ps_line('Fri Sep 12 10:00:00 2026 ' + command)
+        self.assertTrue(D.cli_command_matches(job, only_cmd))
+        self.assertFalse(D.cli_command_matches(job, '/usr/bin/tail -f ' + prompt))
+        self.assertFalse(D.cli_command_matches(job, '/bin/cat ' + prompt))
 
 
 if __name__ == '__main__':
