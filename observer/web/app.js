@@ -29,9 +29,41 @@ const S = {
   opGen: 0,
   bandReqGen: 0,
   bandCache: new Map(),
+  loadGen: 0,
+  loadOverlay: null,
+  lastOkT: 0,
 };
+function navResult(kind, extra) {
+  const ok = kind === "success";
+  return Object.assign({ ok: ok, kind: kind, reason: kind }, extra || {});
+}
+function beginYearLoad(t, op, runId) {
+  const gen = ++S.loadGen;
+  S.loadOverlay = { gen: gen, t: t, op: op, runId: runId };
+  S.yearLoading = t;
+  const el = $("year-load");
+  if (el) {
+    el.hidden = false;
+    if ($("year-load-n")) $("year-load-n").textContent = String(t);
+  }
+  return gen;
+}
+function endYearLoad(gen) {
+  if (!S.loadOverlay || S.loadOverlay.gen !== gen) return;
+  S.loadOverlay = null;
+  S.yearLoading = null;
+  const el = $("year-load");
+  if (el) el.hidden = true;
+}
+function reapNavUi() {
+  if (S.loadOverlay && !opAlive(S.loadOverlay.op)) {
+    endYearLoad(S.loadOverlay.gen);
+  }
+  renderYearFailBar();
+}
 function bumpOp() {
   S.opGen += 1;
+  reapNavUi();
   return S.opGen;
 }
 function opAlive(op) {
@@ -545,6 +577,7 @@ function renderOverview() {
     $("ov-ev-now-value").textContent = "…";
     $("ov-ev-now-sub").textContent = "本年事件清单尚未加载";
     $("year-summary").textContent = yearWaitMessage();
+    if ($("year-metrics")) $("year-metrics").innerHTML = "";
   } else {
     const st = startAgg();
     $("ov-pop-value").textContent = nf(rec.agg.pop) + " 人";
@@ -592,6 +625,7 @@ function renderOverview() {
     $("ov-ev-cum-value").textContent = nf(cum.count) + " 条";
     $("ov-ev-cum-sub").textContent = "截至" + OverviewLogic.yearViewLabel(S.t) + " · 已记录事件";
   }
+  renderYearFailBar();
 }
 
 function renderHudParams() {
@@ -1257,21 +1291,28 @@ function syncYearWidgets(t) {
   }
 }
 function setYearLoadOverlay(t, on) {
-  const el = $("year-load");
-  if (!el) return;
-  if (on) {
-    S.yearLoading = t;
-    el.hidden = false;
-    if ($("year-load-n")) $("year-load-n").textContent = String(t);
+  if (on) beginYearLoad(t, S.opGen, S.run ? S.run.run_id : "");
+  else if (S.loadOverlay) endYearLoad(S.loadOverlay.gen);
+}
+function renderYearFailBar() {
+  const bar = $("year-fail");
+  if (!bar) return;
+  const w = S.yearWait;
+  if (w && !w.pending) {
+    bar.hidden = false;
+    if ($("year-fail-text")) {
+      $("year-fail-text").textContent = "第 " + w.t + " 年读取失败" +
+        (w.message ? "：" + w.message : "") +
+        "。可重试。不把其他年份的数字标到这一年。";
+    }
   } else {
-    S.yearLoading = null;
-    el.hidden = true;
+    bar.hidden = true;
   }
 }
-function commitYear(t) {
+function commitYear(t, wait) {
   S.t = t;
-  S.yearWait = null;
-  setYearLoadOverlay(t, false);
+  S.yearWait = wait || null;
+  if (!wait) S.lastOkT = t;
   syncYearWidgets(t);
   setHash({
     t: String(t),
@@ -1280,51 +1321,93 @@ function commitYear(t) {
     archive: S.bandScope === "full" ? "full" : "",
   });
   renderDirectorChrome();
+  renderYearFailBar();
 }
 function yearNavAlive(myEpoch, myRun, myOp) {
   return opAlive(myOp) && !stale(myEpoch, myRun);
 }
+function afterPlayStep(gy, myOp) {
+  if (!opAlive(myOp)) return false;
+  if (!gy || gy.kind === "stale") return false;
+  if (gy.kind === "pending404") {
+    if ($("tl-note")) $("tl-note").textContent = yearWaitMessage();
+    if (S.playing && opAlive(myOp)) S.timer = setTimeout(tick, 700);
+    return false;
+  }
+  if (!gy.ok || gy.kind === "failed") {
+    if (S.playing && opAlive(myOp)) setPlaying(false);
+    return false;
+  }
+  return true;
+}
+function retryYear() {
+  if (!S.run) return;
+  const t = S.yearWait && S.yearWait.t != null ? S.yearWait.t : S.t;
+  setPlaying(false);
+  bumpOp();
+  return gotoYear(t, { opGen: S.opGen });
+}
 async function gotoYear(t, opts) {
   opts = opts || {};
-  if (!S.run) return { ok: false, reason: "no-run" };
+  if (!S.run) return navResult("failed", { reason: "no-run" });
   const myOp = opts.opGen != null ? opts.opGen : S.opGen;
-  if (!opAlive(myOp)) return { ok: false, reason: "stale" };
+  if (!opAlive(myOp)) return navResult("stale");
   const myRun = S.run.run_id;
   const myEpoch = bump();
   t = Math.max(0, Math.min(t, maxT()));
-  if (!yearNavAlive(myEpoch, myRun, myOp)) return { ok: false, reason: "stale" };
-  const finish = (hadRec) => {
-    if (!yearNavAlive(myEpoch, myRun, myOp)) return { ok: false, reason: "stale" };
+  if (!yearNavAlive(myEpoch, myRun, myOp)) return navResult("stale");
+  let loadGen = 0;
+  const finishOk = () => {
+    if (!yearNavAlive(myEpoch, myRun, myOp)) {
+      endYearLoad(loadGen);
+      return navResult("stale");
+    }
     cancelFx({ keepStatic: !!opts.keepEvent && !!S.selEvent });
     if (!opts.keepEvent && S.selEvent) {
       const ey = DirectorLogic.yearFromEventId(S.selEvent);
       if (ey != null && ey !== t) S.selEvent = null;
     }
-    commitYear(t);
+    endYearLoad(loadGen);
+    commitYear(t, null);
     renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents();
-    if (hadRec) renderTech();
+    renderTech();
     if (!opts.quiet) renderCharts();
     if (S.evScope === "until") prefetchYears(myRun, t);
-    return { ok: true, t: t };
+    return navResult("success", { t: t });
   };
   if (S.years.has(ykey(myRun, t))) {
-    return finish(true);
+    return finishOk();
   }
-  setYearLoadOverlay(t, true);
+  loadGen = beginYearLoad(t, myOp, myRun);
   let rec;
   try { rec = await api(`/api/runs/${myRun}/year/${t}`); }
   catch (e) {
-    if (!yearNavAlive(myEpoch, myRun, myOp)) return { ok: false, reason: "stale" };
+    if (!yearNavAlive(myEpoch, myRun, myOp)) {
+      endYearLoad(loadGen);
+      return navResult("stale");
+    }
     const pending = isPendingYearError(e, t);
-    S.yearWait = { runId: myRun, t: t, pending: pending, status: e.status, message: e.message };
-    commitYear(t);
+    const kind = pending ? "pending404" : "failed";
+    endYearLoad(loadGen);
+    commitYear(t, {
+      runId: myRun, t: t, pending: pending, status: e.status, message: e.message,
+    });
     if (!pending) flash("读取第 " + t + " 年失败：" + e.message, true);
     renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents();
-    return { ok: false, reason: e.message };
+    renderYearFailBar();
+    return navResult(kind, { t: t, reason: e.message, status: e.status });
+  }
+  if (!yearNavAlive(myEpoch, myRun, myOp)) {
+    if (!stale(myEpoch, myRun)) {
+      S.years.set(ykey(myRun, t), rec);
+      delete S.yearMiss[yearMissKey(myRun, t)];
+    }
+    endYearLoad(loadGen);
+    return navResult("stale");
   }
   S.years.set(ykey(myRun, t), rec);
   delete S.yearMiss[yearMissKey(myRun, t)];
-  return finish(true);
+  return finishOk();
 }
 function playDelay() {
   return Math.max(80, (S.playMode === "events" ? 900 : 600) / Math.max(S.speed || 1, 0.25));
@@ -1344,7 +1427,7 @@ function tick() {
     setPlaying(false); return;
   }
   gotoYear(S.t + 1, { quiet: true, opGen: myOp }).then((gy) => {
-    if (!opAlive(myOp) || !gy || !gy.ok) return;
+    if (!afterPlayStep(gy, myOp)) return;
     renderCharts();
     if (!opAlive(myOp) || !S.playing) return;
     S.timer = setTimeout(tick, playDelay());
@@ -1862,7 +1945,8 @@ async function gotoEventYear(t) {
   bumpOp();
   const myOp = S.opGen;
   const gy = await gotoYear(t, { opGen: myOp });
-  if (!opAlive(myOp) || !gy || !gy.ok) return { ok: false, reason: "stale" };
+  if (!opAlive(myOp) || !gy || gy.kind === "stale") return gy || navResult("stale");
+  if (!gy.ok) return gy;
   const rec = recNow();
   if (rec && rec.events && rec.events.length) {
     return focusEvent(Object.assign({}, rec.events[0], { t: t, _i: 0 }), { opGen: myOp });
@@ -1906,14 +1990,14 @@ async function tickEvents() {
     const idx = items.findIndex((e) => DirectorLogic.eventKey(e, S.t, e._i) === S.selEvent);
     if (idx < 0) {
       const fe = await focusEvent(items[0], { fromPlay: true, skipMap: mapIsCurrent(), opGen: myOp });
-      if (!opAlive(myOp) || !fe || !fe.ok) return;
+      if (!afterPlayStep(fe, myOp)) return;
       if (!S.playing || !opAlive(myOp)) return;
       S.timer = setTimeout(tick, playDelay());
       return;
     }
     if (idx + 1 < items.length) {
       const fe = await focusEvent(items[idx + 1], { fromPlay: true, skipMap: mapIsCurrent(), opGen: myOp });
-      if (!opAlive(myOp) || !fe || !fe.ok) return;
+      if (!afterPlayStep(fe, myOp)) return;
       if (!S.playing || !opAlive(myOp)) return;
       S.timer = setTimeout(tick, playDelay());
       return;
@@ -1930,18 +2014,20 @@ async function tickEvents() {
     return;
   }
   const gy = await gotoYear(ny, { quiet: true, opGen: myOp });
-  if (!opAlive(myOp) || !gy || !gy.ok) return;
+  if (!afterPlayStep(gy, myOp)) return;
   const rec2 = recNow();
   if (!rec2) {
     if ($("tl-note")) $("tl-note").textContent = "第 " + ny + " 年的记录尚未加载，不把空清单当成 0 条事件。";
+    if (S.playing && opAlive(myOp)) S.timer = setTimeout(tick, 700);
     return;
   }
   if (!rec2.events || !rec2.events.length) {
     if ($("tl-note")) $("tl-note").textContent = "第 " + ny + " 年曲线记有事件，但事件清单缺失。不补编。";
+    if (S.playing && opAlive(myOp)) S.timer = setTimeout(tick, playDelay());
     return;
   }
   const fe = await focusEvent(Object.assign({}, rec2.events[0], { t: ny, _i: 0 }), { fromPlay: true, opGen: myOp });
-  if (!opAlive(myOp) || !fe || !fe.ok) return;
+  if (!afterPlayStep(fe, myOp)) return;
   if (!S.playing || !opAlive(myOp)) return;
   S.timer = setTimeout(tick, playDelay());
 }
@@ -1958,11 +2044,13 @@ async function focusEvent(ev, opts) {
   const myFx = S.fxGen;
   if (t != null && t !== S.t) {
     const gy = await gotoYear(t, { quiet: opts.quiet, keepEvent: true, opGen: myOp });
-    if (!opAlive(myOp) || !gy || !gy.ok) return { ok: false, reason: "stale" };
+    if (!opAlive(myOp) || !gy || gy.kind === "stale") return gy || navResult("stale");
+    if (!gy.ok) return gy;
   }
-  if (!opAlive(myOp)) return { ok: false, reason: "stale" };
-  if (!S.run || (myRun && S.run.run_id !== myRun)) return { ok: false, reason: "stale" };
-  if (t != null && S.t !== t) return { ok: false, reason: "stale" };
+  if (!opAlive(myOp)) return navResult("stale");
+  if (!S.run || (myRun && S.run.run_id !== myRun)) return navResult("stale");
+  if (t != null && S.t !== t) return navResult("stale");
+  if (!recNow() && t != null) return navResult("failed", { t: t, reason: "missing-record" });
   const rec = recNow();
   const resolved = (rec && rec.events)
     ? findEventByKey(DirectorLogic.eventKey(ev, t, ev._i), S.t) || Object.assign({}, ev, { t: S.t })
@@ -1993,7 +2081,7 @@ async function focusEvent(ev, opts) {
   const evNode = document.querySelector('#events .ev[data-eid="' + S.selEvent + '"]');
   if (evNode && evNode.scrollIntoView) evNode.scrollIntoView({ block: "nearest" });
   if (focus.locate && focus.cells.length) panToCell(focus.cells[0], myFx);
-  return { ok: true };
+  return navResult("success", { t: S.t, event: S.selEvent });
 }
 
 function jumpToEvent(ev) {
@@ -2240,6 +2328,7 @@ async function boot() {
     const b = e.target.closest("[data-mode]"); if (!b) return;
     setPlayMode(b.dataset.mode);
   });
+  if ($("b-retry-year")) $("b-retry-year").addEventListener("click", () => { retryYear(); });
   if ($("band-scope")) $("band-scope").addEventListener("click", (e) => {
     const b = e.target.closest("[data-scope]"); if (!b) return;
     S.bandScope = b.dataset.scope === "full" ? "full" : "as_of";
@@ -2515,7 +2604,8 @@ async function startRun() {
 
 window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot, startRun, setLayer,
   setPlayMode, focusEvent, cancelFx, loadBand, gotoEventYear, stepEventYear, findEventByKey,
-  bumpOp, opAlive, bandAccept, bandCacheKey, applyBandDossier, setPlaying, tickEvents, tick };
+  bumpOp, opAlive, bandAccept, bandCacheKey, applyBandDossier, setPlaying, tickEvents, tick,
+  navResult, beginYearLoad, endYearLoad, afterPlayStep, retryYear, reapNavUi, renderYearFailBar };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {

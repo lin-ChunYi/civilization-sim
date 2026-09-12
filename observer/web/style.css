@@ -232,6 +232,10 @@ footer{color:var(--muted);font-size:12px;padding:12px 24px 28px;text-align:cente
 .year-display.pulse{animation:yearpulse .35s ease}
 
 .cell.hover{stroke:#f3deaa;stroke-width:2}
+.year-fail{margin:6px 0 4px;padding:6px 10px;border:1px solid var(--danger);border-radius:8px;
+  background:rgba(196,92,82,.12);display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+  font-size:12.5px;color:#f0b8b2}
+.year-fail[hidden]{display:none !important}
 .director-card{margin:6px 0 4px;padding:8px 10px;border:1px solid var(--gold);border-radius:8px;
   background:rgba(26,20,8,.45)}
 .director-card .dir-title{font-weight:700;color:var(--gold2);margin:0 0 4px}
