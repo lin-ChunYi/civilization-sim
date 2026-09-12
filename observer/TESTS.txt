@@ -17,7 +17,7 @@ O2 指标与账本自洽（逐年）
   O3 实体 id 以字符串下发                                PASS   6 个群体
 
 O4 接口与持久化
-  O4a 合法参数可以启动运行                                 PASS   {'run_id': '15fede83469f', 'status': 'queued'}
+  O4a 合法参数可以启动运行                                 PASS   {'run_id': '7f9534067084', 'status': 'queued'}
   O4b 子进程算完并落盘                                   PASS   状态=done
   O5 任选三个年份与独立重跑的快照/账本完全一致                       PASS   年份 [0, 30, 60] 全对
   O5b 服务端记录的 full_digest == 直接跑模型的结果             PASS   778398d1aa6c62e54c2cc187
@@ -27,7 +27,7 @@ O4 接口与持久化
   O7a 非法参数被服务端拒绝                                 PASS   [400, 400, 400, 400, 400, 422, 422]
   O7b 越界年份返回 404                                 PASS
   O7c 不存在的运行返回 404                               PASS
-  O8 有活着的任务在跑时拒绝重复启动                             PASS   {'detail': '已有任务在跑（15fede83469f，60/60 年）。本版同时只执行一个模拟任务，请等它结束
+  O8 有活着的任务在跑时拒绝重复启动                             PASS   {'detail': '已有任务在跑（7f9534067084，60/60 年）。本版同时只执行一个模拟任务，请等它结束
   O9 重启后未完成任务被标为中断（不假装续跑）                        PASS   1 个 → interrupted
   O9b 中断的运行仍可回放已算出的年份                            PASS
   O10a 设了令牌后，写操作无令牌被拒                            PASS
@@ -36,7 +36,7 @@ O4 接口与持久化
   O11 预生成案例存在且被标记为 preset（不冒充实时任务）               PASS   ['preset-s4242-sig400-mort50']
 
 O13 任务槽与状态转换
-  O13a 两个同时占槽的请求只有一个成功                           PASS   结果=['edf190b92802', None]
+  O13a 两个同时占槽的请求只有一个成功                           PASS   结果=['e942fabbf66c', None]
   O13b 工作进程 queued->running 只能成功一次               PASS
   O13c 写 pid 不会把 running 打回 queued               PASS   running
   O13d 被判中断后，旧工作进程改不回 done                       PASS   finish=False 状态=interrupted
@@ -68,8 +68,8 @@ O19 任务槽回收（进程没了就不该继续占着槽）
   O19e 活着的工作进程不会被误回收                             PASS   running
   O19f 进程被杀之后才回收                                 PASS   interrupted
   O19g0 前提：槽确实被一条死记录占着                           PASS
-[observer] 回收了 1 个无人执行的任务槽：[{'run_id': '2fc036f298cf', 'from': 'running', 'why': '工作进程已不在（被结束或异常退出）'}]
-  O19g 接口层：死记录被回收后新运行能启动                         PASS   200 {'run_id': 'da26cb281330', 'status': 'queued'}
+[observer] 回收了 1 个无人执行的任务槽：[{'run_id': 'b3bf03111fdd', 'from': 'running', 'why': '工作进程已不在（被结束或异常退出）'}]
+  O19g 接口层：死记录被回收后新运行能启动                         PASS   200 {'run_id': '499412580230', 'status': 'queued'}
   O19h 新运行正常跑完                                   PASS   done
 
 O20 状态转换表：终态不可逆
@@ -90,7 +90,7 @@ O24 EXP-04 引擎接入观察台（信息交换事件可展示）
   O24b exp03 引擎不接受 SHARE_M                       PASS   {'detail': '引擎 exp03 没有 SHARE_M 这个参数，要用同格信息交换请选 exp04'}
   O24c 未登记的引擎被拒                                  PASS
   O24d SHARE_M 越界被拒                              PASS
-  O24e exp04 运行可以启动                              PASS   {'run_id': '95832c356588', 'status': 'queued'}
+  O24e exp04 运行可以启动                              PASS   {'run_id': 'b8b53fe08f46', 'status': 'queued'}
   O24f exp04 运行跑完                                PASS   done 
   O24g 年份记录里带信息账（share 段）                        PASS   ['t', 'stock', 'bands', 'cum', 'year', 'agg', 'integrity', 'events', 'share']
   O24h 信息账恒等误差为 0                                PASS   0
@@ -104,7 +104,7 @@ O25 EXP-05 引擎接入观察台（食物援助事件可展示）
   O25b exp04 引擎不接受 AID_M                         PASS   {'detail': '引擎 exp04 没有 AID_M 这个参数，要用同格食物援助请选 exp05'}
   O25c AID_M 越界被拒                                PASS
   O25d AID_M 非整数被拒（422）                          PASS
-  O25e exp05 运行可以启动                              PASS   {'run_id': 'ba36553926ab', 'status': 'queued'}
+  O25e exp05 运行可以启动                              PASS   {'run_id': 'eafd92352d0e', 'status': 'queued'}
   O25f exp05 运行跑完                                PASS   done 
   O25g 台账记下了 aid_m 与引擎                           PASS
       第 73 年的一条援助事件：群体-6876D3 向 群体-97AC8E 援助了 1379136 kcal（1.89 人年口粮），地点在第 14 号格
@@ -130,16 +130,16 @@ O18 前端回归（headless Chrome 驱动真实 app.js）
       PASS T0 自检页能驱动真实 app.js 启动
       PASS T1a 切换后当前运行仍是 B :: run=B
       PASS T1b 迟到的 A 年份没有改写回放年份 :: t=0
-      PASS T1c 侧栏显示的是 B 的人口 :: 总人口222,222 人群体数1 个野外资源存量640.0 人年口粮 / 467
+      PASS T1c 侧栏显示的是 B 的人口 :: 总人口222,222 人群体数1 个野外食物640.0 人年口粮 / 467,2
       PASS T1d 标题栏对应 B
       PASS T1e 时间轴年份显示 0 :: 0
-      PASS T1f 迟到的 A 响应没有污染 B 的第 5 年 :: 总人口222,222 人群体数1 个野外资源存量
+      PASS T1f 迟到的 A 响应没有污染 B 的第 5 年 :: 总人口222,222 人群体数1 个野外食物64
       PASS T2a A 与 B 的同一年各存各的 :: 111111/222222
       PASS T2b 界面显示的是 B 的数据
       PASS T3 取消选中后迟到的轨迹没有贴上来
       PASS T4 meta 先空后补取 :: 先空=true 后有=true
       PASS T5a 备注里的 HTML 没有变成元素 :: 元素数=0
-      PASS T5b 备注按字面文本显示 :: 运行状态seed年数SIGMA_M
+      PASS T5b 备注按字面文本显示 :: 运行状态引擎seed年数SIGMA_M
       PASS T5c 错误信息里的 script 也是字面文本
       PASS T5d 没有触发注入的事件
       PASS T5e 没有生成任何 on* 事件属性
