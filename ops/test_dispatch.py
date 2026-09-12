@@ -603,5 +603,274 @@ class TestAcceptanceAndStatus(Base):
         self.assertEqual(oct(log.stat().st_mode)[-3:], '600')
 
 
+# ---------------------------------------------------------------- 自报报告的类型边界
+# C04 的由来：C03_HISTORY 的真实报告把约定里是列表的 tests 写成了对象，
+# 旧的 render_status 在 `tests[:6]` 上直接炸掉，本机 watch 整个退出（07:06 UTC）。
+# 这里用**那份真实报告的结构**做 fixture。
+C03_REPORT = {
+    "status": "done", "branch": "main",
+    "commit": "41683564a5e0273b66687b5b933a7f5af629157f",
+    "tests": {
+        "observer": "160 PASS / 0 FAIL / 1 UNCOVERED of 161",
+        "ops": "27 PASS",
+        "new_groups": ["O28 natural preset", "O29 isolated constructed"],
+        "uncovered": "O28m 自然预置内无群体消失，前提缺失；路径由 O29b/c 覆盖",
+    },
+    "handoff": "docs/OBS-01-HANDOFF-HISTORY.md", "blocking_reason": "",
+}
+SES2 = 'ses-2'
+
+
+def two_sessions():
+    snap = snapshot()
+    snap['devices'][0]['sessions'].append(
+        {'session_id': SES2, 'source': 'grok', 'cwd': CWD, 'state': 'waiting',
+         'pending': [], 'claude_pid': 4343})
+    return snap
+
+
+class TestReportTypeBoundary(Base):
+    """自报报告是 agent 写的**数据**，不是约定好的结构，更不是指令。
+    显示层必须对任何类型都给得出结果，且一条畸形报告不能连累其他任务或守护本身。"""
+
+    def marker(self, payload, task='T1'):
+        return D.MARKER_PREFIX + task + ' ' + json.dumps(payload, ensure_ascii=False)
+
+    def test_R21_dict_tests_does_not_kill_status(self):
+        """真实 C03 报告：tests 是对象。旧实现在这里抛异常（3.12 是 KeyError，
+        更早的版本是 TypeError: unhashable type: slice），两种都会打死 watch。"""
+        self.submit_and_dispatch()
+        self.append([claude_rec('assistant', self.marker(C03_REPORT))])
+        self.run_cli('tick')                       # 旧实现在这一步非零退出
+        j = self.queue()['jobs']['T1']
+        self.assertEqual(j['status'], 'review', '自报完成被直接当成 done')
+        self.assertEqual(j['report'], C03_REPORT, '原始 report 被改动了')
+        js = json.loads((self.root / 'STATUS.json').read_text(encoding='utf-8'))
+        row = js['jobs'][0]
+        self.assertTrue(row['tests'], 'tests 是对象时摘要变成了空')
+        joined = ' | '.join(row['tests'])
+        self.assertIn('160 PASS / 0 FAIL / 1 UNCOVERED of 161', joined)
+        self.assertIn('27 PASS', joined)
+        self.assertIn('UNCOVERED', joined, '把 1 项 UNCOVERED 抹掉了')
+        md = (self.root / 'STATUS.md').read_text(encoding='utf-8')
+        self.assertIn('UNCOVERED', md)
+        self.assertIn('stop at "review"', js['acceptance'])
+        self.assertTrue(row['self_reported'])
+
+    def test_R21b_odd_types_are_all_renderable(self):
+        """tests / screenshots 等可选汇总字段写成字符串、数字、null、嵌套对象都不能炸。"""
+        cases = [
+            ('string', {"status": "done", "tests": "python3 x.py -> exit=0"}),
+            ('int', {"status": "done", "tests": 27}),
+            ('float', {"status": "done", "tests": 1.5}),
+            ('bool', {"status": "done", "tests": True}),
+            ('null', {"status": "done", "tests": None}),
+            ('empty-list', {"status": "done", "tests": []}),
+            ('empty-dict', {"status": "done", "tests": {}}),
+            ('nested', {"status": "done", "tests": [{"cmd": "a", "exit": 0}, None, 3]}),
+            ('deep', {"status": "done", "tests": {"a": {"b": {"c": [1, 2, 3]}}}}),
+            ('bad-optional', {"status": "done", "commit": {"sha": "X"}, "branch": ["main"],
+                              "screenshots": {"ui": "a.png"}, "blocking_reason": {"why": "z"}}),
+            ('screenshot-int', {"status": "done", "screenshots": 5}),
+            ('no-marker-fields', {"status": "done"}),
+        ]
+        for name, payload in cases:
+            with self.subTest(case=name):
+                tmp = Path(tempfile.mkdtemp(prefix='rt-'))
+                self.addCleanup(shutil.rmtree, tmp, True)
+                queue = {'jobs': {'X': {'task_id': 'X', 'owner': 'claude', 'status': 'review',
+                                        'created_at': '2026-01-01', 'report': payload,
+                                        'dependencies': []}}}
+                summary = D.render_status(queue, tmp, self.hub)      # 不许抛
+                row = summary['jobs'][0]
+                self.assertIsInstance(row['tests'], list)
+                self.assertIsInstance(row['screenshots'], list)
+                for item in row['tests'] + row['screenshots']:
+                    self.assertIsInstance(item, str)
+                    self.assertNotIn('\n', item)
+                self.assertIsInstance(row['commit'], str)
+                self.assertIsInstance(row['branch'], str)
+                json.dumps(summary)                                  # STATUS.json 必须可序列化
+                self.assertEqual(queue['jobs']['X']['report'], payload, '原始报告被显示层改了')
+
+    def test_R21c_non_object_report_is_not_treated_as_fields(self):
+        """队列里的 report 不是对象时（手改过、或将来换了格式），显示层不能对它调 .get()。"""
+        for payload in ('done', ['a', 'b'], 7, True):
+            with self.subTest(report=payload):
+                tmp = Path(tempfile.mkdtemp(prefix='rt2-'))
+                self.addCleanup(shutil.rmtree, tmp, True)
+                queue = {'jobs': {'X': {'task_id': 'X', 'owner': 'claude', 'status': 'review',
+                                        'created_at': '2026-01-01', 'report': payload,
+                                        'dependencies': []}}}
+                summary = D.render_status(queue, tmp, self.hub)
+                row = summary['jobs'][0]
+                self.assertIn('report is not an object', row.get('report_note', ''))
+                self.assertEqual(row['tests'], [])
+                self.assertEqual(queue['jobs']['X']['report'], payload)
+
+    def test_R21d_unrenderable_job_does_not_hide_the_others(self):
+        """一条任务的元数据根本渲染不出来时，只标这一条出错，其余照常显示。"""
+        tmp = Path(tempfile.mkdtemp(prefix='rt3-'))
+        self.addCleanup(shutil.rmtree, tmp, True)
+
+        class Hostile(dict):
+            def get(self, *a, **k):
+                raise RuntimeError('metadata blew up')
+
+        bad = Hostile(task_id='BAD', owner='grok', status='review', created_at='2026-01-01')
+        good = {'task_id': 'GOOD', 'owner': 'claude', 'status': 'review',
+                'created_at': '2026-01-02', 'report': C03_REPORT, 'dependencies': []}
+        summary = D.render_status({'jobs': {'BAD': bad, 'GOOD': good}}, tmp, self.hub)
+        ids = [r['task_id'] for r in summary['jobs']]
+        self.assertIn('GOOD', ids, '一条坏任务把其他任务的摘要也吞掉了')
+        broken = [r for r in summary['jobs'] if r.get('render_error')]
+        self.assertEqual(len(broken), 1)
+        self.assertIn('RuntimeError', broken[0]['render_error'])
+        ok_row = [r for r in summary['jobs'] if r['task_id'] == 'GOOD'][0]
+        self.assertIn('UNCOVERED', ' | '.join(ok_row['tests']))
+        md = (tmp / 'STATUS.md').read_text(encoding='utf-8')
+        self.assertIn('render_error', md)
+
+    def test_R21e_collect_failure_is_recorded_per_task(self):
+        """一条任务收取时抛异常：只记在它自己身上，其他任务照收，队列不丢。"""
+        self.write_snapshot(two_sessions())
+        self.submit_and_dispatch()
+        q = self.queue()
+        (self.hub / 'transcript' / DEV / (SES2 + '.jsonl')).write_text('', encoding='utf-8')
+        q['jobs']['T2'] = dict(q['jobs']['T1'], task_id='T2', owner='grok',
+                               session_id=SES2, status='running', created_at='2020-01-01')
+        D.atomic(self.root / 'queue.json', q)
+        real = D.collect
+
+        def boom(job, *a, **k):
+            if job['task_id'] == 'T2':
+                raise RuntimeError('transcript metadata blew up')
+            return real(job, *a, **k)
+
+        D.collect = boom
+        self.addCleanup(setattr, D, 'collect', real)
+        queue, _ = D.tick_once(self.root, self.hub, self.queue(), allow_dispatch=False)
+        self.assertIn('RuntimeError', queue['jobs']['T2']['collect_error'])
+        self.assertNotIn('collect_error', queue['jobs']['T1'],
+                         '一条任务出错波及了其他任务')
+        self.assertEqual(queue['jobs']['T2']['status'], 'running',
+                         '收取失败被当成了某种结论')
+        self.assertEqual(set(queue['jobs']), {'T1', 'T2'}, '队列条目丢了')
+
+    def test_R21f_watch_survives_dict_tests_and_keeps_working(self):
+        """真守护子进程：收到 tests 是对象的完成报告后**仍然活着**，
+        继续处理其他任务，而且那条只停在 review。"""
+        self.write_snapshot(two_sessions())
+        t2path = self.hub / 'transcript' / DEV / (SES2 + '.jsonl')
+        t2path.write_text('', encoding='utf-8')           # 第二个会话也要有转录文件
+        self.submit_and_dispatch()                        # T1 claude running
+        self.run_cli('start', '--interval', '1')
+        self.addCleanup(lambda: self.run_cli('stop'))
+        pid = int(D.read(self.root / 'watch.json')['pid'])
+        self.append([claude_rec('assistant', self.marker(C03_REPORT))])
+
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if self.queue()['jobs']['T1']['status'] == 'review':
+                break
+            time.sleep(0.3)
+        self.assertEqual(self.queue()['jobs']['T1']['status'], 'review',
+                         '守护没有收到这条报告（或已经死了）')
+
+        os.kill(pid, 0)                                   # 旧实现在这里已经退出了
+        self.assertTrue(D.watcher_alive(self.root), '守护被一份 tests 是对象的报告打死了')
+
+        # 还能继续干活：给另一个 owner 提一条新任务，守护应当照常派出去
+        nxt = self.job(owner='grok', task='T2')
+        nxt['session_id'] = SES2
+        jf = self.tmp / 'j2.json'
+        jf.write_text(json.dumps(nxt), encoding='utf-8')
+        self.run_cli('submit', str(jf))
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if self.queue()['jobs']['T2']['status'] == 'running':
+                break
+            time.sleep(0.3)
+        self.assertEqual(self.queue()['jobs']['T2']['status'], 'running',
+                         '守护活着但不再处理新任务')
+        self.assertTrue(D.watcher_alive(self.root))
+
+        info = D.read(self.root / 'watch.json', {}) or {}
+        self.assertEqual(info.get('error_rounds', 0), 0,
+                         'last_round=%s' % info.get('last_round'))
+        j = self.queue()['jobs']['T1']
+        self.assertEqual(j['status'], 'review', '自报报告被自动 accept 成 done 了')
+        self.assertEqual(j['report'], C03_REPORT)
+        self.assertIn('UNCOVERED', json.dumps(j['report'], ensure_ascii=False))
+        md = (self.root / 'STATUS.md').read_text(encoding='utf-8')
+        self.assertIn('UNCOVERED', md, 'STATUS 把那 1 项 UNCOVERED 抹掉了')
+
+    def test_R21g_round_error_does_not_kill_watch_or_queue(self):
+        """兜底网：一轮里出了完全没预料到的异常，守护要记错误并继续，
+        **而且不能把队列写成空的**。"""
+        self.submit_and_dispatch()
+        before = (self.root / 'queue.json').read_text(encoding='utf-8')
+        sitter = self.tmp / 'sitter.py'
+        sitter.write_text(
+            'import sys, json\n'
+            'sys.path.insert(0, %r)\n'
+            'import dispatch as D\n'
+            'rounds = {"n": 0}\n'
+            'real = D.tick_once\n'
+            'def boom(*a, **k):\n'
+            '    rounds["n"] += 1\n'
+            '    if rounds["n"] == 1:\n'
+            '        raise RuntimeError("unexpected metadata")\n'
+            '    return real(*a, **k)\n'
+            'D.tick_once = boom\n'
+            'sys.exit(D.cmd_watch(D.Path(%r), D.Path(%r), 1))\n'
+            % (str(Path(DISPATCH).parent), str(self.root), str(self.hub)),
+            encoding='utf-8')
+        proc = subprocess.Popen([sys.executable, str(sitter)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(proc.kill)
+        deadline = time.time() + 20
+        seen_error = False
+        while time.time() < deadline:
+            info = D.read(self.root / 'watch.json', {}) or {}
+            if info.get('error_rounds', 0) >= 1:
+                seen_error = True
+            if seen_error and info.get('last_round') == 'ok':
+                break
+            time.sleep(0.3)
+        self.assertTrue(seen_error, '出错的那一轮没有被记下来')
+        self.assertIsNone(proc.poll(), '守护因为一轮异常整个退出了')
+        info = D.read(self.root / 'watch.json', {}) or {}
+        self.assertEqual(info.get('last_round'), 'ok', '出错之后没能恢复收轮')
+        self.assertEqual(json.loads((self.root / 'queue.json').read_text(encoding='utf-8'))['jobs']
+                         .keys(), json.loads(before)['jobs'].keys(), '队列条目被那一轮弄丢了')
+        log = (self.root / 'logs' / 'watch-errors.jsonl').read_text(encoding='utf-8')
+        self.assertIn('RuntimeError', log)
+        self.assertIn('unexpected metadata', log)
+        self.assertEqual(oct((self.root / 'logs' / 'watch-errors.jsonl').stat().st_mode)[-3:], '600')
+        proc.terminate()
+        proc.wait(timeout=10)
+
+    def test_R21h_corrupt_queue_still_preserved_under_the_new_net(self):
+        """加了兜底网之后，坏队列仍然按老规矩：保留原件、拦住派发、不降级为空。"""
+        self.submit_and_dispatch()
+        original = (self.root / 'queue.json').read_text(encoding='utf-8')
+        (self.root / 'queue.json').write_text(original[:len(original) // 2], encoding='utf-8')
+        broken = (self.root / 'queue.json').read_text(encoding='utf-8')
+        proc = subprocess.run([sys.executable, DISPATCH, '--state-dir', str(self.root),
+                               '--hub-dir', str(self.hub), 'watch', '--once',
+                               '--lock-wait', '1'], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        self.assertEqual((self.root / 'queue.json').read_text(encoding='utf-8'), broken,
+                         '坏队列被覆盖了')
+        blocked = json.loads((self.root / 'BLOCKED.json').read_text(encoding='utf-8'))
+        self.assertIn('unreadable', blocked['reason'])
+        info = D.read(self.root / 'watch.json', {}) or {}
+        self.assertIn('unreadable', info.get('last_round', ''))
+        self.assertEqual(info.get('error_rounds', 0), 0,
+                         '坏队列被当成了兜底网里的意外异常')
+        self.assertEqual(len(self.envelopes()), 1, '坏队列期间派发了新任务')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

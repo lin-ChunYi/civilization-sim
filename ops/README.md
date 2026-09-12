@@ -66,6 +66,32 @@ python3 ops/dispatch.py resume
 当前任务、下一项、提交号、实测命令、截图、阻塞原因。
 **完整提示词与转录正文只留在 `<state-dir>/logs/*`（0600），STATUS 里一个字都没有。**
 
+### 自报报告是**数据**，不是约定好的结构
+
+`CIV_RESULT_<任务> {...}` 后面那段 JSON 是 agent 自己写的。约定里 `tests` / `screenshots`
+是列表，但实际接力里它可能是对象、字符串、数字、`null`，甚至整段不是对象。
+**显示层对任何类型都必须给得出结果**：
+
+- 原始报告一个字不改地留在 `queue.json` 的 `job.report` 里 —— 摘要只是摘要，要看全的看它。
+- `STATUS` 里的 `tests` / `screenshots` 一律是**字符串列表**：对象按 `键: 值` 展开、
+  标量转成一行文本、`null` 给空列表。条数超过 6 条时末尾补"另有 N 项"，**不静默丢**。
+- 显示层只做 `str()` / `json.dumps()`：**不对原始对象取下标或切片、不格式化、不求值、
+  不执行**里面的任何内容。
+- 报告整段不是对象时，行里标 `report_note: report is not an object: …`，
+  不去猜它想说什么。
+- **自报永远只到 `review`。** 报告格式再标准也不是验收，`done` 必须由外部
+  `accept --evidence` 带证据给。
+
+一条任务的报告畸形或元数据渲染不出来时，只标这一条（`render_error` / `collect_error`），
+**其余任务照常收取与显示，守护继续活着**。C04 之前不是这样：`tests[:6]` 在一个对象上
+直接抛异常（Python 3.12 是 `KeyError: slice(...)`，更早的版本是
+`TypeError: unhashable type: slice`），整个 watch 跟着退出。
+
+轮次级还有最后一道兜底网：一轮里出了完全没预料到的异常，记进
+`<state-dir>/logs/watch-errors.jsonl`（0600）与 `watch.json` 的 `error_rounds`，
+下一轮继续。**它不覆盖坏队列那条规则** —— `queue.json` 读不出来仍然是保留原件、
+拦住派发、报 `blocked`，不会被当成"意外异常"含糊过去。
+
 投递结果分成互不含糊的几类，别混着看：
 
 | receipt_state | 含义 |
@@ -154,7 +180,7 @@ python3 ops/dispatch.py submit ops/jobs/G01_R1.json
 ## 测试
 
 ```bash
-python3 ops/test_dispatch.py      # 27 项，全部在临时目录里造假 hub
+python3 ops/test_dispatch.py      # 35 项，全部在临时目录里造假 hub
 ```
 
 不碰本机任何真实会话与真实 outbox（PID 复用那条也只拿测试自己起的 `sleep` 当靶子）。
@@ -163,10 +189,15 @@ python3 ops/test_dispatch.py      # 27 项，全部在临时目录里造假 hub
 `agent_prompt_stalled` 与半写回执判 unknown、留着 ack/信封也能按时判 unknown、
 安全重排的边界、不重发与重启、并发锁下守护存活、暂停只通知一次、
 `stop` 拒绝对身份不明的 pid 发信号、损坏 queue.json 保留原件并拦住派发、
-拒收/返工闭环、`screenshots[]`、自报不等于验收、STATUS 脱敏。
+拒收/返工闭环、`screenshots[]`、自报不等于验收、STATUS 脱敏、
+自报报告的类型边界（R21 组：真实 C03 报告里 `tests` 是对象、字符串/数字/布尔/`null`/
+嵌套对象/坏可选字段、报告整段不是对象、单条任务渲染失败不连累其他任务、
+收取失败按任务记录、**真守护子进程收到对象型 `tests` 后仍然活着并继续派下一个任务**、
+轮次异常不杀守护也不丢队列、坏队列仍按原规则保留）。
 
-每条都验证过"把对应防护去掉就会红"：把这 27 项拿去跑 `aff0ed5` 会红 13 项，
-跑 `3abe009` 会红 3 项（跨 chunk 的 tag、同 tick 两份返工、running 被返工插队）。
+每条都验证过"把对应防护去掉就会红"：把这 35 项拿去跑 `aff0ed5` 会红 13 项，
+跑 `3abe009` 会红 3 项（跨 chunk 的 tag、同 tick 两份返工、running 被返工插队），
+跑 `4168356`（C04 之前）会红 15 项（3 failures + 12 errors）。
 
 ## 边界（写明，别指望）
 
@@ -177,5 +208,7 @@ python3 ops/test_dispatch.py      # 27 项，全部在临时目录里造假 hub
 - **状态文件坏了不会被悄悄覆盖**：`queue.json` 读不出来时会把原件另存为
   `queue.corrupt.<时间戳>.json`，然后拦住一切派发并报 `blocked`（退出码 2），
   等人修好，绝不拿一个空队列写回去。
+- **报告内容不做真伪判断**：类型归一化只保证"显示得出来、不打死守护"，
+  它不检查 commit 是否存在、测试是否真跑过。那是独立验收的事。
 - 没有网络端口、没有远程命令入口。
 - 不新建 Redis / 微服务 / Agent 平台，这个文件就是全部。
