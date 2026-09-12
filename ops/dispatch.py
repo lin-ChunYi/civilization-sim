@@ -40,6 +40,13 @@ SNAPSHOT_STALE_SEC = 60
 QUOTA_HINTS = ('quota', 'rate limit', 'rate_limit', 'usage limit', '额度', '限流')
 # 文字与回车**已经送到**、只是没看到画面推进 —— 这类绝不是失败，更不能当成"没执行过"。
 STALL_HINTS = ('agent_prompt_stalled', 'stalled', 'no visible progress', 'prompt_stalled')
+# 这些回执明说了"结果未知"或"投递本身不安全/没重试"，**一律 unknown**：
+# 继续观察，绝不自动重发。真实例子：原生 Grok 终端回的
+# `[delivery state=unknown retry=none] ... native terminal unsafe ...`
+# 以前被归成 failed（虽然 safe_requeue=false），口径是错的 —— 它不是失败，是不知道。
+UNKNOWN_HINTS = ('delivery state=unknown', 'state=unknown', 'retry=none',
+                 'native terminal unsafe', 'terminal unsafe', 'outcome unknown',
+                 'result unknown', 'unsafe to retry')
 # 只有这些能证明"根本没送到对面"的失败，才允许无确认重排。
 NOT_DELIVERED_HINTS = ('session not found', 'no such session', 'device offline',
                        'not controllable', 'invalid envelope', 'unknown op',
@@ -57,7 +64,20 @@ RECEIPT_STATES = (
     'failed',            # 明确失败（ok:false / .err）
     'quota_blocked',     # 明确的额度/限流阻塞
     'unknown',           # 超时仍无回执：结果未知，绝不自动重发
+    # --- 以下只出现在 transport=grok-cli 的任务上 ---
+    'cli_launching',          # 认领已落盘，进程刚起（或还没确认起来）
+    'cli_running',            # 已核验是本调度启动的那个进程，仍在跑
+    'cli_observing',          # 接管观察的既有进程：只看，不发信号
+    'cli_exited_incomplete',  # 子进程退了，但日志没写完/读不全 —— 结果未知
+    'cli_no_unique_result',   # 退了、也没报错，但日志里没有唯一的结果标记
+    'permission_cancelled',   # 工具权限被取消（stopReason=cancelled）—— 不是完成，也不是用户放弃
+    'cli_failed',             # 明确的非零退出且不是上面几类
 )
+
+# 权限取消的真实证据（Grok CLI 的 JSON 输出里出现过这两个字段）。
+# **这不是"用户取消了整个任务"**：它只说明某一次工具调用没被允许。
+PERMISSION_CANCEL_HINTS = ('permissioncancelled', 'permission_cancelled',
+                           'permission cancelled', 'cancellationcategory')
 
 
 def now():
@@ -306,6 +326,11 @@ def classify_receipt(job, hub):
             return {'state': 'unknown', 'receipt': receipt, 'safe_requeue': False,
                     'detail': 'agent_prompt_stalled: text and Enter were delivered, only the '
                               'visible progress is missing; outcome unknown, no auto-resend'}
+        if _hint(blob, UNKNOWN_HINTS):
+            # 回执自己说了结果未知 / 投递不安全 / 没有重试 —— 那就是 unknown，不是失败。
+            return {'state': 'unknown', 'receipt': receipt, 'safe_requeue': False,
+                    'detail': 'receipt reports an unknown delivery outcome (%s); keep observing, '
+                              'no auto-resend' % str(receipt.get('error', ''))[:160]}
         if _hint(blob, QUOTA_HINTS):
             return {'state': 'quota_blocked', 'receipt': receipt, 'safe_requeue': False,
                     'detail': str(receipt.get('error', ''))[:200]}
@@ -320,6 +345,10 @@ def classify_receipt(job, hub):
         if _hint(low, STALL_HINTS):
             return {'state': 'unknown', 'safe_requeue': False,
                     'detail': 'agent_prompt_stalled receipt; outcome unknown, no auto-resend'}
+        if _hint(low, UNKNOWN_HINTS):
+            return {'state': 'unknown', 'safe_requeue': False,
+                    'detail': 'receipt reports an unknown delivery outcome; keep observing, '
+                              'no auto-resend: ' + detail[:160]}
         if _hint(low, QUOTA_HINTS):
             return {'state': 'quota_blocked', 'detail': detail, 'safe_requeue': False}
         return {'state': 'failed', 'detail': detail,
@@ -471,7 +500,11 @@ def tick_once(root, hub, queue, allow_dispatch=True):
     snapshot = read(snapshot_path, {}) or {}
     for job in queue['jobs'].values():
         try:
-            collect(job, root, hub, snapshot)
+            if is_cli(job):
+                cli_reclaim(job, root, queue)     # 重启后先按 token 认回来，不重跑
+                collect_cli(job, root)
+            else:
+                collect(job, root, hub, snapshot)
             job.pop('collect_error', None)
         except Exception as exc:                                     # noqa: BLE001
             # 一条任务的转录/回执/报告有问题，只记在这条任务上，**继续收其他任务**。
@@ -482,7 +515,10 @@ def tick_once(root, hub, queue, allow_dispatch=True):
 
     if queue.get('paused'):
         for job in queue['jobs'].values():
-            if send_pause_notice(job, root, hub, snapshot):
+            # grok-cli 是 headless 的，**没有安全的输入框**：一个字都不往里注入。
+            sent = cli_pause(job, root) if is_cli(job) \
+                else send_pause_notice(job, root, hub, snapshot)
+            if sent:
                 queue['pause_notices'] = queue.get('pause_notices', 0) + 1
         return queue, False
 
@@ -493,9 +529,13 @@ def tick_once(root, hub, queue, allow_dispatch=True):
     except OSError:
         stale = True
     if stale:
-        queue['note'] = 'Cockpit snapshot is stale or missing; no dispatch this round'
-        return queue, False
-    queue.pop('note', None)
+        # 只拦 Cockpit 通道。grok-cli 不经 Cockpit，它的可用性跟 snapshot 无关。
+        queue['note'] = ('Cockpit snapshot is stale or missing; no dispatch on the Cockpit '
+                         'transport this round (grok-cli tasks are unaffected)')
+        if not any(is_cli(j) and j['status'] == 'pending' for j in queue['jobs'].values()):
+            return queue, False
+    else:
+        queue.pop('note', None)
 
     # review/blocked 会占住 owner（防止越过验收就发下一个任务），
     # 但**明确指向它的返工任务**可以放行。rejected 不占用。
@@ -524,8 +564,26 @@ def tick_once(root, hub, queue, allow_dispatch=True):
                 continue
         if any(queue['jobs'].get(dep, {}).get('status') != 'done' for dep in job['dependencies']):
             continue
+        if stale and not is_cli(job):
+            continue                              # Cockpit 不在线：这条先不派
         try:
-            dispatch(job, root, hub, snapshot, queue)
+            if is_cli(job):
+                # 同一个 owner 只要还有活着的 CLI 进程，就不派下一个。
+                live = [j for j in queue['jobs'].values()
+                        if j is not job and j['owner'] == job['owner'] and is_cli(j)
+                        and j['status'] in ('running', 'blocked')
+                        and probe_cli(j) in ('alive', 'unknown')]
+                if live:
+                    job['blocking_reason'] = (
+                        'owner %s still has a live/unverified CLI run (%s); not launching'
+                        % (job['owner'], live[0]['task_id']))
+                    continue
+                if (job.get('cli') or {}).get('adopt'):
+                    adopt_cli(job, root, queue)
+                else:
+                    launch_cli(job, root, queue)
+            else:
+                dispatch(job, root, hub, snapshot, queue)
             # 立刻把本轮的占用身份换成刚派出去的这条。
             # 少了这一步，第二条 rework_of 指向同一个 review 的 pending 任务
             # 会在**同一个 tick 里**被一起派出去（同一个会话收到两份活）。
@@ -535,6 +593,522 @@ def tick_once(root, hub, queue, allow_dispatch=True):
         except (ValueError, OSError) as exc:
             job['blocking_reason'] = str(exc)
     return queue, sent
+
+
+# ------------------------------------------------- transport = grok-cli
+# 另一条投递通道：直接以**订阅版 headless CLI**跑一轮，和默认的 Cockpit 通道并存。
+# 边界写在前面，别指望这里有的东西：
+#   * 不经 Cockpit：CLI 是 headless 的，没有安全的输入框，**绝不 reply_inject**。
+#   * 不做实时 checkpoint：进程跑到哪一步我们看不见，只能读它自己写出来的日志。
+#     "下一个安全点停下"是**下一轮不再派**，不是把当前这一轮掐断。
+#   * 不切付费 API、不改任何全局配置、不自动 bypass / always-approve。
+#     权限规则必须在任务里逐条写明，缺一条就是缺一条。
+#   * 只对**本调度启动、且身份核验过**的 PID 发信号；接管观察的既有进程一个信号都不发。
+CLI_TRANSPORT = 'grok-cli'
+# 一次派工的唯一身份：写进 per-dispatch 的提示词文件名，所以它会出现在命令行里，
+# 重启之后能靠 `ps` 把那个进程重新认出来（而不是靠"我记得 pid 是多少"）。
+CLI_TOKEN_PREFIX = 'ciltok'
+# 本进程这一趟启动的子进程。守护是长期进程，Popen 不 poll 就会把子进程留成僵尸
+# （僵尸的 kill(pid,0) 照样成功，probe 会永远报 alive）。重启之后这里是空的，
+# 那时子进程已经被 init 接管，不会有僵尸，退出码也就拿不到了 —— 如实记 null。
+_CLI_PROCS = {}
+
+
+def is_cli(job):
+    return (job or {}).get('transport') == CLI_TRANSPORT
+
+
+def cli_spec(job):
+    """校验并归一化任务里的 CLI 声明。缺什么就说缺什么，不猜、不补默认命令。"""
+    spec = job.get('cli')
+    if not isinstance(spec, dict):
+        raise ValueError('transport=grok-cli requires a "cli" object')
+    binary = spec.get('bin')
+    if not binary or not isinstance(binary, str):
+        raise ValueError('cli.bin (existing CLI path) is required')
+    if not Path(binary).is_file():
+        raise ValueError('cli.bin does not exist: ' + binary)
+    cwd = spec.get('cwd')
+    if not cwd or not Path(cwd).is_dir():
+        raise ValueError('cli.cwd must be an existing directory')
+    sid = spec.get('session_id')
+    if sid is not None and not re.fullmatch(r'[0-9a-fA-F-]{8,64}', str(sid)):
+        raise ValueError('cli.session_id must look like a session UUID')
+    for key in ('allow', 'deny', 'extra_args'):
+        val = spec.get(key)
+        if val is not None and (not isinstance(val, list)
+                                or not all(isinstance(x, str) for x in val)):
+            raise ValueError('cli.%s must be a list of strings' % key)
+    if spec.get('permission_mode') in ('bypassPermissions', 'bypass', 'alwaysApprove',
+                                       'always-approve', 'yolo'):
+        raise ValueError('refusing a blanket permission mode; list the rules explicitly')
+    adopt = spec.get('adopt')
+    if adopt is not None and not isinstance(adopt, dict):
+        raise ValueError('cli.adopt must be an object {pid, session_id?, journal?}')
+    return spec
+
+
+def cli_argv(job, prompt_path):
+    """拼出**显式**命令数组。不过 shell、不拼字符串、不带任何隐藏默认值。"""
+    spec = job['cli']
+    argv = [spec['bin'], '--cwd', spec['cwd']]
+    if spec.get('session_id'):
+        argv += ['--resume', str(spec['session_id'])]       # 续用既有会话
+    argv += ['--prompt-file', str(prompt_path)]
+    if spec.get('output_format'):
+        argv += ['--output-format', str(spec['output_format'])]
+    if spec.get('permission_mode'):
+        argv += ['--permission-mode', str(spec['permission_mode'])]
+    for rule in spec.get('allow') or []:
+        argv += ['--allow', rule]
+    for rule in spec.get('deny') or []:
+        argv += ['--deny', rule]
+    if spec.get('max_turns'):
+        argv += ['--max-turns', str(int(spec['max_turns']))]
+    argv += list(spec.get('extra_args') or [])
+    return argv
+
+
+def proc_line(pid):
+    """(lstart, command)。查不到返回 None，查不了返回 'unknown'。"""
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        return 'unknown'
+    except (OSError, ValueError, TypeError):
+        return 'unknown'
+    try:
+        r = subprocess.run(['ps', '-p', str(int(pid)), '-o', 'lstart=,command='],
+                           capture_output=True, text=True, timeout=5)
+    except Exception:                                                # noqa: BLE001
+        return 'unknown'
+    if r.returncode != 0:
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            return None
+        except Exception:                                            # noqa: BLE001
+            return 'unknown'
+        return 'unknown'
+    line = ' '.join((r.stdout or '').split())
+    if '<defunct>' in line or '(' + str(pid) + ')' == line:
+        return None            # 僵尸：进程已经结束了，只是还没被父进程收走
+    return line
+
+
+def probe_cli(job):
+    """这次派工的 CLI 进程现在怎么样：alive / gone / unknown。
+
+    判据是**出生身份**，不是"我记得 pid 是多少"：启动时记下 `ps` 的启动时刻与完整命令行，
+    现在必须还对得上。对不上就是 pid 被复用了（gone），查不了就是 unknown ——
+    unknown 既不算活也不算死，更不是发信号的理由。
+    """
+    pid = job.get('cli_pid')
+    if not pid:
+        return 'gone'
+    line = proc_line(pid)
+    if line is None:
+        return 'gone'
+    if line == 'unknown':
+        return 'unknown'
+    token = job.get('cli_token') or ''
+    birth = job.get('cli_birth') or ''
+    if token and token in line:
+        return 'alive'
+    if birth and line == birth:
+        return 'alive'
+    return 'gone'                      # 这个 pid 现在是别人的进程
+
+
+def find_by_token(token):
+    """靠 token 在进程表里重新找回那次派工。返回 pid / None / 'unknown'。
+
+    重启之后用它认领自己启动过的进程 —— 而不是"没看到 pid 就再跑一遍"。
+    """
+    if not token:
+        return None
+    try:
+        r = subprocess.run(['ps', '-ax', '-o', 'pid=,command='],
+                           capture_output=True, text=True, timeout=8)
+    except Exception:                                                # noqa: BLE001
+        return 'unknown'
+    if r.returncode != 0:
+        return 'unknown'
+    hits = [ln.strip() for ln in (r.stdout or '').splitlines() if token in ln]
+    hits = [h for h in hits if ' ps ' not in h and not h.endswith(' ps')]
+    if not hits:
+        return None
+    if len(hits) > 1:
+        return 'unknown'               # 不止一个：宁可等人看，也不乱认
+    try:
+        return int(hits[0].split(None, 1)[0])
+    except (ValueError, IndexError):
+        return 'unknown'
+
+
+def launch_cli(job, root, queue):
+    """起一轮 CLI。**先把认领落盘，再启动进程** —— 崩溃绝不能造成重复派发。"""
+    spec = cli_spec(job)
+    if job.get('cli_token'):
+        raise ValueError('this task already has a launch token; refusing to launch twice')
+    prompt = Path(job['prompt_file']).read_text(encoding='utf-8')
+    token = CLI_TOKEN_PREFIX + '-' + job['task_id'] + '-' + uuid.uuid4().hex[:12]
+    pdir = root / 'prompts'
+    pdir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # per-dispatch 的提示词副本：内容一字不改，但文件名带 token，
+    # 于是 token 出现在命令行里，重启后能靠 ps 把这个进程重新认出来。
+    prompt_path = pdir / (token + '.txt')
+    atomic_text(prompt_path, prompt)
+    journal = root / 'logs' / (token + '.stdout.jsonl')
+    journal_err = root / 'logs' / (token + '.stderr.txt')
+    argv = cli_argv(job, prompt_path)
+    job.update(status='running', transport=CLI_TRANSPORT, started_at=now(),
+               started_epoch=time.time(), cli_token=token, cli_argv=argv,
+               cli_session_mode=('resume' if spec.get('session_id') else 'new'),
+               cli_session_id=spec.get('session_id'),
+               cli_prompt_copy=str(prompt_path), journal=str(journal),
+               journal_err=str(journal_err), journal_offset=0,
+               prompt_head=prompt.strip()[:120], prompt_sha=sha(prompt.encode('utf-8')),
+               receipt_state='cli_launching',
+               receipt_detail='claim persisted; process not confirmed yet',
+               owns_process=True, cli_pid=None, cli_birth='', cli_rc=None,
+               dispatch_count=job.get('dispatch_count', 0) + 1)
+    atomic(root / 'queue.json', queue)                       # 认领先落盘
+    atomic(root / 'logs' / (job['task_id'] + '.command.json'),
+           {'argv': argv, 'cwd': spec['cwd'], 'token': token,
+            'session_mode': job['cli_session_mode'], 'session_id': spec.get('session_id')})
+    out = journal.open('ab')
+    err = journal_err.open('ab')
+    try:
+        proc = subprocess.Popen(argv, cwd=spec['cwd'], stdin=subprocess.DEVNULL,
+                                stdout=out, stderr=err, start_new_session=True)
+    finally:
+        out.close()
+        err.close()
+    for path in (journal, journal_err, prompt_path):
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    _CLI_PROCS[job['task_id']] = proc
+    job['cli_pid'] = proc.pid
+    job['cli_birth'] = proc_line(proc.pid) if proc_line(proc.pid) != 'unknown' else ''
+    job['receipt_state'] = 'cli_running'
+    job['receipt_detail'] = 'launched pid %s (%s session)' % (proc.pid, job['cli_session_mode'])
+    atomic(root / 'queue.json', queue)
+
+
+def adopt_cli(job, root, queue):
+    """接管观察一个**已经在跑**的 CLI 任务：只读日志、只探测，一个信号都不发。"""
+    spec = cli_spec(job)
+    adopt = spec['adopt']
+    pid = adopt.get('pid')
+    if not pid:
+        raise ValueError('cli.adopt.pid is required to observe an existing run')
+    line = proc_line(pid)
+    if line is None:
+        raise ValueError('cli.adopt.pid is not running')
+    job.update(status='running', transport=CLI_TRANSPORT, started_at=now(),
+               started_epoch=time.time(), cli_pid=int(pid),
+               cli_birth=('' if line == 'unknown' else line),
+               cli_token=adopt.get('token') or '',
+               cli_session_mode='adopted', cli_session_id=adopt.get('session_id'),
+               journal=str(adopt.get('journal') or ''), journal_offset=0,
+               journal_err=str(adopt.get('journal_err') or ''),
+               owns_process=False, cli_rc=None,
+               receipt_state='cli_observing',
+               receipt_detail='observing an existing run started elsewhere; '
+                              'this dispatcher will never signal it')
+    atomic(root / 'queue.json', queue)
+
+
+def journal_text(job):
+    """读日志正文。返回 (text, complete)。
+
+    `complete=False` 表示最后一行是半条（进程正在写、或写到一半就退了）——
+    半条一律不参与判定，宁可报"日志没写完"。
+    """
+    path = job.get('journal')
+    if not path:
+        return '', True
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return '', False
+    if not raw:
+        return '', True
+    complete = raw.endswith(b'\n')
+    text = raw.decode('utf-8', errors='replace')
+    if not complete:
+        text = text[:text.rfind('\n') + 1]
+    return text, complete
+
+
+def journal_signals(text):
+    """从日志里挑出**结构化**的线索。解析不了就退回全文扫描，不硬要求某种格式。"""
+    hits = {'permission_cancelled': False, 'quota': False, 'stop_reasons': [],
+            'session_id': None, 'records': 0}
+    low = text.lower()
+    if _hint(low, PERMISSION_CANCEL_HINTS):
+        hits['permission_cancelled'] = True
+    if _hint(low, QUOTA_HINTS):
+        hits['quota'] = True
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        hits['records'] += 1
+        blob = json.dumps(rec, ensure_ascii=False).lower()
+        if _hint(blob, PERMISSION_CANCEL_HINTS):
+            hits['permission_cancelled'] = True
+        if _hint(blob, QUOTA_HINTS):
+            hits['quota'] = True
+        for key in ('stopreason', 'stop_reason'):
+            for k, v in rec.items():
+                if k.lower() == key and isinstance(v, str):
+                    hits['stop_reasons'].append(v)
+        for k, v in rec.items():
+            if k.lower() in ('session_id', 'sessionid') and isinstance(v, str):
+                hits['session_id'] = v
+    return hits
+
+
+def _strings(value, out):
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, dict):
+        for v in value.values():
+            _strings(v, out)
+    elif isinstance(value, list):
+        for v in value:
+            _strings(v, out)
+
+
+def journal_search_text(text):
+    """把日志变成可搜索的正文。
+
+    `--output-format json` 下，助手正文是 JSON 字符串里的**转义**内容，直接在原始字节上
+    找 `CIV_RESULT_X {...}` 会捞到一串 `\"` 根本解析不了。所以先把每条 JSON 记录里的
+    字符串值解出来搜；解不出来再拿原始正文兜底（别的输出格式仍然能用）。
+    """
+    decoded = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith(('{', '[')):
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        _strings(rec, decoded)
+    return ['\n'.join(decoded), text]
+
+
+def _markers_in(text, task_id):
+    pattern = re.escape(MARKER_PREFIX + task_id) + r'\s+(\{[^\n]*\})'
+    found = re.findall(pattern, text)
+    parsed = []
+    for cand in found:
+        try:
+            parsed.append(json.loads(cand))
+        except ValueError:
+            continue
+    return parsed, len(found)
+
+
+def unique_marker(text, task_id):
+    """日志里必须有**唯一**的结果标记。零个或多个互相矛盾的，都算"没有唯一结果"。"""
+    best_hits = 0
+    for candidate in journal_search_text(text):
+        parsed, raw_hits = _markers_in(candidate, task_id)
+        best_hits = max(best_hits, raw_hits, len(parsed))
+        if not parsed:
+            continue
+        distinct = {json.dumps(x, ensure_ascii=False, sort_keys=True) for x in parsed}
+        if len(distinct) > 1:
+            return None, len(parsed)
+        return parsed[-1], len(parsed)
+    return None, best_hits
+
+
+def _reap(job):
+    """把本进程启动的那个子进程收一下，拿到退出码。收不到就保持 None，不猜。"""
+    proc = _CLI_PROCS.get(job['task_id'])
+    if proc is None or proc.pid != job.get('cli_pid'):
+        return
+    try:
+        rc = proc.poll()
+        if rc is None:
+            rc = proc.wait(timeout=0.3)
+    except Exception:                                                # noqa: BLE001
+        return
+    if rc is not None:
+        job['cli_rc'] = rc
+        _CLI_PROCS.pop(job['task_id'], None)
+
+
+def collect_cli(job, root):
+    """收一次 grok-cli 任务。只读日志 + 探测进程，不发任何信号、不改别人的东西。
+
+    **退出码 0 不等于完成。** 结论必须同时看：进程是不是真的结束了、日志有没有写完、
+    有没有唯一的结果标记、有没有权限取消 / 额度限制。任何一条对不上就给准确的状态，
+    停在那里等人看，不忙着重试。
+    """
+    if job['status'] not in ('running', 'blocked') or not is_cli(job):
+        return
+    _reap(job)                                 # 顺手回收，别留僵尸
+    probe = probe_cli(job)
+    if probe == 'gone':
+        _reap(job)                             # 刚好在这一瞬间退出的，再收一次退出码
+    job['cli_probe'] = probe
+    text, complete = journal_text(job)
+    job['journal_offset'] = len(text.encode('utf-8'))
+    sig = journal_signals(text)
+    if sig['session_id'] and not job.get('cli_session_id'):
+        job['cli_session_id'] = sig['session_id']       # 新建会话：记下它报出来的 id
+    report, hits = unique_marker(text, job['task_id'])
+    if text:
+        job['last_output'] = text[-1200:]
+        job['output_log'] = job.get('journal')
+
+    # 进程还在：继续观察。**不因为"暂时没输出"做任何判断。**
+    if probe == 'alive':
+        job['receipt_state'] = 'cli_running' if job.get('owns_process') else 'cli_observing'
+        job['receipt_detail'] = 'pid %s still running (%d journal records)' % (
+            job.get('cli_pid'), sig['records'])
+        if sig['permission_cancelled']:
+            job['attention'] = ('a tool permission was cancelled in this run; inspect the '
+                                'journal and fix the permission rules, do not blanket approve')
+        return
+    if probe == 'unknown':
+        # 查不到 ≠ 结束。不发信号、不下结论。
+        job['receipt_state'] = 'unknown'
+        job['receipt_detail'] = ('cannot verify the CLI process identity (ps unavailable / '
+                                 'permission denied); outcome unknown, no auto-relaunch')
+        job['status'] = 'blocked'
+        job['blocking_reason'] = job['receipt_detail']
+        return
+
+    # 进程确认结束了。退出码只有"本进程这一趟启动的"才拿得到；
+    # 重启之后认回来的、以及接管观察的，退出码就是拿不到 —— 如实记 null，不猜 0。
+    rc = job.get('cli_rc')
+    rc_note = ('' if rc is not None else
+               ' (exit code unavailable: this controller process did not launch it — '
+               'the verdict below comes from the journal, not from rc)')
+    if not complete:
+        job['receipt_state'] = 'cli_exited_incomplete'
+        job['receipt_detail'] = ('the CLI process is gone but its journal ends mid-record; '
+                                 'outcome unknown, no auto-relaunch')
+        job['status'] = 'blocked'
+        job['blocking_reason'] = job['receipt_detail']
+        return
+    if sig['quota']:
+        job['receipt_state'] = 'quota_blocked'
+        job['receipt_detail'] = 'the journal reports a quota/rate limit; not retrying'
+        job['status'] = 'blocked'
+        job['blocking_reason'] = job['receipt_detail']
+        return
+    if sig['permission_cancelled'] and report is None:
+        job['receipt_state'] = 'permission_cancelled'
+        job['receipt_detail'] = (
+            'a tool permission was cancelled (stopReason=cancelled / PermissionCancelled). '
+            'This is NOT a completed task and NOT the user abandoning the run: one tool call '
+            'was refused. Fix the allow rules and let the operator decide whether to continue '
+            'the same session.')
+        job['status'] = 'blocked'
+        job['blocking_reason'] = job['receipt_detail']
+        return
+    if report is None and rc not in (None, 0):
+        job['receipt_state'] = 'cli_failed'
+        job['receipt_detail'] = ('the CLI process exited with rc=%s and left no result marker; '
+                                 'not retrying' % rc)
+        job['status'] = 'blocked'
+        job['blocking_reason'] = job['receipt_detail']
+        return
+    if report is None:
+        job['receipt_state'] = 'cli_no_unique_result'
+        job['receipt_detail'] = (
+            'the CLI process exited but the journal has %s usable %s marker; '
+            'outcome unknown, no auto-relaunch (rc=%s)%s'
+            % (('no' if hits == 0 else '%d conflicting' % hits),
+               MARKER_PREFIX + job['task_id'], rc, rc_note))
+        job['status'] = 'blocked'
+        job['blocking_reason'] = job['receipt_detail']
+        return
+
+    # 有唯一结果标记：**也只到 review**。done 必须由外部带证据 accept。
+    job['report'] = report
+    fields = report if isinstance(report, dict) else {}
+    job['receipt_state'] = 'durable_ok'
+    job['receipt_detail'] = ('process exited (rc=%s) and the journal carries one unique '
+                             'result marker; self-reported only, still needs accept%s'
+                             % (rc, rc_note))
+    job['status'] = 'blocked' if fields.get('status') == 'blocked' else 'review'
+    job['finished_at'] = now()
+    job['self_reported_at'] = now()
+    job['blocking_reason'] = (one_line(fields.get('blocking_reason') or '', 200)
+                              or job.get('blocking_reason', ''))
+
+
+def cli_pause(job, root):
+    """暂停一个 grok-cli 任务。
+
+    默认只做一件事：**下一轮不再派**，并在任务上记一句话。不打断当前这一轮 ——
+    headless CLI 没有安全的输入通道，我们也做不到实时 checkpoint，别承诺做不到的事。
+
+    只有任务里显式写了 `cli.graceful_cancel: true` 才会发 CLI 官方的 SIGINT，
+    而且**三个条件缺一不可**：是本调度启动的（owns_process）、身份当场核验为 alive、
+    只发这一次。身份未知一律不发。永不 SIGKILL，日志一律保留。
+    """
+    if job.get('pause_notice_sent') or job['status'] != 'running':
+        return False
+    job['pause_requested_at'] = now()
+    job['pause_notice_sent'] = True
+    if not ((job.get('cli') or {}).get('graceful_cancel') and job.get('owns_process')):
+        job['pause_note'] = ('paused: no further rounds will be dispatched for this owner. '
+                             'The current CLI turn is NOT interrupted (headless CLI has no safe '
+                             'composer, and this dispatcher cannot checkpoint mid-turn).')
+        return True
+    if probe_cli(job) != 'alive':
+        job['pause_note'] = ('paused: the CLI process identity could not be confirmed, so no '
+                             'signal was sent. No further rounds will be dispatched.')
+        return True
+    try:
+        os.kill(int(job['cli_pid']), signal.SIGINT)      # 官方的 graceful cancel
+    except OSError as exc:
+        job['pause_note'] = 'paused: SIGINT could not be delivered (%s); no further signals' % exc
+        return True
+    job['pause_signal'] = 'SIGINT'
+    job['pause_note'] = ('paused: sent one SIGINT to our own verified pid %s (the CLI\'s own '
+                         'graceful cancel). Never SIGKILL; the journal is kept as-is.'
+                         % job.get('cli_pid'))
+    return True
+
+
+def cli_reclaim(job, root, queue):
+    """守护重启后把自己启动过的 CLI 任务认回来 —— **绝不因为"没看到 pid"就重跑一遍**。"""
+    if not is_cli(job) or job['status'] != 'running' or not job.get('cli_token'):
+        return
+    if probe_cli(job) == 'alive':
+        return
+    found = find_by_token(job['cli_token'])
+    if isinstance(found, int):
+        line = proc_line(found)
+        job['cli_pid'] = found
+        job['cli_birth'] = '' if line in (None, 'unknown') else line
+        job['receipt_detail'] = 'reclaimed pid %d by launch token after a controller restart' % found
+    elif found == 'unknown':
+        job['receipt_state'] = 'unknown'
+        job['receipt_detail'] = ('cannot scan the process table to reclaim this run; '
+                                 'outcome unknown, no auto-relaunch')
 
 
 # ---------------------------------------------------------------- STATUS
@@ -635,7 +1209,20 @@ def status_row(job):
         'accepted_at': job.get('accepted_at', ''),
         'report_kind': type(job.get('report')).__name__ if job.get('report') is not None else '',
         'self_reported': bool(job.get('report')),
+        'transport': one_line(job.get('transport') or 'cockpit', 20),
     }
+    if is_cli(job):
+        # 一行人话，够人判断就行：谁在跑、是新开还是续用、我们能不能对它发信号。
+        row['cli'] = {
+            'pid': job.get('cli_pid'), 'probe': one_line(job.get('cli_probe') or '', 20),
+            'session_mode': one_line(job.get('cli_session_mode') or '', 20),
+            'session_id': one_line(job.get('cli_session_id') or '', 64),
+            'rc': job.get('cli_rc'), 'ours': bool(job.get('owns_process')),
+            'journal': one_line(job.get('journal') or '', 200),
+            'summary': one_line(job.get('receipt_detail') or '', 200),
+        }
+        if job.get('pause_note'):
+            row['cli']['pause'] = one_line(job['pause_note'], 200)
     if row_note:
         row['report_note'] = row_note
     return row
@@ -693,6 +1280,14 @@ def render_status(queue, root, hub):
             lines.append('- report_note: %s' % r['report_note'])
         lines.append('- status: %s / receipt: %s / agent: %s / transcript: %s'
                      % (r['status'], r['receipt_state'], r['agent_state'], r['transcript_read_mode']))
+        if r.get('cli'):
+            c = r['cli']
+            lines.append('- cli: pid=%s probe=%s %s session=%s rc=%s ours=%s'
+                         % (c['pid'], c['probe'], c['session_mode'],
+                            c['session_id'] or '-', c['rc'], c['ours']))
+            lines.append('- cli-note: %s' % (c['summary'] or '-'))
+            if c.get('pause'):
+                lines.append('- cli-pause: %s' % c['pause'])
         if r['commit']:
             lines.append('- commit: %s' % r['commit'])
         if r['tests']:
@@ -923,24 +1518,42 @@ def cmd_stop(root, grace=15):
 
 # ---------------------------------------------------------------- 子命令
 
-REQUIRED_FIELDS = ('task_id', 'owner', 'objective', 'allowed_paths', 'baseline_sha',
-                   'dependencies', 'acceptance', 'workdir', 'branch', 'device_id',
-                   'session_id', 'session_cwd', 'prompt_file')
+COMMON_FIELDS = ('task_id', 'owner', 'objective', 'allowed_paths', 'baseline_sha',
+                 'dependencies', 'acceptance', 'workdir', 'branch', 'prompt_file')
+# Cockpit 通道还要会话身份；grok-cli 通道要的是 cli 声明（见 cli_spec）。
+COCKPIT_FIELDS = ('device_id', 'session_id', 'session_cwd')
+REQUIRED_FIELDS = COMMON_FIELDS + COCKPIT_FIELDS
 
 
 def cmd_submit(queue, job_file):
     job = read(job_file)
     if job is None:
         raise ValueError('job file is not readable JSON')
-    for field in REQUIRED_FIELDS:
+    need = COMMON_FIELDS + (() if is_cli(job) else COCKPIT_FIELDS)
+    for field in need:
         if field not in job:
             raise ValueError('missing task field: ' + field)
+    if job.get('transport') not in (None, 'cockpit', CLI_TRANSPORT):
+        raise ValueError('unknown transport: ' + str(job.get('transport')))
     if job['owner'] not in ('claude', 'grok') or not re.fullmatch(r'[A-Z0-9_]+', job['task_id']):
         raise ValueError('owner/task_id rejected')
     if job['task_id'] in queue['jobs']:
         raise ValueError('task already exists; use a new revision ID')
     if not Path(job['prompt_file']).is_file():
         raise ValueError('prompt_file does not exist')
+    if is_cli(job):
+        spec = cli_spec(job)
+        # 同一个会话 + 同一份提示词，只要还在跑 / 还没验收，就**不再派第二遍**。
+        # `--resume` 只是接着聊，它不会恢复代码快照，也不该被当成"重跑一次"。
+        psha = sha(Path(job['prompt_file']).read_bytes())
+        for other in queue['jobs'].values():
+            if not is_cli(other) or other['status'] in ('done', 'rejected'):
+                continue
+            if (other.get('cli_session_id') or (other.get('cli') or {}).get('session_id')) \
+                    == spec.get('session_id') and other.get('prompt_sha') == psha:
+                raise ValueError('the same prompt is already live on that CLI session (%s); '
+                                 'resume continues a conversation, it does not re-run a task'
+                                 % other['task_id'])
     # 返工任务：允许在同一个 owner 还压着一条 review/rejected 的情况下派出去。
     # 但必须明确指向那一条，且 owner 相同 —— 正常的下一个任务仍然要等 accept。
     target = job.get('rework_of')

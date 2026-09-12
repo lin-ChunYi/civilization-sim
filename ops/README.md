@@ -169,18 +169,106 @@ python3 ops/dispatch.py submit ops/jobs/G01_R1.json
 两种真实格式都认：Claude 的 `assistant.message.content[].text` 整块，
 以及 Grok ACP 的 `agent_message_chunk`（同一句话可能被拆成多条，必须原样拼回）。
 
+## 另一条通道：`transport: "grok-cli"`
+
+默认通道把提示词投进 Cockpit 的 outbox（`reply_inject`）。另一条通道直接以
+**订阅版 headless CLI** 跑一轮，两条并存，按任务选。
+
+```json
+{
+  "task_id": "G03_FIX", "owner": "grok", "transport": "grok-cli",
+  "objective": "...", "allowed_paths": ["observer/web/"], "baseline_sha": "...",
+  "dependencies": [], "acceptance": "...", "workdir": "/path/to/repo",
+  "branch": "main", "prompt_file": "STATE/prompts/G03_FIX.txt",
+  "cli": {
+    "bin": "/Users/ecool/.grok/bin/grok",
+    "cwd": "/Users/ecool/Desktop/civilization/civilization-sim",
+    "session_id": "041d93f0-5eae-4cff-90b8-f52785f14553",
+    "output_format": "json",
+    "permission_mode": "acceptEdits",
+    "allow": ["Bash(git status*)", "Bash(git diff*)", "Bash(git log*)",
+              "Bash(git add observer/web/*)", "Bash(git commit*)",
+              "Bash(node --check observer/web/*)", "Bash(rg *)", "Bash(ls observer/web*)",
+              "Edit(/abs/path/observer/web/**)", "Edit(observer/web/**)"],
+    "deny": ["Bash(git push*)"],
+    "max_turns": 100,
+    "extra_args": ["--no-subagents", "--disable-web-search"],
+    "graceful_cancel": false
+  }
+}
+```
+
+命令数组是**按这些字段逐项拼出来的**，一字不多，落盘在 `logs/<任务>.command.json`，
+不过 shell、没有隐藏默认值。`session_id` 有就是 `--resume <uuid>`（续用会话），
+没有就是新建会话（会话 id 从它自己的输出里记回来）。
+
+**权限规则必须逐条写明。** `--permission-mode acceptEdits` 并**不**自动批准编辑类工具：
+实测 `search_replace` 仍会被 `PermissionCancelled` 挡下来，加上显式的
+`Edit(observer/web/**)`（以及同路径的绝对写法）之后才真的写进了文件。
+按官方文档，`Edit` 的规则是按工具传入的 path glob 匹配的，绝对与相对都该覆盖，
+没有 `//` 或 `~/` 那种锚定语义。所以：**不要把 `acceptEdits` 当成够用**，
+最终的权限表由主控实测之后登记。
+带宽泛授权的模式（`bypassPermissions` / `alwaysApprove` 之类）会被 `submit` 直接拒绝。
+
+### 结局怎么判（**退出码 0 不等于完成**）
+
+判据是四件事一起看：进程是不是真的结束了、日志有没有写完、有没有**唯一**的结果标记、
+有没有权限取消 / 额度限制。任何一条对不上就给一个准确的状态，停在那里等人看，不忙着重试。
+
+| `receipt_state` | 什么意思 |
+|---|---|
+| `cli_running` | 本调度启动的那个进程，身份核验过，还在跑 |
+| `cli_observing` | 接管观察的既有进程：只读日志、只探测，**一个信号都不发** |
+| `cli_exited_incomplete` | 进程没了，但日志最后一行是半条 —— 结果未知 |
+| `cli_no_unique_result` | 退了、也没报错，但日志里没有唯一的 `CIV_RESULT_<任务>` |
+| `permission_cancelled` | `stopReason=cancelled` / `PermissionCancelled`。**既不是完成，也不是"用户放弃了这场马拉松"** —— 只是某一次工具调用没被允许 |
+| `quota_blocked` | 日志里明说额度/限流。不重试、不切付费通道 |
+| `cli_failed` | 非零退出且没有结果标记 |
+| `unknown` | 进程身份查不出来。不发信号、不下结论、不自动重跑 |
+| `durable_ok` | 进程结束 + 日志完整 + 唯一结果标记。**也只进 `review`**，`done` 仍要外部带证据 `accept` |
+
+退出码只有"**本进程这一趟启动的**"才拿得到（长期守护是这样）。一次性的 `tick`
+起完进程就退了，子进程被 init 接管，退出码就是拿不到 —— 那时如实记 `null` 并在说明里写清楚，
+判定改由日志承担，**不拿 0 当默认值**。
+
+### 不重复派发 / 重启接管
+
+- 认领**先落盘再启动**：`queue.json` 里先有 `cli_token`、命令数组与日志路径，才去起进程。
+- 每次派工会把提示词原样复制到 `prompts/<token>.txt` 并用它当 `--prompt-file`，
+  于是 token 出现在命令行里。守护重启后靠 `ps` 按 token 把那个进程**认回来**，
+  而不是"没看到 pid 就再跑一遍"。扫不动进程表就记 `unknown`，仍然不重跑。
+- 身份核验看的是**出生身份**（启动时刻 + 完整命令行），不是"我记得 pid 是多少"。
+  pid 被复用 → `gone`；`ps` 不可用 → `unknown`。
+- 同一个 owner 只要还有活着（或身份未确认）的 CLI 进程，就不派下一个。
+- 同一个会话 + 同一份提示词还没验收完，`submit` 会直接拒绝：
+  `--resume` 是**接着聊**，它不恢复代码快照，也不该被当成"再跑一次任务"。
+  要不要在当前会话里继续修权限那一类事，留给主控决定。
+
+### 暂停的边界（说实话的部分）
+
+- **绝不经 Cockpit `reply_inject`**：headless CLI 没有安全的输入框。
+- **不关任何借用的窗口/会话。**
+- 默认的暂停只做一件事：**下一轮不再派**，并在任务上记一句话。
+  当前这一轮**不会**被打断 —— 我们看不到它跑到哪一步，也做不到实时 checkpoint。
+- 只有任务里显式写了 `"graceful_cancel": true` 才会发 CLI 官方的 SIGINT，
+  且三个条件缺一不可：本调度启动的、身份当场核验为 alive、只发这一次。
+  **永不 SIGKILL，日志一律保留。** 身份未知一律不发。
+- 接管观察（`cli.adopt`）的进程**任何情况下都不发信号** —— 不知道是谁起的，就不动它。
+
 ## 任务 JSON 需要哪些字段
 
-`task_id`（大写下划线）、`owner`（`claude` / `grok`）、`objective`、`allowed_paths`、
-`baseline_sha`、`dependencies`、`acceptance`、`workdir`、`branch`、
-`device_id`、`session_id`、`session_cwd`、`prompt_file`；
+共同字段：`task_id`（大写下划线）、`owner`（`claude` / `grok`）、`objective`、
+`allowed_paths`、`baseline_sha`、`dependencies`、`acceptance`、`workdir`、`branch`、
+`prompt_file`。
+Cockpit 通道另外要 `device_id`、`session_id`、`session_cwd`；
+`transport: "grok-cli"` 要的是上一节那个 `cli` 对象；
 可选 `rework_of`（指向同 owner 的 review/rejected/blocked 任务，用于受控返工）。
 派工前会核对会话身份（source / cwd）与空闲边界，对不上就不投。
 
 ## 测试
 
 ```bash
-python3 ops/test_dispatch.py      # 35 项，全部在临时目录里造假 hub
+python3 ops/test_dispatch.py      # 55 项，全部在临时目录里造假 hub / 假 CLI
 ```
 
 不碰本机任何真实会话与真实 outbox（PID 复用那条也只拿测试自己起的 `sleep` 当靶子）。
@@ -193,11 +281,22 @@ python3 ops/test_dispatch.py      # 35 项，全部在临时目录里造假 hub
 自报报告的类型边界（R21 组：真实 C03 报告里 `tests` 是对象、字符串/数字/布尔/`null`/
 嵌套对象/坏可选字段、报告整段不是对象、单条任务渲染失败不连累其他任务、
 收取失败按任务记录、**真守护子进程收到对象型 `tests` 后仍然活着并继续派下一个任务**、
-轮次异常不杀守护也不丢队列、坏队列仍按原规则保留）。
+轮次异常不杀守护也不丢队列、坏队列仍按原规则保留）、
+`grok-cli` 通道（R22 组：显式命令数组与 `--resume`、新建会话不被叫成续用、
+宽泛权限模式被拒、rc=0 但 `PermissionCancelled` 不算完成、rc=0 没有标记不算完成、
+两个互相矛盾的标记算"没有唯一结果"、半条日志算未知、额度自成一类且不重试、
+非零退出不算完成、自报只到 `review`、对象型 `tests` 不打爆摘要、
+重复 `tick` 不重起进程、重启按 token 认回而不是重跑、pid 复用判 gone 且不发信号、
+一个 owner 只跑一个、同会话同提示词被拒、暂停不注入也不发信号、
+`graceful_cancel` 只打自己核验过的 pid、接管观察的进程一个信号都不发、
+原生终端的 `[delivery state=unknown retry=none]` 判 unknown 而不是 failed）。
+`grok-cli` 那组用的是一个**假 CLI 脚本**，不联网、不碰真实 Grok 环境、
+不接管任何正在跑的真实任务；发出去的信号只打测试自己起的子进程。
 
 每条都验证过"把对应防护去掉就会红"：把这 35 项拿去跑 `aff0ed5` 会红 13 项，
 跑 `3abe009` 会红 3 项（跨 chunk 的 tag、同 tick 两份返工、running 被返工插队），
-跑 `4168356`（C04 之前）会红 15 项（3 failures + 12 errors）。
+跑 `4168356`（C04 之前）会红 15 项（3 failures + 12 errors），
+跑 `dac9004`（C06 之前）R22 那 20 项**全红**。
 
 ## 边界（写明，别指望）
 
@@ -210,5 +309,8 @@ python3 ops/test_dispatch.py      # 35 项，全部在临时目录里造假 hub
   等人修好，绝不拿一个空队列写回去。
 - **报告内容不做真伪判断**：类型归一化只保证"显示得出来、不打死守护"，
   它不检查 commit 是否存在、测试是否真跑过。那是独立验收的事。
+- **做不到实时 checkpoint。** `grok-cli` 通道只能读它自己写出来的日志，
+  进程跑到哪一步我们看不见。"在下一个安全点停下"= 下一轮不再派，不是把这一轮掐断。
+- **不切付费通道、不改任何全局配置、不自动 bypass / always-approve。**
 - 没有网络端口、没有远程命令入口。
 - 不新建 Redis / 微服务 / Agent 平台，这个文件就是全部。
