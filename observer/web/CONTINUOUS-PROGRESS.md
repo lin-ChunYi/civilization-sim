@@ -1,5 +1,15 @@
 # 连续开发进度
 
+## G09 旅程复审
+- t1 116/6/0；t4 18→10；t52 split 无格；t83-aid-3 6457；t124 回助 kcal 1011984 / changed 0；t125 share 格 0
+- 导出无令牌；URL 可恢复
+- tests：g09-journey-cdp 9/9
+- C08 EXP01/02 仍未交付，未空等
+
+## G08 窄屏 HUD
+- 375px HUD 52px（原约 247）；四次跳年实测约 13ms，不编 FPS
+- tests：g08-cdp 4/4
+
 ## G07 书签 / 收藏 / 检索 / 导出
 - localStorage 按 run 隔离；导出白名单无令牌/私人路径
 - tests：g07-lib-test 4/4

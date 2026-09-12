@@ -76,6 +76,7 @@ code{font-size:12px;color:var(--gold2)}
 .btn.primary:hover{filter:brightness(1.08)}
 .btn.on{background:rgba(212,176,106,.18);border-color:var(--gold);color:var(--gold2)}
 .btn[disabled]{opacity:.4;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 
 .toast{position:fixed;right:16px;bottom:16px;z-index:50;max-width:min(420px,92vw);
   background:#1a1408;color:var(--gold2);padding:10px 14px;border-radius:8px;border:1px solid var(--gold)}
@@ -325,4 +326,17 @@ html.skin-console #pane-help{display:none !important}
   .hud-actions .btn.ghost{padding:4px 8px;font-size:12px}
   .tabletop{opacity:.18;background-size:220% auto;background-position:center}
   .sandtable{background-size:220% auto;background-position:center}
+}
+@media (max-width:400px){
+  .hud{padding:4px 8px;gap:6px;flex-wrap:nowrap;align-items:center}
+  .brand{min-width:0;flex:0 1 auto}
+  .brand-name{font-size:14px}
+  .sigil{width:22px;height:22px}
+  .statusline{display:none}
+  .hud-actions .btn.ghost,.tokbox{display:none}
+  .run-switch{max-width:42vw;padding:4px 6px;font-size:12px}
+  .overview{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:2px 8px 0}
+  .ov-secondary{display:none}
+  .ov-v{font-size:14px}
+  .modes button{padding:6px 8px;font-size:11px}
 }
