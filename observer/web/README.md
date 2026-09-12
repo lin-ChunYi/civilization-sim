@@ -1,4 +1,21 @@
-# 观察台前端（UI 分支）
+# 观察台前端 · CHRONICLE
+
+深色沙盘控制台。数据仍全部来自现有 API，不编造历史。
+
+启动方式不变：仓库根目录
+
+```bash
+python3 -m uvicorn observer.app:app --host 127.0.0.1 --port 8765
+```
+
+打开 http://127.0.0.1:8765
+
+布局：顶栏 HUD（年份/人口/事件/引擎）→ 左卷宗摘要与事件 → 中央沙盘地图（图层/缩放/平移）→ 右对象档案 → 底栏历史驱动器。
+
+契约钩子与 DOM id 仍在，后台 `/selftest/selftest.html` 可驱动。
+
+截图：`observer/web/screenshots/game-ui/`
+
 
 本目录归 UI 分支。后台只读、不往这里写文件。接口以
 [`docs/OBS-01-API-CONTRACT.md`](../../docs/OBS-01-API-CONTRACT.md) 为准。

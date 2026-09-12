@@ -10,6 +10,9 @@ const S = {
   timer: null, band: null,
   epoch: 0,
   evScope: "year", evFilter: "all",
+  layer: "resource",
+  cam: { x: 0, y: 0, k: 1 },
+  lastYearLabel: null,
 };
 const ykey = (runId, t) => `${runId}|${t}`;
 const bump = () => ++S.epoch;
@@ -247,16 +250,25 @@ function startAgg() {
 function renderOverview() {
   if (!$("ov-year-value")) return;
   const rec = recNow();
-  $("ov-year-value").textContent = OverviewLogic.yearViewLabel(S.t);
+  const ylab = OverviewLogic.yearViewLabel(S.t);
+  $("ov-year-value").textContent = ylab;
+  if (S.lastYearLabel !== ylab) {
+    $("ov-year-value").classList.remove("pulse");
+    void $("ov-year-value").offsetWidth;
+    $("ov-year-value").classList.add("pulse");
+    S.lastYearLabel = ylab;
+  }
   $("ov-year-sub").textContent = S.t === 0
     ? "开局 · 这是回放位置，不是后台算到哪"
     : "正在回放这一年，不是后台计算进度";
   $("ov-year").classList.add("viewing");
+  renderHudParams();
+  renderDensity();
 
   if (!S.run) {
     ["ov-calc-value", "ov-pop-value", "ov-bands-value", "ov-ev-cum-value", "ov-ev-now-value"]
       .forEach((id) => { $(id).textContent = "—"; });
-    $("year-summary").textContent = "还没有选中运行。到「运行记录」发起或打开一次模拟。";
+    $("year-summary").textContent = "还没有选中运行。到「创世 / 运行」发起或打开一次模拟。";
     return;
   }
   const recorded = S.run.years_recorded ?? 0;
@@ -315,6 +327,40 @@ function renderOverview() {
     $("ov-ev-cum-value").textContent = nf(cum.count) + " 条";
     $("ov-ev-cum-sub").textContent = "截至" + OverviewLogic.yearViewLabel(S.t) + " · 已记录事件";
   }
+}
+
+function renderHudParams() {
+  const box = $("hud-params");
+  if (!box) return;
+  if (!S.run) { box.textContent = ""; return; }
+  const bits = [
+    "引擎 " + (S.run.engine || "exp03"),
+    "seed " + S.run.seed,
+    "SIGMA_M " + S.run.sigma_m + "‰",
+    "MOVE_MORT_M " + S.run.move_mort_m + "‰",
+  ];
+  if (engineHasParam(runEngineName(S.run), "share_m")) bits.push("SHARE_M " + (S.run.share_m ?? 0) + "‰");
+  if (engineHasParam(runEngineName(S.run), "aid_m")) bits.push("AID_M " + (S.run.aid_m ?? 0) + "‰");
+  bits.push(S.cfg && S.cfg.arms[S.run.arm] ? S.cfg.arms[S.run.arm].label : S.run.arm);
+  box.textContent = bits.join("  ·  ");
+}
+
+function renderDensity() {
+  const svg = $("density");
+  if (!svg) return;
+  const s = S.series || [];
+  if (!s.length) { svg.innerHTML = ""; return; }
+  const w = 1000, h = 18;
+  svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+  const maxe = Math.max(1, ...s.map((r) => r.events || 0));
+  let bars = "";
+  s.forEach((r, i) => {
+    const x = i * w / Math.max(s.length, 1);
+    const bh = (r.events || 0) / maxe * (h - 2);
+    const hot = r.t === S.t;
+    bars += `<rect x="${x.toFixed(2)}" y="${(h - bh).toFixed(2)}" width="${Math.max(1, w / s.length - 0.4).toFixed(2)}" height="${bh.toFixed(2)}" fill="${hot ? "#d4b06a" : "rgba(111,179,124,.55)"}"/>`;
+  });
+  svg.innerHTML = bars;
 }
 
 function renderTech() {
@@ -385,77 +431,120 @@ function cellCenter(c) {
 }
 function ramp(f) {
   f = Math.max(0, Math.min(1, f));
-  const a = [246, 249, 244], b = [30, 94, 60];
-  return "rgb(" + a.map((v, i) => Math.round(v + (b[i] - v) * f)).join(",") + ")";
+  const a = [18, 32, 26], b = [111, 179, 124], c = [212, 176, 106];
+  const mix = (p, q, t) => p.map((v, i) => Math.round(v + (q[i] - v) * t));
+  const rgb = f < 0.55 ? mix(a, b, f / 0.55) : mix(b, c, (f - 0.55) / 0.45);
+  return "rgb(" + rgb.join(",") + ")";
+}
+function camViewBox() {
+  const W = 520, H = 430, k = S.cam.k;
+  const w = W / k, h = H / k;
+  const x = (W - w) / 2 - S.cam.x, y = (H - h) / 2 - S.cam.y;
+  return x + " " + y + " " + w + " " + h;
+}
+function setLayer(name) {
+  if (name === "mem") { setView("mem"); S.layer = "mem"; }
+  else {
+    S.layer = name || "resource";
+    if (S.view === "mem") S.view = "truth";
+    setHash({ view: "" });
+  }
+  document.querySelectorAll("#layers [data-layer]").forEach((b) =>
+    b.classList.toggle("on", b.dataset.layer === S.layer || (S.layer === "resource" && b.id === "v-truth")));
+  if ($("v-truth")) $("v-truth").classList.toggle("on", S.layer === "resource" && S.view !== "mem");
+  if ($("v-mem")) $("v-mem").classList.toggle("on", S.view === "mem" || S.layer === "mem");
+  renderMap();
 }
 function renderMap() {
   const svg = $("map");
+  if (!svg) return;
+  svg.setAttribute("viewBox", camViewBox());
   if (!S.map || !S.run) { svg.innerHTML = ""; return; }
   const rec = recNow();
   if (!rec) {
-    svg.innerHTML = `<text x="20" y="40" fill="#6b7280">正在读取第 ${S.t} 年…</text>`;
+    svg.innerHTML = `<text x="20" y="40" fill="#8e9688">正在读取第 ${S.t} 年…</text>`;
     return;
   }
   const cap = S.meta ? S.meta.cap : null;
-  const memBand = S.view === "mem" && S.selBand
+  const layer = S.view === "mem" ? "mem" : (S.layer || "resource");
+  const memBand = layer === "mem" && S.selBand
     ? rec.bands.find((b) => b.id === S.selBand) : null;
-
-  let out = `<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse"
-      patternTransform="rotate(45)"><rect width="6" height="6" fill="#e6e6e2"/>
-      <line x1="0" y1="0" x2="0" y2="6" stroke="#c9c9c4" stroke-width="2.5"/></pattern></defs>`;
-
   const byCell = {};
   rec.bands.forEach((b) => { (byCell[b.cell] = byCell[b.cell] || []).push(b); });
+  const popByCell = {}, storeByCell = {};
+  rec.bands.forEach((b) => {
+    popByCell[b.cell] = (popByCell[b.cell] || 0) + b.size;
+    storeByCell[b.cell] = (storeByCell[b.cell] || 0) + b.store;
+  });
+  const maxPop = Math.max(1, ...Object.values(popByCell), 1);
+  const maxStore = Math.max(1, ...Object.values(storeByCell), 1);
+  const eventCells = new Set();
+  (rec.events || []).forEach((e) => {
+    if (e.cell != null) eventCells.add(+e.cell);
+    if (e.to != null) eventCells.add(+e.to);
+    if (e.from != null) eventCells.add(+e.from);
+    const bd = rec.bands.find((b) => b.id === e.band || b.id === e.receiver || b.id === e.donor);
+    if (bd) eventCells.add(bd.cell);
+  });
+
+  let out = `<defs>
+    <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="7" height="7" fill="#141a16"/><line x1="0" y1="0" x2="0" y2="7" stroke="#3a433c" stroke-width="3"/>
+    </pattern>
+    <filter id="glow"><feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>`;
 
   S.map.cells.forEach((c, idx) => {
     const xy = cellCenter(c), cx = xy[0], cy = xy[1];
-    let fill = "url(#hatch)", food = "", sub = "", title = "第 " + c.i + " 号格";
+    let fill = "url(#hatch)", label = "", sub = "", title = "第 " + c.i + " 号格";
     if (c.passable) {
       const capv = cap ? cap[idx] : 0;
-      if (memBand) {
-        const e = memBand.mem[String(c.i)];
-        const capn = OverviewLogic.memCaption(e, S.t);
-        if (capn.kind === "unknown") {
-          fill = "#eceae6"; food = "未知"; sub = "";
-          title += " · 该群体未知";
-        } else {
-          fill = ramp(capv ? e[0] / capv : 0);
-          food = py(e[0], 0);
-          sub = capn.text;
-          title += " · 记得食物 " + py(e[0], 1) + " 人年口粮 · " + capn.text;
+      if (layer === "mem") {
+        if (!memBand) { fill = "#1a2420"; label = "先选群体"; }
+        else {
+          const e = memBand.mem[String(c.i)];
+          const capn = OverviewLogic.memCaption(e, S.t);
+          if (capn.kind === "unknown") { fill = "#2a2e2b"; label = "未知"; title += " · 该群体未知"; }
+          else {
+            fill = ramp(capv ? e[0] / capv : 0);
+            label = py(e[0], 0); sub = capn.text;
+            title += " · 记得食物 " + py(e[0], 1) + " 人年口粮 · " + capn.text;
+          }
         }
+      } else if (layer === "pop") {
+        const p = popByCell[c.i] || 0;
+        fill = ramp(p / maxPop); label = p ? p + "人" : "";
+        title += " · 本格人口 " + p;
+      } else if (layer === "store") {
+        const st = storeByCell[c.i] || 0;
+        fill = ramp(st / maxStore); label = st ? py(st, 0) : "";
+        title += " · 本格储粮 " + py(st, 1) + " 人年口粮";
+      } else if (layer === "event") {
+        fill = eventCells.has(c.i) ? "#3d4a28" : "#16201b";
+        label = eventCells.has(c.i) ? "事" : py(rec.stock[idx], 0);
+        title += eventCells.has(c.i) ? " · 本年有可核实事件" : " · 本年无事件";
       } else {
         fill = ramp(capv ? rec.stock[idx] / capv : 0);
-        food = py(rec.stock[idx], 0);
-        sub = "";
+        label = py(rec.stock[idx], 0);
         title += " · 食物 " + py(rec.stock[idx], 1) + " 人年口粮";
         if (capv) title += " · 容量 " + Math.round(rec.stock[idx] / capv * 100) + "%（次要）";
-        title += " · 格子编号 " + c.i;
       }
-    } else {
-      title += " · 不可通行";
-    }
+      title += " · 格子编号 " + c.i;
+    } else title += " · 不可通行";
     const selected = S.selCell === c.i;
-    out += `<path d="${hexPath(cx, cy)}" fill="${fill}" stroke="${selected ? "#1f2937" : "#cfd2cd"}"
-        stroke-width="${selected ? 2.6 : 1}" data-cell="${c.i}" class="cell">
+    const hot = eventCells.has(c.i) && (layer === "event" || layer === "flow");
+    out += `<path d="${hexPath(cx, cy)}" fill="${fill}" stroke="${selected ? "#f3deaa" : (hot ? "#d4b06a" : "#2a3530")}"
+        stroke-width="${selected ? 2.8 : hot ? 1.8 : 1}" data-cell="${c.i}" class="cell"${selected ? ' filter="url(#glow)"' : ""}>
         <title>${esc(title)}</title></path>`;
-    if (c.passable) {
-      const dark = fill.startsWith("rgb") && (parseInt(fill.slice(4).split(",")[1], 10) < 150);
-      const ink = dark ? "#eef5ef" : "#4b534e";
-      if (memBand) {
-        out += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="10"
-            fill="${ink}" pointer-events="none">${esc(food)}</text>`;
-        if (sub) out += `<text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="8"
-            fill="${ink}" opacity="0.9" pointer-events="none">${esc(sub)}</text>`;
-      } else {
-        out += `<text x="${cx}" y="${cy + 6}" text-anchor="middle" font-size="8"
-            fill="${ink}" opacity="0.85" pointer-events="none">食物</text>`;
-        out += `<text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="11"
-            fill="${ink}" pointer-events="none">${esc(food)}</text>`;
-      }
+    if (c.passable && label) {
+      out += `<text x="${cx}" y="${cy + (sub ? 6 : 12)}" text-anchor="middle" font-size="10"
+          fill="#e8eadc" opacity="0.9" pointer-events="none">${esc(label)}</text>`;
+      if (sub) out += `<text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="8"
+          fill="#d4b06a" pointer-events="none">${esc(sub)}</text>`;
     }
   });
 
+  const bandPos = {};
   S.map.cells.forEach((c) => {
     const list = byCell[c.i]; if (!list) return;
     const xy = cellCenter(c), cx = xy[0], cy = xy[1];
@@ -469,36 +558,72 @@ function renderMap() {
       const rad = rads[k];
       const x = x0 + rad, y = cy - 10;
       x0 += 2 * rad + 2;
+      bandPos[b.id] = [x, y, c.i];
       const on = S.selBand === b.id;
       out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad.toFixed(1)}"
-          fill="${on ? "#b45309" : "#8a5a2b"}" fill-opacity="0.93"
-          stroke="${on ? "#fff8e8" : "#fdfaf4"}" stroke-width="${on ? 2.4 : 1.5}"
-          data-band="${b.id}" class="band" style="cursor:pointer">
+          fill="${on ? "#e8a04a" : "#c47a3a"}" fill-opacity="0.95"
+          stroke="${on ? "#f3deaa" : "#f6e7c8"}" stroke-width="${on ? 2.6 : 1.4}"
+          data-band="${b.id}" class="band" style="cursor:pointer"${on ? ' filter="url(#glow)"' : ""}>
           <title>${esc(b.name)} · ${b.size}人</title></circle>`;
-      const label = b.size + "人";
-      const fs = rad >= 11 ? 9 : 7.5;
       if (rad >= 7) {
         out += `<text x="${x.toFixed(1)}" y="${(y + 3.2).toFixed(1)}" text-anchor="middle"
-            font-size="${fs}" fill="#fff" pointer-events="none">${label}</text>`;
+            font-size="${rad >= 11 ? 9 : 7.5}" fill="#1a1408" font-weight="700" pointer-events="none">${b.size}人</text>`;
       }
     });
   });
+
+  if (layer === "flow") {
+    const col = { migrate: "#d4b06a", share: "#6eb8b4", aid: "#6fb37c", split: "#7aa7d8" };
+    (rec.events || []).forEach((e) => {
+      let a, b;
+      if (e.type === "migrate" && e.from != null && e.to != null) {
+        a = cellCenter(S.map.cells[e.from]); b = cellCenter(S.map.cells[e.to]);
+      } else if ((e.type === "share" || e.type === "aid") && e.donor && e.receiver) {
+        a = bandPos[e.donor]; b = bandPos[e.receiver];
+        if (a && b && a[2] === b[2]) {
+          const x = a[0], y = a[1] - 16;
+          out += `<path d="M${a[0].toFixed(1)},${a[1].toFixed(1)} Q${x.toFixed(1)},${y} ${b[0].toFixed(1)},${b[1].toFixed(1)}"
+            class="flow-line" stroke="${col[e.type]}"/>`;
+          return;
+        }
+      } else if (e.type === "split" && e.parent && e.band) {
+        a = bandPos[e.parent]; b = bandPos[e.band];
+      }
+      if (!a || !b) return;
+      out += `<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"
+        class="flow-line" stroke="${col[e.type] || "#d4b06a"}"/>`;
+    });
+  }
+
   svg.innerHTML = out;
   svg.querySelectorAll(".band").forEach((n) =>
-    n.addEventListener("click", (e) => { e.stopPropagation(); selectBand(n.dataset.band); }));
+    n.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (S._suppressClick) { S._suppressClick = false; return; }
+      selectBand(n.dataset.band);
+    }));
   svg.querySelectorAll(".cell").forEach((n) =>
-    n.addEventListener("click", () => { S.selCell = +n.dataset.cell; S.selBand = null; renderMap(); renderSide(); }));
+    n.addEventListener("click", () => {
+      if (S._suppressClick) { S._suppressClick = false; return; }
+      S.selCell = +n.dataset.cell; S.selBand = null; renderMap(); renderSide();
+    }));
 
-  if ($("legend")) {
-    $("legend").innerHTML = memBand
-      ? `记忆视图（${esc(memBand.name)}）：<span class="bar"></span> 记得的食物少 → 多 ·
-         <span class="chip">未知</span> · 灰斜纹 = 不可通行`
-      : `真实资源：<span class="bar"></span> 食物少 → 多 · 灰斜纹 = 不可通行`;
-  }
+  const keys = {
+    resource: "资源层：绿色深浅 = 野外食物（人年口粮）。灰斜纹 = 不可通行。",
+    pop: "人口层：颜色按本格在世人口。圆点仍是各个群体。",
+    store: "储粮层：颜色按本格群体储粮合计。",
+    mem: memBand ? ("记忆层（" + memBand.name + "）：未知格标灰，时间戳如实显示。") : "记忆层：先点一个群体。",
+    event: "事件层：金色描边的格子本年有可核实事件。",
+    flow: "流向层：金=迁移，青=信息交换，绿=食物援助。动画只是示意方向，不改变记录。",
+  };
+  if ($("legend")) $("legend").innerHTML = `<span class="bar"></span> ${esc(keys[layer] || keys.resource)}`;
   if ($("maphint")) {
     $("maphint").textContent = memBand
-      ? "记忆视图只替换资源读数；群体位置仍是世界真实位置。没有时间戳的格子显示「时间未记录」，不补日期。群体自己所在格的存量每年会刷新，但时间戳只在侦察或迁入时更新——观察台如实显示，不替模型修正。"
-      : "点击格子看食物与占用；点击圆点看群体。同格多个群体排成一行，可分别选择。格子编号在悬停说明里。";
+      ? "记忆视图只替换资源读数；群体位置仍是世界真实位置。没有时间戳显示「时间未记录」。"
+      : "滚轮缩放，拖拽平移。点圆点看群体，点格子看地形。";
+  }
+  if ($("map-key")) {
+    $("map-key").textContent = "圆点是群体，数字是人口。" + (keys[layer] || "");
   }
 }
 
@@ -647,9 +772,14 @@ function selectBand(id, opts) {
 function setView(v) {
   if (v === "mem" && !S.selBand) { flash("先点一个群体，才能看它记忆里的世界。"); return; }
   S.view = v;
+  if (v === "mem") S.layer = "mem";
+  else if (S.layer === "mem") S.layer = "resource";
   setHash({ view: v === "mem" ? "mem" : "" });
-  $("v-truth").classList.toggle("on", v === "truth");
-  $("v-mem").classList.toggle("on", v === "mem");
+  if ($("v-truth")) $("v-truth").classList.toggle("on", v === "truth" && S.layer === "resource");
+  if ($("v-mem")) $("v-mem").classList.toggle("on", v === "mem");
+  document.querySelectorAll("#layers [data-layer]").forEach((b) =>
+    b.classList.toggle("on", (v === "mem" && b.dataset.layer === "mem") ||
+      (v !== "mem" && b.dataset.layer === S.layer)));
   renderMap();
 }
 
@@ -704,7 +834,7 @@ function tick() {
 }
 function setPlaying(v) {
   S.playing = v;
-  $("b-play").textContent = v ? "⏸ 暂停" : "▶ 播放";
+  $("b-play").textContent = v ? "⏸ 暂停" : "▶ 播放历史";
   $("tl-note").textContent = v ? "回放中（只读已保存的记录）"
     : "回放只读取已保存的记录，不会重新计算世界。";
   clearTimeout(S.timer);
@@ -760,25 +890,25 @@ function lineChart(title, series, key, color, conv) {
   return `<div class="chart"><h4>${esc(title)}</h4>
     <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto">
       <path d="${d}" fill="none" stroke="${color}" stroke-width="1.8"/>
-      <line x1="${cx}" y1="8" x2="${cx}" y2="${h - 18}" stroke="#b45309" stroke-dasharray="3 3"/>
-      <text x="2" y="14" font-size="9" fill="#6b7280">${esc(String(conv(mx)))}</text>
-      <text x="2" y="${h - 20}" font-size="9" fill="#6b7280">${esc(String(conv(mn)))}</text>
-      <text x="${pad}" y="${h - 4}" font-size="9" fill="#6b7280">0</text>
-      <text x="${w - 20}" y="${h - 4}" font-size="9" fill="#6b7280">${series.length - 1}</text>
+      <line x1="${cx}" y1="8" x2="${cx}" y2="${h - 18}" stroke="#d4b06a" stroke-dasharray="3 3"/>
+      <text x="2" y="14" font-size="9" fill="#8e9688">${esc(String(conv(mx)))}</text>
+      <text x="2" y="${h - 20}" font-size="9" fill="#8e9688">${esc(String(conv(mn)))}</text>
+      <text x="${pad}" y="${h - 4}" font-size="9" fill="#8e9688">0</text>
+      <text x="${w - 20}" y="${h - 4}" font-size="9" fill="#8e9688">${series.length - 1}</text>
     </svg></div>`;
 }
 function renderCharts() {
   if ($("tab-metrics").hidden) return;
   const s = S.series;
   $("charts").innerHTML =
-    lineChart("总人口（人）", s, (r) => r.agg.pop, "#2f6f4f", (v) => nf(Math.round(v))) +
-    lineChart("群体数（个）", s, (r) => r.agg.bands, "#2c4a8a", (v) => nf(Math.round(v))) +
-    lineChart("野外食物（人年口粮）", s, (r) => r.agg.stock_total, "#7a6f2b", (v) => py(v, 0)) +
-    lineChart("群体储粮（人年口粮）", s, (r) => r.agg.store_total, "#8a5a2b", (v) => py(v, 0)) +
-    lineChart("当年迁移次数（账本，次）", s, (r) => r.year.mig_total, "#59748a", (v) => nf(v)) +
-    lineChart("当年迁移死亡（人）", s, (r) => r.year.mig_deaths_cum, "#a12b2b", (v) => nf(v)) +
+    lineChart("总人口（人）", s, (r) => r.agg.pop, "#6fb37c", (v) => nf(Math.round(v))) +
+    lineChart("群体数（个）", s, (r) => r.agg.bands, "#6eb8b4", (v) => nf(Math.round(v))) +
+    lineChart("野外食物（人年口粮）", s, (r) => r.agg.stock_total, "#d4b06a", (v) => py(v, 0)) +
+    lineChart("群体储粮（人年口粮）", s, (r) => r.agg.store_total, "#c47a3a", (v) => py(v, 0)) +
+    lineChart("当年迁移次数（账本，次）", s, (r) => r.year.mig_total, "#c8a05a", (v) => nf(v)) +
+    lineChart("当年迁移死亡（人）", s, (r) => r.year.mig_deaths_cum, "#c45c52", (v) => nf(v)) +
     lineChart("当年缺粮/需求（‰）", s, (r) => r.year.need_cum
-      ? Math.round(r.year.deficit_cum / r.year.need_cum * 1000) : null, "#b4531f", (v) => v + "‰");
+      ? Math.round(r.year.deficit_cum / r.year.need_cum * 1000) : null, "#d4b06a", (v) => v + "‰");
   const head = `<tr><th>年</th><th>总人口</th><th>群体数</th><th>野外食物(人年)</th><th>储粮(人年)</th>
     <th>当年出生</th><th>当年原死亡</th><th>当年迁移死亡</th><th>当年迁移(账本)</th><th>当年缺粮/需求</th>
     <th>累计出生</th><th>累计原死亡</th><th>累计迁移死亡</th><th>守恒误差</th></tr>`;
@@ -793,6 +923,15 @@ function renderCharts() {
   $("yeartable").innerHTML = head + rows;
   $("yeartable").querySelectorAll("tr[data-t]").forEach((n) =>
     n.addEventListener("click", () => gotoYear(+n.dataset.t)));
+  $("charts").querySelectorAll(".chart svg").forEach((svg) => {
+    svg.style.cursor = "pointer";
+    svg.addEventListener("click", (e) => {
+      const box = svg.getBoundingClientRect();
+      const x = (e.clientX - box.left) / Math.max(box.width, 1);
+      const t = Math.round(x * Math.max(S.series.length - 1, 0));
+      gotoYear(t);
+    });
+  });
 }
 
 /* ---------------- 事件 ---------------- */
@@ -939,6 +1078,12 @@ function renderRuns() {
       try { await api(`/api/runs/${n.dataset.del}`, { method: "DELETE" }); }
       catch (e) { flash("删除失败：" + e.message, true); } refresh();
     }));
+  const sw = $("run-switch");
+  if (sw) {
+    const cur = S.run ? S.run.run_id : "";
+    sw.innerHTML = `<option value="">选择世界…</option>` + S.runs.map((r) =>
+      `<option value="${esc(r.run_id)}"${r.run_id === cur ? " selected" : ""}>${esc(r.label || r.run_id)} · ${esc(r.engine || "")} · ${r.years_recorded}/${r.years}</option>`).join("");
+  }
 }
 
 async function openRun(id) {
@@ -957,6 +1102,7 @@ async function openRun(id) {
   S.run = run;
   S.meta = run.meta || null;
   S.years.clear(); S.selBand = null; S.selCell = null; S.band = null;
+  S.cam = { x: 0, y: 0, k: 1 }; S.layer = "resource"; S.view = "truth";
   S.series = ser.series;
   S.view = "truth";
   if ($("v-truth")) $("v-truth").classList.add("on");
@@ -1001,13 +1147,13 @@ function flash(msg, bad) {
 function showTab(name) {
   if (name === "events") {
     name = "world";
-    setTimeout(() => { const p = $("event-panel"); if (p) p.scrollIntoView({ block: "start" }); }, 0);
+    setTimeout(() => { const p = $("events"); if (p) p.scrollIntoView({ block: "start" }); }, 0);
   }
   if (["world", "metrics", "runs", "progress"].indexOf(name) < 0) name = "world";
   ["world", "metrics", "events", "runs", "progress"].forEach((t) => {
     const el = $("tab-" + t); if (el) el.hidden = t !== name;
   });
-  document.querySelectorAll("#tabs button").forEach((b) =>
+  document.querySelectorAll("#tabs button, .hud-actions [data-tab]").forEach((b) =>
     b.classList.toggle("on", b.dataset.tab === name));
   setHash({ tab: name });
   if (name === "metrics") renderCharts();
@@ -1051,10 +1197,21 @@ async function boot() {
     sessionStorage.setItem("obs_token", S.token);
     location.reload();
   });
-  document.querySelectorAll("#tabs button").forEach((b) =>
+  document.querySelectorAll("#tabs button, .hud-actions [data-tab]").forEach((b) =>
     b.addEventListener("click", () => showTab(b.dataset.tab)));
-  $("v-truth").addEventListener("click", () => setView("truth"));
-  $("v-mem").addEventListener("click", () => setView("mem"));
+  $("v-truth").addEventListener("click", () => setLayer("resource"));
+  $("v-mem").addEventListener("click", () => setLayer("mem"));
+  document.querySelectorAll("#layers [data-layer]").forEach((b) => {
+    if (b.id === "v-truth" || b.id === "v-mem") return;
+    b.addEventListener("click", () => setLayer(b.dataset.layer));
+  });
+  if ($("run-switch")) $("run-switch").addEventListener("change", (e) => {
+    if (e.target.value) openRun(e.target.value);
+  });
+  bindMapCam();
+  if ($("zoom-in")) $("zoom-in").addEventListener("click", () => { S.cam.k = Math.min(3.2, S.cam.k * 1.25); renderMap(); });
+  if ($("zoom-out")) $("zoom-out").addEventListener("click", () => { S.cam.k = Math.max(0.7, S.cam.k / 1.25); renderMap(); });
+  if ($("zoom-reset")) $("zoom-reset").addEventListener("click", () => { S.cam = { x: 0, y: 0, k: 1 }; renderMap(); });
   $("b-play").addEventListener("click", () => setPlaying(!S.playing));
   $("b-next").addEventListener("click", () => { setPlaying(false); gotoYear(S.t + 1); });
   $("b-prev").addEventListener("click", () => { setPlaying(false); gotoYear(S.t - 1); });
@@ -1113,6 +1270,33 @@ async function boot() {
   }
   if (hp.tab) showTab(hp.tab);
   setInterval(refresh, 1500);
+}
+
+function bindMapCam() {
+  const box = $("mapbox"); if (!box) return;
+  box.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const next = e.deltaY < 0 ? S.cam.k * 1.12 : S.cam.k / 1.12;
+    S.cam.k = Math.max(0.7, Math.min(3.2, next));
+    renderMap();
+  }, { passive: false });
+  box.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    S._drag = { x: e.clientX, y: e.clientY, cx: S.cam.x, cy: S.cam.y, moved: false };
+    box.setPointerCapture(e.pointerId);
+  });
+  box.addEventListener("pointermove", (e) => {
+    if (!S._drag) return;
+    const dx = e.clientX - S._drag.x, dy = e.clientY - S._drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) S._drag.moved = true;
+    S.cam.x = S._drag.cx + dx / S.cam.k;
+    S.cam.y = S._drag.cy + dy / S.cam.k;
+    renderMap();
+  });
+  box.addEventListener("pointerup", () => {
+    if (S._drag && S._drag.moved) S._suppressClick = true;
+    S._drag = null;
+  });
 }
 
 function syncEngineForm() {
