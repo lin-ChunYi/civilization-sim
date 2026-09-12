@@ -699,12 +699,72 @@ def proc_line(pid):
     return line
 
 
+def split_ps_line(line):
+    """把 `ps -o lstart=,command=` 的一行拆成 (启动时刻, 命令行)。
+
+    `lstart` 固定是五段：`Www Mmm dd HH:MM:SS YYYY`（macOS/BSD 与 Linux 都是这个格式）。
+    """
+    fields = (line or '').split(' ')
+    if len(fields) < 6:
+        return '', line or ''
+    return ' '.join(fields[:5]), ' '.join(fields[5:])
+
+
+def cli_command_matches(job, command):
+    """命令行是不是**我们要起的那个 CLI**，而且用的是**我们这次的提示词副本**。
+
+    这是结构核对，不是找字符串：token 只用来**找候选**。
+    `/bin/cat /tmp/<同一个 token>.stdout.jsonl` 会在命令行里带着 token，
+    但它 argv0 不是那个 CLI、也没有 `--prompt-file` —— 不是我们的进程，
+    更不该因此获得"可以对它发信号"的资格。
+    """
+    argv = job.get('cli_argv') or []
+    binary = (job.get('cli_bin') or (job.get('cli') or {}).get('bin')
+              or (argv[0] if argv else ''))
+    prompt_copy = job.get('cli_prompt_copy') or ''
+    if not binary or not prompt_copy:
+        return False                  # 登记信息不全：证实不了，就不认
+    fields = (command or '').split()
+    # 两条都要满足，而且都是**整段字段**比对，不是子串包含：
+    #   1. 登记的那个 CLI 可执行文件，确实出现在命令里
+    #      （不要求是 argv[0]：带 shebang 的脚本在 ps 里前面会多出解释器）；
+    #   2. `--prompt-file` 的取值正是我们这次派工的那份提示词副本。
+    # `cat /tmp/<token>.stdout.jsonl` 两条都不满足。
+    # 已知限制：路径里带空格时按空白切分会失真，那时这里返回 False ——
+    # 宁可证实不了（unknown / 只观察），也不认错进程。
+    if binary not in fields:
+        return False
+    if '--prompt-file' not in fields:
+        return False
+    i = fields.index('--prompt-file')
+    return i + 1 < len(fields) and fields[i + 1] == prompt_copy
+
+
+def cli_identity(job, line):
+    """拿当前的 `ps` 行核对这次派工的身份。返回 'match' / 'mismatch' / 'unverifiable'。
+
+    **记过出生身份就严格比对**：启动时刻 + 完整命令行必须一模一样。
+    对不上就是 pid 被复用了 —— 不管命令行里有没有那个 token。
+    """
+    birth = (job.get('cli_birth') or '').strip()
+    if birth:
+        return 'match' if line.strip() == birth else 'mismatch'
+    _, command = split_ps_line(line)
+    if cli_command_matches(job, command):
+        return 'match'
+    argv = job.get('cli_argv') or []
+    if not argv and not job.get('cli_prompt_copy'):
+        # 接管观察那类：没有出生身份、也没有我们自己的命令结构可比 —— 证实不了。
+        return 'unverifiable'
+    return 'mismatch'
+
+
 def probe_cli(job):
     """这次派工的 CLI 进程现在怎么样：alive / gone / unknown / unconfirmed。
 
-    判据是**出生身份**，不是"我记得 pid 是多少"：启动时记下 `ps` 的启动时刻与完整命令行，
-    现在必须还对得上。对不上就是 pid 被复用了（gone），查不了就是 unknown ——
-    unknown 既不算活也不算死，更不是发信号的理由。
+    判据是**出生身份**（启动时刻 + 完整命令行），不是"我记得 pid 是多少"，
+    更不是"命令行里出现过那个 token"。记过出生身份就严格比对，对不上即 pid 被复用，
+    一律 gone，绝不对那个新进程发任何信号。
 
     **没有 pid 不等于进程死了。** 认领是先落盘再启动的，中间有个窗口：token 已经写进
     队列、pid 还没写回来。那种情况返回 unconfirmed，交给 resolve_cli 去扫进程表 + 看日志，
@@ -718,22 +778,23 @@ def probe_cli(job):
         return 'gone'
     if line == 'unknown':
         return 'unknown'
-    token = job.get('cli_token') or ''
-    birth = job.get('cli_birth') or ''
-    if token and token in line:
+    verdict = cli_identity(job, line)
+    if verdict == 'match':
         return 'alive'
-    if birth and line == birth:
-        return 'alive'
-    return 'gone'                      # 这个 pid 现在是别人的进程
+    if verdict == 'unverifiable':
+        return 'unknown'              # 证实不了：不当活、不当死，**也不发信号**
+    return 'gone'                     # 这个 pid 现在是别人的进程
 
 
 def find_by_token(token):
-    """靠 token 在进程表里重新找回那次派工。返回 pid / None / 'unknown'。
+    """靠 token 在进程表里找出**候选**。返回 [(pid, command), ...] 或 'unknown'。
 
-    重启之后用它认领自己启动过的进程 —— 而不是"没看到 pid 就再跑一遍"。
+    **token 只用来找候选，不构成身份。** 任何一条命令行里带着我们的提示词/日志文件名
+    （比如 `cat /tmp/<token>.stdout.jsonl`）都会被扫到；是不是我们的 CLI，
+    要由调用方拿 `cli_command_matches` 做结构核对，绝不凭 token 字符串给出拥有权。
     """
     if not token:
-        return None
+        return []
     try:
         r = subprocess.run(['ps', '-ax', '-o', 'pid=,command='],
                            capture_output=True, text=True, timeout=8)
@@ -741,16 +802,21 @@ def find_by_token(token):
         return 'unknown'
     if r.returncode != 0:
         return 'unknown'
-    hits = [ln.strip() for ln in (r.stdout or '').splitlines() if token in ln]
-    hits = [h for h in hits if ' ps ' not in h and not h.endswith(' ps')]
-    if not hits:
-        return None
-    if len(hits) > 1:
-        return 'unknown'               # 不止一个：宁可等人看，也不乱认
-    try:
-        return int(hits[0].split(None, 1)[0])
-    except (ValueError, IndexError):
-        return 'unknown'
+    out = []
+    for ln in (r.stdout or '').splitlines():
+        ln = ln.strip()
+        if token not in ln:
+            continue
+        head, _, rest = ln.partition(' ')
+        try:
+            pid = int(head)
+        except ValueError:
+            continue
+        cmd = rest.strip()
+        if cmd.split()[:1] == ['ps'] or ' ps -ax ' in cmd:
+            continue                   # 别把我们自己这次 ps 算进去
+        out.append((pid, cmd))
+    return out
 
 
 def resolve_cli(job):
@@ -764,22 +830,36 @@ def resolve_cli(job):
         既不重跑也不当成完成。
     """
     found = find_by_token(job.get('cli_token'))
-    if isinstance(found, int):
-        line = proc_line(found)
-        job['cli_pid'] = found
-        job['cli_birth'] = '' if line in (None, 'unknown') else line
-        return 'alive', 'reclaimed pid %d by launch token' % found
     if found == 'unknown':
         return 'unknown', ('the claim is on disk but no pid was recorded, and the process table '
                            'cannot be scanned right now; whether a CLI process is running is '
                            'UNKNOWN - not dead. No auto-relaunch; the next tick retries.')
+    # token 只是候选。认领之前必须做结构核对：argv0 是那个 CLI、且 --prompt-file
+    # 正是我们这次的提示词副本。"命令行里带着同名文件"不算数。
+    real = [(pid, cmd) for pid, cmd in found if cli_command_matches(job, cmd)]
+    if len(real) > 1:
+        return 'unknown', ('more than one process matches this launch identity; refusing to '
+                           'claim any of them')
+    if len(real) == 1:
+        pid, _cmd = real[0]
+        line = proc_line(pid)
+        job['cli_pid'] = pid
+        # **绝不覆盖已经记下的出生身份** —— 那会把别的进程洗成自己的。
+        if not (job.get('cli_birth') or '').strip() and line not in (None, 'unknown'):
+            job['cli_birth'] = line
+        return 'alive', 'reclaimed pid %d after verifying the launch identity' % pid
+    decoys = len(found)
     text, _ = journal_text(job)
+    decoy_note = ('' if not decoys else
+                  ' (%d process(es) merely mention the launch token - e.g. something reading '
+                  'the prompt/journal file - and were NOT claimed)' % decoys)
     if text.strip():
         return 'gone', ('no pid was recorded, but the journal has output: the process did run '
-                        'and is no longer in the process table')
-    return 'no_launch_record', ('the claim is on disk but there is no pid, no matching process '
-                                'and no journal output: we cannot tell whether the CLI ever '
-                                'started. Not treating this as dead, not relaunching.')
+                        'and is no longer in the process table' + decoy_note)
+    return 'no_launch_record', ('the claim is on disk but there is no pid, no process matching '
+                                'the launch identity and no journal output: we cannot tell '
+                                'whether the CLI ever started. Not treating this as dead, '
+                                'not relaunching.' + decoy_note)
 
 
 def launch_cli(job, root, queue):
@@ -801,7 +881,7 @@ def launch_cli(job, root, queue):
     job.update(status='running', transport=CLI_TRANSPORT, started_at=now(),
                started_epoch=time.time(), cli_token=token, cli_argv=argv,
                cli_session_mode=('resume' if spec.get('session_id') else 'new'),
-               cli_session_id=spec.get('session_id'),
+               cli_session_id=spec.get('session_id'), cli_bin=spec['bin'],
                cli_prompt_copy=str(prompt_path), journal=str(journal),
                journal_err=str(journal_err), journal_offset=0,
                prompt_head=prompt.strip()[:120], prompt_sha=sha(prompt.encode('utf-8')),
@@ -1238,12 +1318,22 @@ def cli_pause(job, root):
                              'The current CLI turn is NOT interrupted (headless CLI has no safe '
                              'composer, and this dispatcher cannot checkpoint mid-turn).')
         return True
-    if probe_cli(job) != 'alive':
-        job['pause_note'] = ('paused: the CLI process identity could not be confirmed, so no '
-                             'signal was sent. No further rounds will be dispatched.')
+    pid = job.get('cli_pid')
+    if not pid or probe_cli(job) != 'alive':
+        job['pause_note'] = ('paused: the CLI process identity could not be confirmed '
+                             '(pid reuse / ps unavailable / identity mismatch), so NO signal '
+                             'was sent. No further rounds will be dispatched.')
+        return True
+    # 发信号前**再核一次出生身份**。pid 随时可能被回收复用，几毫秒前的判断不作数；
+    # 命令行里带着我们的 token（例如别的命令在读同名日志）**不构成**身份。
+    line = proc_line(pid)
+    if line in (None, 'unknown') or cli_identity(job, line) != 'match':
+        job['pause_note'] = ('paused: the pid no longer matches this run\'s birth identity '
+                             '(start time + full command line), so NO signal was sent - '
+                             'that process belongs to someone else now.')
         return True
     try:
-        os.kill(int(job['cli_pid']), signal.SIGINT)      # 官方的 graceful cancel
+        os.kill(int(pid), signal.SIGINT)                 # 官方的 graceful cancel
     except OSError as exc:
         job['pause_note'] = 'paused: SIGINT could not be delivered (%s); no further signals' % exc
         return True
@@ -1267,11 +1357,19 @@ def cli_reclaim(job, root, queue):
     if probe_cli(job) == 'alive':
         return
     found = find_by_token(job['cli_token'])
-    if isinstance(found, int):
-        line = proc_line(found)
-        job['cli_pid'] = found
-        job['cli_birth'] = '' if line in (None, 'unknown') else line
-        job['receipt_detail'] = 'reclaimed pid %d by launch token' % found
+    if found == 'unknown':
+        return
+    real = [(pid, cmd) for pid, cmd in found if cli_command_matches(job, cmd)]
+    if len(real) == 1:
+        pid, _cmd = real[0]
+        line = proc_line(pid)
+        birth = (job.get('cli_birth') or '').strip()
+        if birth and line not in (None, 'unknown') and line.strip() != birth:
+            return          # 出生身份对不上：那不是我们的进程，**绝不改写 cli_birth**
+        job['cli_pid'] = pid
+        if not birth and line not in (None, 'unknown'):
+            job['cli_birth'] = line
+        job['receipt_detail'] = 'reclaimed pid %d after verifying the launch identity' % pid
         if job['status'] == 'blocked' and job.get('receipt_state') in (
                 'unknown', 'cli_no_launch_record'):
             # 之前是"不知道"才被拦下的，现在认回来了：继续观察，不是别的结论。

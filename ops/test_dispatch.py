@@ -1395,7 +1395,7 @@ class TestCliBoundaries(CliBase):
         job = self.mem_job([], cli_token='ciltok-G9-nothing')
         job['journal'] = str(empty)
         real = D.find_by_token
-        D.find_by_token = lambda t: None
+        D.find_by_token = lambda t: []
         try:
             D.collect_cli(job, self.root)
         finally:
@@ -1411,7 +1411,7 @@ class TestCliBoundaries(CliBase):
                             {'text': 'ok', 'stopReason': 'end_turn'}],
                            cli_token='ciltok-G9-ran')
         real = D.find_by_token
-        D.find_by_token = lambda t: None
+        D.find_by_token = lambda t: []
         try:
             D.collect_cli(job, self.root)
         finally:
@@ -1488,6 +1488,196 @@ class TestCliBoundaries(CliBase):
         D.collect_cli(job, self.root)
         self.assertEqual(job['receipt_state'], 'permission_cancelled')
         self.assertNotIn('report', job)
+
+
+# ------------------------- C06_R2：身份核对（token 不构成身份，出生身份说了算）
+class TestCliIdentity(CliBase):
+    """独立复审在 59650b3 / 046bf1c 上实证过的漏洞：`probe_cli` 先看
+    `token in line` 就返回 alive，绕过了已记录的 `cli_birth`。于是一个 11:30 才启动的
+    `/bin/cat /tmp/<同一个 token>.stdout.jsonl` 被认成 10:00 启动的 Grok，
+    `graceful_cancel` 还会向它发 SIGINT 并自称"已核验自己的进程"。
+
+    这一组全部用**替身**核对身份与信号，只有明确标注的那条用本 suite 自己起的子进程；
+    不碰任何真实 CLI、共享 leader 或借用窗口。
+    """
+    TOKEN = 'ciltok-G9-abc123'
+    BIN = '/Users/ecool/.grok/bin/grok'
+    PROMPT = '/tmp/ciltok-G9-abc123.txt'
+    BIRTH = ('Fri Sep 12 10:00:00 2026 ' + BIN
+             + ' --cwd /repo --resume 041d93f0 --prompt-file ' + PROMPT
+             + ' --output-format json')
+
+    def ident_job(self, **extra):
+        job = {'task_id': 'G9', 'owner': 'grok', 'transport': 'grok-cli', 'status': 'running',
+               'owns_process': True, 'cli_pid': 4242, 'cli_token': self.TOKEN,
+               'cli_birth': self.BIRTH, 'cli_bin': self.BIN, 'cli_prompt_copy': self.PROMPT,
+               'cli_argv': [self.BIN, '--cwd', '/repo', '--resume', '041d93f0',
+                            '--prompt-file', self.PROMPT, '--output-format', 'json'],
+               'cli': {'bin': self.BIN, 'graceful_cancel': True},
+               'journal': str(self.tmp / 'none.jsonl'), 'dependencies': [],
+               'created_at': D.now()}
+        job.update(extra)
+        return job
+
+    def probe_and_pause(self, job, ps_line):
+        """在替身下跑一次探测 + 一次暂停，记下**本来会发出去**的信号。真实信号一个不发。"""
+        sent = []
+        real_line, real_kill = D.proc_line, os.kill
+        D.proc_line = lambda pid, _l=ps_line: _l
+        os.kill = lambda pid, sig: sent.append((pid, sig))
+        try:
+            probe = D.probe_cli(job)
+            D.cli_pause(job, self.root)
+        finally:
+            D.proc_line, os.kill = real_line, real_kill
+        return probe, sent
+
+    def test_R24_token_substring_cannot_override_birth_identity(self):
+        """同一个 token 出现在命令行里，但那是另一条命令、另一个启动时刻。"""
+        job = self.ident_job()
+        line = 'Fri Sep 12 11:30:00 2026 /bin/cat /tmp/%s.stdout.jsonl' % self.TOKEN
+        probe, sent = self.probe_and_pause(job, line)
+        self.assertEqual(probe, 'gone', 'token 出现在命令行里就被认成自己的进程了')
+        self.assertEqual(sent, [], '向一个不是自己的进程发了信号')
+        self.assertIn('NO signal', job['pause_note'])
+        self.assertEqual(job['cli_birth'], self.BIRTH, '出生身份被改写了')
+
+    def test_R24b_same_command_different_start_time_is_pid_reuse(self):
+        """命令行一模一样、启动时刻不同 —— 那就是 pid 被复用了。"""
+        job = self.ident_job()
+        line = self.BIRTH.replace('10:00:00', '11:30:00')
+        probe, sent = self.probe_and_pause(job, line)
+        self.assertEqual(probe, 'gone')
+        self.assertEqual(sent, [])
+
+    def test_R24c_same_start_time_different_command_is_not_ours(self):
+        job = self.ident_job()
+        line = 'Fri Sep 12 10:00:00 2026 /usr/bin/tail -f /tmp/%s.stdout.jsonl' % self.TOKEN
+        probe, sent = self.probe_and_pause(job, line)
+        self.assertEqual(probe, 'gone')
+        self.assertEqual(sent, [])
+
+    def test_R24d_exact_birth_identity_is_alive_and_gets_one_sigint(self):
+        job = self.ident_job()
+        probe, sent = self.probe_and_pause(job, self.BIRTH)
+        self.assertEqual(probe, 'alive')
+        self.assertEqual(sent, [(4242, signal.SIGINT)], '真的是自己的进程却没发 graceful cancel')
+        self.assertIn('our own verified pid', job['pause_note'])
+        job2 = self.ident_job(pause_notice_sent=True)
+        _, again = self.probe_and_pause(job2, self.BIRTH)
+        self.assertEqual(again, [], '暂停信号发了不止一次')
+
+    def test_R24e_no_graceful_cancel_means_no_signal_at_all(self):
+        job = self.ident_job(cli={'bin': self.BIN})
+        probe, sent = self.probe_and_pause(job, self.BIRTH)
+        self.assertEqual(probe, 'alive')
+        self.assertEqual(sent, [], '没开 graceful_cancel 却发了信号')
+        self.assertIn('NOT interrupted', job['pause_note'])
+
+    def test_R24f_missing_birth_falls_back_to_command_structure(self):
+        """出生身份没记下来时，只认**命令结构**：那个 CLI + 我们这次的提示词副本。"""
+        job = self.ident_job(cli_birth='')
+        ours = 'Fri Sep 12 11:00:00 2026 ' + self.BIN + ' --cwd /repo --prompt-file ' + self.PROMPT
+        probe, sent = self.probe_and_pause(job, ours)
+        self.assertEqual(probe, 'alive')
+        self.assertEqual(sent, [(4242, signal.SIGINT)])
+        # 解释器前缀（带 shebang 的脚本）不影响判定
+        job2 = self.ident_job(cli_birth='')
+        via = ('Fri Sep 12 11:00:00 2026 /usr/bin/python3 ' + self.BIN
+               + ' --cwd /repo --prompt-file ' + self.PROMPT)
+        self.assertEqual(self.probe_and_pause(job2, via)[0], 'alive')
+        # 只是读同名日志的进程，两条都不满足
+        job3 = self.ident_job(cli_birth='')
+        decoy = 'Fri Sep 12 11:00:00 2026 /bin/cat /tmp/%s.stdout.jsonl' % self.TOKEN
+        probe3, sent3 = self.probe_and_pause(job3, decoy)
+        self.assertEqual(probe3, 'gone')
+        self.assertEqual(sent3, [])
+
+    def test_R24g_adopted_run_without_identity_is_unknown_not_alive(self):
+        """接管观察、连出生身份都没记下来：证实不了就是 unknown，不当活也不当死，
+        更不发信号。"""
+        job = self.ident_job(cli_birth='', cli_argv=None, cli_prompt_copy='', cli_bin='',
+                             owns_process=False, cli={'bin': '', 'graceful_cancel': True})
+        probe, sent = self.probe_and_pause(job, 'Fri Sep 12 11:00:00 2026 /opt/grok --serve')
+        self.assertEqual(probe, 'unknown')
+        self.assertEqual(sent, [], '对接管观察的进程发了信号')
+
+    def test_R24h_ps_unknown_never_signals(self):
+        job = self.ident_job()
+        probe, sent = self.probe_and_pause(job, 'unknown')
+        self.assertEqual(probe, 'unknown')
+        self.assertEqual(sent, [])
+        self.assertIn('NO signal', job['pause_note'])
+
+    def test_R24i_reclaim_refuses_a_log_reader_candidate(self):
+        """token 只用来找候选。扫到的是 `cat`/`tail` 这类读同名文件的进程时，
+        既不认领、也不因此获得"可以对它发信号"的资格。"""
+        job = self.ident_job(cli_pid=None, cli_birth='')
+        decoy_pid = 777001
+        real = D.find_by_token
+        D.find_by_token = lambda t: [(decoy_pid,
+                                      '/bin/cat /tmp/%s.stdout.jsonl' % self.TOKEN),
+                                     (777002, '/usr/bin/tail -f /tmp/%s.txt' % self.TOKEN)]
+        try:
+            probe, detail = D.resolve_cli(job)
+        finally:
+            D.find_by_token = real
+        self.assertNotEqual(probe, 'alive')
+        self.assertIsNone(job['cli_pid'], '把一个读日志的进程认领成了自己的 CLI')
+        self.assertEqual(job['cli_birth'], '', '拿别的进程改写了出生身份')
+        self.assertIn('NOT claimed', detail)
+        self.assertTrue(D.cli_unresolved(dict(job, receipt_state=(
+            'cli_no_launch_record' if probe == 'no_launch_record' else 'unknown'))))
+
+    def test_R24j_reclaim_accepts_the_real_cli_candidate(self):
+        job = self.ident_job(cli_pid=None, cli_birth='')
+        real_find, real_line = D.find_by_token, D.proc_line
+        D.find_by_token = lambda t: [
+            (777001, '/bin/cat /tmp/%s.stdout.jsonl' % self.TOKEN),
+            (4242, self.BIN + ' --cwd /repo --prompt-file ' + self.PROMPT)]
+        D.proc_line = lambda pid: self.BIRTH if pid == 4242 else 'unknown'
+        try:
+            probe, detail = D.resolve_cli(job)
+        finally:
+            D.find_by_token, D.proc_line = real_find, real_line
+        self.assertEqual(probe, 'alive')
+        self.assertEqual(job['cli_pid'], 4242)
+        self.assertEqual(job['cli_birth'], self.BIRTH, '认领时没把出生身份记下来')
+        self.assertIn('verifying the launch identity', detail)
+
+    def test_R24k_reclaim_never_overwrites_a_recorded_birth(self):
+        """已经记过出生身份时，认领路径不得拿另一个进程把它洗成自己的。"""
+        job = self.ident_job(cli_pid=None)         # birth 已记录
+        other = 'Fri Sep 12 11:30:00 2026 ' + self.BIN + ' --cwd /repo --prompt-file ' + self.PROMPT
+        real_find, real_line = D.find_by_token, D.proc_line
+        D.find_by_token = lambda t: [(9999, self.BIN + ' --cwd /repo --prompt-file ' + self.PROMPT)]
+        D.proc_line = lambda pid: other
+        try:
+            D.cli_reclaim(job, self.root, {'jobs': {}})
+        finally:
+            D.find_by_token, D.proc_line = real_find, real_line
+        self.assertEqual(job['cli_birth'], self.BIRTH, '出生身份被另一个进程改写了')
+        self.assertIsNone(job['cli_pid'], '认领了一个出生身份对不上的进程')
+
+    def test_R24l_real_child_identity_and_one_sigint(self):
+        """唯一用真实子进程的一条：本 suite 自己起的假 CLI，核验身份后发**一次** SIGINT。"""
+        self.submit_cli('SLEEP', graceful_cancel=True)
+        self.run_cli('tick')
+        job = self.queue()['jobs']['G9']
+        pid = job['cli_pid']
+        self.addCleanup(self._kill, pid)
+        self.assertTrue(job['cli_birth'], '启动时没记下出生身份')
+        self.assertEqual(D.probe_cli(job), 'alive')
+        line = D.proc_line(pid)
+        self.assertEqual(D.cli_identity(job, line), 'match')
+        # 同一个 pid，但假装出生身份换了 -> 立刻变成"不是我们的"
+        self.assertEqual(D.cli_identity(dict(job, cli_birth=job['cli_birth'] + ' X'), line),
+                         'mismatch')
+        self.run_cli('pause')
+        self.run_cli('tick')
+        paused = self.queue()['jobs']['G9']
+        self.assertEqual(paused.get('pause_signal'), 'SIGINT')
+        self.assertTrue(Path(paused['journal']).exists(), '暂停把日志弄丢了')
 
 
 if __name__ == '__main__':
