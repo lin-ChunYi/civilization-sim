@@ -15,3 +15,6 @@ __pycache__/
 observer/data/
 observer/data_test/
 observer/tests/web/_poison_app.js
+
+# Cockpit 薄接力的运行期状态（队列、日志、STATUS），不进版本库
+.dispatch/
