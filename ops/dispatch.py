@@ -27,6 +27,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -383,13 +384,19 @@ def collect(job, root, hub, snapshot):
         job['last_output'] = text[-1200:]
 
     report = find_marker(text, job['task_id'])
-    if report:
-        job['report'] = report
+    if report is not None:
+        job['report'] = report                    # 原件照原样保留，一个字不动
+        # 标记后面未必是对象：可能是数组、字符串、数字。取字段前先确认类型，
+        # 别在非字典上调 .get()，那是 C04 这类"报告格式边界"的另一半。
+        fields = report if isinstance(report, dict) else {}
         if current.get('state') in ('waiting', 'idle'):
-            # 自报完成只到 review。done 必须由外部带证据 accept。
-            job['status'] = 'blocked' if report.get('status') == 'blocked' else 'review'
+            # 自报完成**只到 review**。done 必须由外部带证据 accept —— 报告是 agent 自己写的，
+            # 格式再标准也不构成验收。
+            job['status'] = 'blocked' if fields.get('status') == 'blocked' else 'review'
             job['finished_at'] = now()
-            job['blocking_reason'] = report.get('blocking_reason', '') or job.get('blocking_reason', '')
+            job['self_reported_at'] = now()
+            job['blocking_reason'] = (one_line(fields.get('blocking_reason') or '', 200)
+                                      or job.get('blocking_reason', ''))
     elif job.get('pending_count'):
         job['status'] = 'blocked' if job['status'] == 'blocked' else job['status']
         job['attention'] = ('agent has a permission/question item; inspect the transcript, '
@@ -463,7 +470,15 @@ def tick_once(root, hub, queue, allow_dispatch=True):
     snapshot_path = hub / 'snapshot.json'
     snapshot = read(snapshot_path, {}) or {}
     for job in queue['jobs'].values():
-        collect(job, root, hub, snapshot)
+        try:
+            collect(job, root, hub, snapshot)
+            job.pop('collect_error', None)
+        except Exception as exc:                                     # noqa: BLE001
+            # 一条任务的转录/回执/报告有问题，只记在这条任务上，**继续收其他任务**。
+            # 它的状态一个字不动（不会被当成完成，也不会被当成失败）。
+            job['collect_error'] = '%s: %s' % (type(exc).__name__, one_line(exc, 160))
+            job['attention'] = ('collect failed for this task; inspect logs/ and the raw report, '
+                                'do not accept on this evidence')
 
     if queue.get('paused'):
         for job in queue['jobs'].values():
@@ -524,27 +539,130 @@ def tick_once(root, hub, queue, allow_dispatch=True):
 
 # ---------------------------------------------------------------- STATUS
 
+# 显示层上限。原始 report 一个字不删地留在 queue.json 的 job['report'] 里，
+# 这里只决定 STATUS.md / STATUS.json 上摘要显示多少。
+DISPLAY_ITEMS = 6
+DISPLAY_WIDTH = 120
+
+
+def one_line(value, width=DISPLAY_WIDTH):
+    """任何对象 -> 一行可显示的短文本。
+
+    只做 str() / json.dumps()，**不取下标、不切片、不格式化、不求值、不执行**里面的内容。
+    自报报告是 agent 写的，对显示层来说它是数据，不是指令。
+    """
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            try:
+                text = repr(value)
+            except Exception:                                        # noqa: BLE001
+                text = '<unrenderable %s>' % type(value).__name__
+    text = ' '.join(str(text).replace('\r', ' ').replace('\n', ' ').replace('\t', ' ').split())
+    return text[:width] + ('…' if len(text) > width else '')
+
+
+def as_text_list(value, limit=DISPLAY_ITEMS, width=DISPLAY_WIDTH):
+    """把自报的汇总字段归一成短文本列表。**只管显示，不改原始报告。**
+
+    约定里 tests / screenshots 是列表，但实际接力中 agent 会写成对象、字符串、
+    数字甚至 null —— C04 之前 `tests[:6]` 直接在一个 dict 上炸掉，把 watch 打死了
+    （Python 3.12 报 KeyError、更早的版本报 TypeError: unhashable type: slice，
+    两种都是致命的）。这里对任何类型都给得出结果，给不出就如实写成一行占位文本。
+
+    条数超出上限时**不静默丢弃**：末尾补一条"另有 N 项"，提醒去看完整 report。
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = [value] if value.strip() else []
+    elif isinstance(value, dict):
+        try:
+            pairs = sorted(value.items(), key=lambda kv: one_line(kv[0], 60))
+        except Exception:                                            # noqa: BLE001
+            pairs = list(value.items())
+        items = ['%s: %s' % (one_line(k, 60), one_line(v, width)) for k, v in pairs]
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    elif isinstance(value, (set, frozenset)):
+        items = sorted(value, key=lambda x: one_line(x, width))
+    else:
+        items = [value]
+    out = [one_line(x, width) for x in items[:max(0, int(limit))]]
+    out = [x for x in out if x != '']
+    extra = len(items) - max(0, int(limit))
+    if extra > 0:
+        out.append('…（另有 %d 项，完整内容见 report）' % extra)
+    return out
+
+
+def safe_get(obj, key, default=None):
+    """取字段时连取值本身出错都兜住 —— 兜底行不能用会再炸一次的取法。"""
+    try:
+        if isinstance(obj, dict):
+            return dict.get(obj, key, default)     # 绕开被覆盖的 .get
+        return getattr(obj, key, default)
+    except Exception:                                                # noqa: BLE001
+        return default
+
+
+def status_row(job):
+    """单条任务的脱敏摘要行。**这个函数不允许抛异常** —— 一条报告畸形不能连累其他任务。"""
+    report = job.get('report')
+    if not isinstance(report, dict):
+        # agent 把标记后面写成了数组/字符串/数字：原件已经留在 job['report']，
+        # 这里只如实标注"报告不是对象"，不去猜它想说什么。
+        note = '' if report is None else 'report is not an object: ' + one_line(report)
+        report, row_note = {}, note
+    else:
+        row_note = ''
+    row = {
+        'task_id': one_line(job.get('task_id'), 80), 'owner': one_line(job.get('owner'), 40),
+        'status': one_line(job.get('status'), 40),
+        'receipt_state': one_line(job.get('receipt_state', 'none'), 40),
+        'agent_state': job.get('agent_state'),
+        'transcript_read_mode': job.get('transcript_read_mode'),
+        'commit': one_line(report.get('commit', ''), 80),
+        'branch': one_line(report.get('branch', job.get('branch', '')), 80),
+        'tests': as_text_list(report.get('tests')),
+        'screenshots': (as_text_list(report.get('screenshots'))
+                        or as_text_list(report.get('screenshot'))),
+        'blocking_reason': one_line(job.get('blocking_reason') or '', 200),
+        'attention': one_line(job.get('attention') or '', 200),
+        'accepted_at': job.get('accepted_at', ''),
+        'report_kind': type(job.get('report')).__name__ if job.get('report') is not None else '',
+        'self_reported': bool(job.get('report')),
+    }
+    if row_note:
+        row['report_note'] = row_note
+    return row
+
+
 def render_status(queue, root, hub):
     """脱敏摘要：当前任务 / 下一项 / 提交 / 实测 / 截图 / 阻塞。
     完整提示词与转录只留在 logs/（0600），这里一个字都不放。"""
     rows = []
-    for job in sorted(queue['jobs'].values(), key=lambda j: j.get('created_at', '')):
-        report = job.get('report') or {}
-        tests = report.get('tests') or []
-        rows.append({
-            'task_id': job['task_id'], 'owner': job['owner'], 'status': job['status'],
-            'receipt_state': job.get('receipt_state', 'none'),
-            'agent_state': job.get('agent_state'),
-            'transcript_read_mode': job.get('transcript_read_mode'),
-            'commit': report.get('commit', ''),
-            'branch': report.get('branch', job.get('branch', '')),
-            'tests': [str(t)[:120] for t in tests[:6]],
-            'screenshots': ([s for s in (report.get('screenshots') or []) if s]
-                            or ([report['screenshot']] if report.get('screenshot') else [])),
-            'blocking_reason': (job.get('blocking_reason') or '')[:200],
-            'attention': (job.get('attention') or '')[:200],
-            'accepted_at': job.get('accepted_at', ''),
-        })
+    try:
+        jobs = sorted(queue['jobs'].values(),
+                      key=lambda j: one_line(safe_get(j, 'created_at', ''), 40))
+    except Exception:                                                # noqa: BLE001
+        jobs = list(safe_get(queue, 'jobs', {}).values())
+    for job in jobs:
+        try:
+            rows.append(status_row(job))
+        except Exception as exc:                                     # noqa: BLE001
+            # 一条任务渲染不出来，不能让整份 STATUS（和 watch）跟着完蛋。
+            rows.append({'task_id': one_line(safe_get(job, 'task_id', '?'), 80),
+                         'owner': one_line(safe_get(job, 'owner', ''), 40),
+                         'status': one_line(safe_get(job, 'status', 'unknown'), 40),
+                         'receipt_state': 'unknown', 'agent_state': None,
+                         'transcript_read_mode': None, 'commit': '', 'branch': '',
+                         'tests': [], 'screenshots': [], 'blocking_reason': '',
+                         'attention': '', 'accepted_at': '', 'self_reported': False,
+                         'render_error': '%s: %s' % (type(exc).__name__, one_line(exc, 160))})
     nxt = next((r['task_id'] for r in rows if r['status'] == 'pending'), '')
     current = next((r['task_id'] for r in rows if r['status'] == 'running'), '')
     watch = read(root / 'watch.json', {}) or {}
@@ -564,8 +682,15 @@ def render_status(queue, root, hub):
              '- current: %s' % (current or '-'), '- next: %s' % (nxt or '-'),
              '- note: %s' % (summary['note'] or '-'),
              '- acceptance: %s' % summary['acceptance'], '']
+    if any(r.get('render_error') for r in rows):
+        lines.insert(-1, '- render_errors: %d 条任务的摘要渲染失败（原始 report 未改动，见 queue.json）'
+                     % sum(1 for r in rows if r.get('render_error')))
     for r in rows:
         lines.append('## %s (%s)' % (r['task_id'], r['owner']))
+        if r.get('render_error'):
+            lines.append('- render_error: %s' % r['render_error'])
+        if r.get('report_note'):
+            lines.append('- report_note: %s' % r['report_note'])
         lines.append('- status: %s / receipt: %s / agent: %s / transcript: %s'
                      % (r['status'], r['receipt_state'], r['agent_state'], r['transcript_read_mode']))
         if r['commit']:
@@ -643,6 +768,21 @@ def watcher_alive(root):
     return watch_identity(root)[0] is True
 
 
+def record_round_error(root, exc):
+    """把一轮的异常如实记到私有日志里。**不吞掉、也不让它停掉守护。**"""
+    try:
+        (root / 'logs').mkdir(parents=True, exist_ok=True, mode=0o700)
+        line = json.dumps({'at': now(), 'type': type(exc).__name__,
+                           'error': one_line(exc, 400),
+                           'traceback': traceback.format_exc()[-4000:]}, ensure_ascii=False)
+        path = root / 'logs' / 'watch-errors.jsonl'
+        with path.open('a', encoding='utf-8') as fh:
+            fh.write(line + '\n')
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def cmd_watch(root, hub, interval, once=False, lock_wait=10.0):
     """前台守护：唯一控制进程。收结果 -> 持久化 -> 必要时派单。"""
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -666,6 +806,7 @@ def cmd_watch(root, hub, interval, once=False, lock_wait=10.0):
                                  'interval': interval, 'heartbeat': now(),
                                  'last_round': None, 'skipped_rounds': 0})
     skipped = 0
+    errors = 0
 
     def stop_requested():
         """只认写着**我的 token** 的停止请求（或明确的 'any'）。"""
@@ -696,8 +837,16 @@ def cmd_watch(root, hub, interval, once=False, lock_wait=10.0):
                 # 别人（status/submit/pause）正常占锁 —— 跳过这一轮，**不退出**
                 skipped += 1
                 round_note = 'skipped: %s' % exc
+            except Exception as exc:                                 # noqa: BLE001
+                # 最后一道网：任何没预料到的输入（畸形报告、不可渲染的元数据……）
+                # 只能毁掉这一轮，**不能**让守护整个退出、更不能丢队列。
+                # 注意 queue.json 的写入在 try 内且在出错点之后，所以这里不会写回半份队列。
+                errors += 1
+                round_note = 'round error: %s: %s' % (type(exc).__name__, one_line(exc, 160))
+                record_round_error(root, exc)
             info = read(root / 'watch.json', {}) or {}
-            info.update(heartbeat=now(), last_round=round_note, skipped_rounds=skipped)
+            info.update(heartbeat=now(), last_round=round_note, skipped_rounds=skipped,
+                        error_rounds=errors)
             atomic(root / 'watch.json', info)
             if once:
                 break
