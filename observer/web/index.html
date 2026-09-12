@@ -96,14 +96,14 @@
           <button type="button" class="btn small" id="zoom-in" title="放大">+</button>
         </div>
       </div>
-      <p class="map-key" id="map-key">棋子是群体。格子颜色是所选图层的相对量，不是真实地形。滚轮缩放，拖拽平移。</p>
+      <p class="map-key" id="map-key">人物是群体代表，不是独立个人。格子颜色是所选图层的相对量，不是真实地形。滚轮缩放，拖拽平移。</p>
       <div class="mapbox" id="mapbox">
         <div id="year-load" class="year-load" hidden>正在读取第 <span id="year-load-n">0</span> 年…</div>
         <svg id="map" viewBox="0 0 520 430" preserveAspectRatio="xMidYMid meet" role="img" aria-label="世界沙盘"></svg>
       </div>
       <div class="mapfoot">
         <div class="legend" id="legend"></div>
-        <div class="maphint" id="maphint">点棋子看群体，点格子看位置。同格多个棋子可分别点选。</div>
+        <div class="maphint" id="maphint">点人物看群体代表，点格子看位置。同格多个代表可分别点选。</div>
       </div>
     </div>
 
@@ -191,7 +191,7 @@
           <p id="summary-note">出生与死亡来自年度账本增量，不是人口净变化。不编写动机或因果。</p>
           <p class="unit-note">1 人年口粮 = 模型标准下 1 人一年的食物量。格子颜色只表示相对存量，不能据此说某个群体一定能活多少年。</p>
           <p class="muted">64 格、六邻接、A/B 被不可通行屏障列隔开。屏障只表示不可通行，不是山脉、国界或城市。</p>
-          <p class="muted">缩放：缩小时只保留棋子；放大后显示人口与名称。流向层锚定事件记录的格子，不是年末位置。</p>
+          <p class="muted">缩放：缩小时只保留群体代表；放大后显示人口与名称。流向层锚定事件记录的格子，不是年末位置。迁移只演示记录的起点和终点，不编中间路线。</p>
           <p class="muted">导演模式：逐年播放会经过没有事件的年份；只看有记录的事件则按 series.events 与当年事件清单跳年，不把人口或出生账冒充事件。同一年列表顺序不保证机制先后，也不是因果。</p>
           <p class="muted">迁移只标 from/to 端点，具体路线未记录时不补画中间格。分裂/消失日志没有事件格，只在档案里给谱系或消失提示，不拿年末位置定位。</p>
           <p class="muted">援助<strong>活动</strong>次数 = 格×年（一次多人援助算 1）。<strong>转移</strong> = 一个供给方给一个接收方算 1 笔。
@@ -315,8 +315,8 @@
         <label>引擎<select id="f-engine"></select></label>
         <label>种子 seed<input id="f-seed" type="text" inputmode="numeric" value="0" autocomplete="off"></label>
         <label>年数 years<input id="f-years" type="text" inputmode="numeric" value="120" autocomplete="off"></label>
-        <label>SIGMA_M 资源再生年际波动（‰）<input id="f-sigma" type="text" inputmode="numeric" value="400" autocomplete="off"></label>
-        <label>MOVE_MORT_M 迁移死亡强度（‰）<input id="f-mort" type="text" inputmode="numeric" value="50" autocomplete="off"></label>
+        <label id="f-sigma-wrap">SIGMA_M 资源再生年际波动（‰）<input id="f-sigma" type="text" inputmode="numeric" value="400" autocomplete="off"></label>
+        <label id="f-mort-wrap">MOVE_MORT_M 迁移死亡强度（‰）<input id="f-mort" type="text" inputmode="numeric" value="50" autocomplete="off"></label>
         <label id="f-share-wrap" hidden><span id="f-share-title">SHARE_M 同格信息交换参与概率</span>
           <input id="f-share" type="text" inputmode="numeric" value="0" autocomplete="off">
           <span class="field-hint muted" id="f-share-hint"></span></label>
@@ -339,7 +339,7 @@
           <button type="button" class="btn small" data-preset="aid">预设：仅援助</button>
           <button type="button" class="btn small" data-preset="recip">预设：援助+优先回助</button>
         </div>
-        <p class="muted" id="forge-engine-note">引擎列表来自后台能力。EXP01/02 要等 C08 接入后才会出现；缺指标写「未记录」，不填 0，也不用 EXP03 冒充。</p>
+        <p class="muted" id="forge-engine-note">引擎列表来自后台能力，现含 EXP-01 至 EXP-06。缺指标写「未记录」，不填 0，也不用 EXP-03 冒充 EXP-01/02。默认引擎仍是 EXP-03。</p>
         <button id="b-start" class="btn primary forge-go">核对并创生</button>
         <div id="forge-confirm" class="director-card" hidden>
           <div class="dir-title">确认提交</div>

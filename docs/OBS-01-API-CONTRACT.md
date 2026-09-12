@@ -3,7 +3,7 @@
 **这份文件是两边的唯一约定来源。** 后台（Python）与 UI 分支（`observer/web/`）分头改，
 靠它对齐；不各自实现一套数据格式。
 
-契约版本 **`obs-1.7`**，由 `GET /api/config` 的 `api_version` 字段给出。
+契约版本 **`obs-1.8`**，由 `GET /api/config` 的 `api_version` 字段给出。
 **新增字段 → 小版本 +1；删除或改变已有字段的含义 → 必须先改这份文件并知会对方，再动代码。**
 
 ---
@@ -32,7 +32,7 @@
 | 端点 | 返回 |
 |---|---|
 | `GET /api/health` | `{ok, time}` |
-| `GET /api/config` | `{api_version, token_required, limits, arms, engine, engines, default_engine, repo_commit, data}` |
+| `GET /api/config` | `{api_version, token_required, limits, arms, engine, engines, default_engine, repo_commit, service_identity, data}` |
 | `GET /api/milestones` | `{statuses, items[], note, repo_commit}`；item = `{id,title,status,updated,commit,note,sources[]}` |
 | `GET /api/map` | `{w,h,barrier_cols[],cells[]}`；cell = `{i,row,col,passable,region,neighbors[]}` |
 | `GET /api/runs` | `{runs[], active}` |
@@ -80,13 +80,16 @@ error pid
 - **`recovery_note`（obs-1.7 新增）**：服务重启时没能确认旧工作进程已停止的说明。
   非空时这条运行**仍然是活动状态、仍然占着任务槽**，UI 应当把它原样（纯文本）显示出来。
   正常情况下是空字符串。详见 §6.4。
-- **`engine`（obs-1.2 新增）** ∈ `exp03 | exp04 | exp05 | exp06`，旧记录默认 `exp03`。
-  `share_m` 对 `exp04` 起有意义，`aid_m` 对 `exp05` 起有意义，`recip_m` 只对 `exp06` 有意义；
+- **`engine`（obs-1.2 新增，obs-1.8 起含 exp01/exp02）** ∈ `exp01 | exp02 | exp03 | exp04 | exp05 | exp06`，旧记录默认 `exp03`。
+  `sigma_m` 从 exp02 起有意义，`move_mort_m` 从 exp03 起有意义，`share_m` 从 exp04 起，`aid_m` 从 exp05 起，`recip_m` 只对 exp06 有意义；
   引擎没有的参数传非 0 会被 400 拒绝。**不要把引擎名和参数写死**，读 `engines` 里的
-  `engine_params` 决定给哪些控件。
+  `engine_params` 决定给哪些控件。默认引擎仍是 `exp03`，不用 EXP-03 的参数去冒充 EXP-01/02。
   可用引擎与各自的参数列表由 `GET /api/config` 的 `engines` 给出，
   形如 `{exp04: {engine_label, engine_params:["sigma_m","move_mort_m","share_m"], ...}}`
   —— **前端据此决定给哪些参数控件，不要把引擎名和参数写死。**
+- **`service_identity`（obs-1.8 新增）**：`{api_version, repo_commit, repo_commit_source, ui_build, ui_build_note}`。
+  `repo_commit` 在进程启动时固定（`explicit_build` 环境变量优先，否则 `git_startup`，再否则 `unknown`），不在每次请求时重读磁盘 HEAD。
+  `ui_build` 是可选的操作员标签，**不是**当前浏览器已加载网页的哈希。旧字段 `repo_commit` 仍保留。
 
 ### 年份记录（`/year/{t}`）
 
@@ -95,13 +98,16 @@ t, stock[64], bands[], cum{}, year{}, agg{pop,bands,stock_total,store_total},
 integrity{conservation_error,population_identity_error,state_hash}, events[]
 ```
 
-- `cum` 是开局到当年的累计，`year` 是**当年增量**，两者键名相同（都来自账本差值）：
+- `cum` 是开局到当年的累计，`year` 是**当年增量**，两者键名相同（都来自账本差值）。
+  **obs-1.8**：只含该引擎状态里实际存在的键；缺的指标**省略，不填 0**。界面须显示「未记录」。
+  可能出现的键包括：
   `births_cum deaths_demo_cum mig_deaths_cum mig_total mig_regret need_cum deficit_cum
   personyear_cum stale_sum inflow out_eat out_spoil out_move out_lost prop_total
   prop_conflict clim_nominal clim_planned clim_credited clim_capped`
   （键名保留 `_cum` 后缀是历史原因：在 `year` 里它是当年增量，不是累计。）
-- `bands[]` 元素 = `{id, name, cell, size, store, macc, bacc, dacc, mem}`；
+- `bands[]` 元素至少 `{id, name, cell, size, store, mem}`；`macc`/`bacc`/`dacc` 仅当引擎状态里有这些键才出现。
   `mem` 是 `{格号: [记得的存量, 时间戳]}`。
+- `integrity.population_identity_error` 仅当该引擎模块有 `population_identity_error` 才出现。
 - `events[]` 元素 = `{type, source, text, ...}`，`type ∈ split | migrate | extinct | share`；
   `source` 写明来自模型日志还是状态差分；`migrate` 还带 `unrecorded` 说明哪些细节无法还原。
 - **`share` 事件（obs-1.2 新增，只有 `engine=exp04` 的运行才有）**：
@@ -187,7 +193,21 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 
 ---
 
-## 6. obs-1.7 的变化（取消的可靠性）
+## 6. obs-1.8 的变化（EXP-01/02 与服务身份）
+
+新增字段，不删除、不改已有字段含义。默认引擎仍是 `exp03`。
+
+| 变化 | 兼容性 |
+|---|---|
+| `engines` 增加 `exp01`、`exp02` | **新增**；exp01 无波动/迁移死亡参数，exp02 只有 `sigma_m` |
+| `GET /api/config.service_identity` | **新增**；启动时冻结，不把磁盘 HEAD 的后续变化当成已加载 UI |
+| `/year/{t}` 省略引擎没有的账本键 | **省略不是 0**；UI 写「未记录」 |
+| `/relations.engine_supports` | **新增**；无援助机制时空边集是能力事实 |
+| 不支持的参数传非 0 → `400` | 与 obs-1.2 起的规则相同，现覆盖到 exp01/exp02 |
+
+EXP-01/02 冻结源码一个字节都不改。`pop_start` 若引擎没有该字段，则在 **t=0 状态**上对在世群体人口求和，并在 `meta.pop_start_note` 写明来源。
+
+## 6b. obs-1.7 的变化（取消的可靠性）
 
 > 本节在 obs-1.7 被接受**之前**修正过一次：`afcb635` 里"停止"只是发完信号就算数，
 > 查不到与 SIGKILL 失败都被当成成功，记录照样转 `canceled` 并释放任务槽。
@@ -332,6 +352,8 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
   里给一个运行级合计；也**不能**用 `repay_transfers` 代替它 —— `RECIP_M=0` 时照样会发生回助，
   那是碰巧撞上，不是优先机制起作用。
 - 旧引擎（`exp03`/`exp04`）的运行照常返回 `200`，`edges` 为空，`totals` 全 0，不报错也不编造。
+- **obs-1.8** 增加 `engine_supports`：`{sigma, move_mort, share, aid, recip}` 布尔值，按该次运行的引擎参数表填写。
+  `engine_supports.aid=false` 时边集为空是能力事实，不是缺年。
 
 ### 6.3 展示年份 vs 内部 tick（`aid_memory` 与 `basis`）
 

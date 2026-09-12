@@ -17,33 +17,20 @@ WEB_DIR = Path(os.environ.get("OBSERVER_WEB_DIR", OBSERVER_DIR / "web")).resolve
 SELFTEST_DIR = Path(os.environ.get("OBSERVER_SELFTEST_DIR",
                                    OBSERVER_DIR / "tests" / "web")).resolve()
 
-# 模拟引擎。都是只读加载，绝不修改。
-#   exp03：已冻结的基线（迁移死亡代价）
-#   exp04：同格信息交换（已获批准实现，待审）
+# 模拟引擎。都是只读加载，绝不修改。默认引擎仍是 exp03，不把 01/02 当 03 的归零。
+#   exp01：采集/消耗/储存/局部迁移（冻结 20da486）
+#   exp02：资源再生年际波动（冻结 c5a1f18）；SIGMA_M=0 时退化复现 EXP-01
+#   exp03：迁移死亡代价（冻结基线）
+#   exp04–06：信息交换 / 援助 / 优先回助
 ENGINES = {
-    "exp03": {"path": REPO_ROOT / "exp03" / "verify3.py",
-              "baseline_commit": "6b6af4f",
-              "label": "EXP-03 迁移死亡代价（冻结基线）",
-              "params": ["sigma_m", "move_mort_m"]},
-    "exp04": {"path": REPO_ROOT / "exp04" / "verify4.py",
-              "baseline_commit": "68015cc（已审阅）",
-              "label": "EXP-04 同格信息交换",
-              "params": ["sigma_m", "move_mort_m", "share_m"]},
-    "exp05": {"path": REPO_ROOT / "exp05" / "verify5.py",
-              "baseline_commit": "d20a015（已实现待审）",
-              "label": "EXP-05 同格食物援助",
-              "params": ["sigma_m", "move_mort_m", "share_m", "aid_m"]},
-    "exp06": {"path": REPO_ROOT / "exp06" / "verify6.py",
-              "baseline_commit": "本轮实现（待审）",
-              "label": "EXP-06 援助记忆与优先回助",
-              "params": ["sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m"]},
-}
-DEFAULT_ENGINE = "exp03"
-
-# 模拟引擎。都是只读加载，绝不修改。
-#   exp03：已冻结的基线（迁移死亡代价）
-#   exp04：同格信息交换（已获批准实现，待审）
-ENGINES = {
+    "exp01": {"path": REPO_ROOT / "exp01" / "verify.py",
+              "baseline_commit": "20da486",
+              "label": "EXP-01 采集 / 消耗 / 储存 / 局部迁移",
+              "params": []},
+    "exp02": {"path": REPO_ROOT / "exp02" / "verify2.py",
+              "baseline_commit": "c5a1f18",
+              "label": "EXP-02 资源再生的年际波动",
+              "params": ["sigma_m"]},
     "exp03": {"path": REPO_ROOT / "exp03" / "verify3.py",
               "baseline_commit": "6b6af4f",
               "label": "EXP-03 迁移死亡代价（冻结基线）",
@@ -85,7 +72,7 @@ QUEUE_GRACE_SEC = float(os.environ.get("OBSERVER_QUEUE_GRACE", "20"))
 CANCEL_GRACE_SEC = float(os.environ.get("OBSERVER_CANCEL_GRACE", "15"))
 
 # API 契约版本。新增字段递增小版本；删改字段必须先改契约文档再动代码。
-API_VERSION = "obs-1.7"
+API_VERSION = "obs-1.8"
 
 # --- 访问保护 ---
 # 设了 OBSERVER_TOKEN：所有 /api 请求都要带令牌（服务端校验，前端不硬编码）。

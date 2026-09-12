@@ -1,0 +1,87 @@
+#!/usr/bin/env node
+/** game-v2：人物化群体代表与事件动作纯函数。不编路径、不把分裂放上地图。 */
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const code = readFileSync(join(here, "app.js"), "utf8");
+const location = { hash: "", search: "", href: "http://127.0.0.1/static/index.html" };
+const document = {
+  getElementById() { return null; },
+  querySelector() { return null; },
+  querySelectorAll() { return []; },
+  addEventListener() {},
+};
+const windowObj = { __OBS_MANUAL_BOOT__: true, matchMedia: () => ({ matches: false }) };
+const ctx = {
+  window: windowObj,
+  document,
+  location,
+  history: { replaceState() {} },
+  sessionStorage: { getItem() { return ""; }, setItem() {} },
+  performance: { now: Date.now },
+  console,
+  setTimeout,
+  clearTimeout,
+  requestAnimationFrame: (fn) => setTimeout(fn, 16),
+  cancelAnimationFrame: clearTimeout,
+};
+ctx.globalThis = ctx;
+windowObj.__OBS_MANUAL_BOOT__ = true;
+vm.createContext(ctx);
+vm.runInContext(code, ctx);
+const U = ctx.window.UnitArt;
+const D = ctx.window.DirectorLogic;
+const out = [];
+const ok = (name, cond, detail) => out.push((cond ? "PASS" : "FAIL") + " " + name + (detail ? " :: " + detail : ""));
+
+ok("U0 UnitArt loaded", !!U && typeof U.markup === "function" && typeof U.actionPlan === "function");
+
+const idA = "10431967184297706310";
+const idB = "907731079216851761";
+const palA1 = U.palette(idA);
+const palA2 = U.palette(idA);
+const palB = U.palette(idB);
+ok("U1 palette stable for same id", palA1.cloth === palA2.cloth && palA1.sash === palA2.sash);
+ok("U2 palette differs across bands", palA1.cloth !== palB.cloth || palA1.sash !== palB.sash);
+ok("U3 scale grows with size but stays bounded",
+  U.scale(1) < U.scale(80) && U.scale(1) >= 0.78 && U.scale(400) <= 1.28);
+
+const mk = U.markup({ id: idA, name: "群体-ABC123", size: 20, cell: 10 }, 100, 80, { selected: true, pose: "select" });
+ok("U4 markup is a group representative not a lone circle token",
+  /data-unit="group-rep"/.test(mk) && /class="band unit selected"/.test(mk) && /unit-tunic/.test(mk)
+  && /unit-head/.test(mk) && /群体代表/.test(mk));
+ok("U5 selected ring and data-band preserved for clicks",
+  /data-band="10431967184297706310"/.test(mk) && /unit-ring/.test(mk) && /unit-hit/.test(mk));
+ok("U6 name is escaped", !mk.includes("<script>") && U.markup({ id: "1", name: "<x>", size: 1, cell: 0 }, 0, 0).includes("&lt;x&gt;"));
+
+const mig = U.actionPlan({ type: "migrate", from: 18, to: 10, band: idA }, D.eventFocus({ type: "migrate", from: 18, to: 10, band: idA }));
+ok("U7 migrate is endpoint-only", mig.kind === "migrate" && mig.animate && mig.path === "endpoints-only"
+  && mig.from === 18 && mig.to === 10 && U.midCells(18, 10).length === 0, JSON.stringify(mig));
+const a = [0, 0], b = [10, 20];
+const mid = U.lerp(a, b, 0.5);
+ok("U8 lerp stays on the endpoint segment", mid[0] === 5 && mid[1] === 10);
+ok("U9 lerp clamps", U.lerp(a, b, -1)[0] === 0 && U.lerp(a, b, 2)[0] === 10);
+
+const share = U.actionPlan({ type: "share", cell: 0, donor: idA, receiver: idB });
+ok("U10 share anchors event cell not year-end", share.kind === "share" && share.cell === 0 && share.path === "none" && share.locate, JSON.stringify(share));
+const aid = U.actionPlan({ type: "aid", cell: 1, donor: idA, receiver: idB, repay: true });
+ok("U11 repay stays aid-at-cell", aid.kind === "aid" && aid.repay === true && aid.cell === 1);
+
+const split = U.actionPlan({ type: "split", parent: idA, band: idB });
+ok("U12 split does not invent a map cell", split.locate === false && split.animate === false && split.cells.length === 0, JSON.stringify(split));
+const extinct = U.actionPlan({ type: "extinct", band: idA });
+ok("U13 extinct does not invent a map cell", extinct.locate === false && extinct.cells.length === 0);
+const shareMiss = U.actionPlan({ type: "share", donor: idA, receiver: idB });
+ok("U14 share without cell is unlocated", shareMiss.locate === false && shareMiss.animate === false);
+
+const slot0 = U.slot(3, 0, 100, 50);
+const slot2 = U.slot(3, 2, 100, 50);
+ok("U15 same-cell representatives are offset not stacked", slot0[0] < 100 && slot2[0] > 100);
+
+const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
+out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
+process.stdout.write(out.join("\n") + "\n");
+process.exit(nf ? 1 : 0);

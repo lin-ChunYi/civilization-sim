@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -25,13 +26,47 @@ app = FastAPI(title="文明观察台 OBS-01", docs_url=None, redoc_url=None)
 WEB_DIR = config.WEB_DIR
 
 
-def repo_commit() -> str:
+def _git_head() -> str:
     try:
-        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+        out = subprocess.run(["git", "rev-parse", "HEAD"],
                              cwd=config.REPO_ROOT, capture_output=True, text=True, timeout=5)
-        return out.stdout.strip() if out.returncode == 0 else ""
+        if out.returncode == 0:
+            return (out.stdout or "").strip()
     except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def _service_identity() -> dict:
+    explicit = os.environ.get("OBSERVER_BUILD_COMMIT", "").strip()
+    ui = os.environ.get("OBSERVER_UI_BUILD", "").strip()
+    if explicit:
+        ident = {"repo_commit": explicit, "repo_commit_source": "explicit_build"}
+    else:
+        git = _git_head()
+        if git:
+            ident = {"repo_commit": git, "repo_commit_source": "git_startup"}
+        else:
+            ident = {"repo_commit": "unknown", "repo_commit_source": "unknown"}
+    ident["api_version"] = config.API_VERSION
+    ident["ui_build"] = ui or None
+    ident["ui_build_note"] = (
+        "optional operator-supplied label; not a hash of bytes currently loaded in the browser"
+    )
+    return ident
+
+
+SERVICE_IDENTITY = _service_identity()
+
+
+def repo_commit() -> str:
+    """兼容旧字段：启动时固定的服务身份，不在每次请求时重读磁盘 HEAD。"""
+    c = SERVICE_IDENTITY.get("repo_commit") or "unknown"
+    if SERVICE_IDENTITY.get("repo_commit_source") == "git_startup" and len(c) == 40:
+        return c[:12]
+    if c == "unknown":
         return ""
+    return c
 
 
 @app.on_event("startup")
@@ -116,6 +151,13 @@ def get_config():
         "engines": adapter.engines_info(),        # obs-1.2 新增：全部可用引擎
         "default_engine": config.DEFAULT_ENGINE,
         "repo_commit": repo_commit(),
+        "service_identity": {
+            "api_version": SERVICE_IDENTITY["api_version"],
+            "repo_commit": SERVICE_IDENTITY["repo_commit"],
+            "repo_commit_source": SERVICE_IDENTITY["repo_commit_source"],
+            "ui_build": SERVICE_IDENTITY["ui_build"],
+            "ui_build_note": SERVICE_IDENTITY["ui_build_note"],
+        },
         "data": {"runs": store.run_count(), "size_mb": round(store.data_size_mb(), 2)},
     }
 
@@ -260,8 +302,10 @@ def get_relations(run_id: str, at_year: Optional[int] = None):
     `recip.changed` 是"格×年"的诊断计数，属于那一格那一年，**不归给任何一条边**，
     所以它只作为运行级读数放在 diagnostics 里，也不能用 repay 笔数去替代它。
     """
-    if not store.get_run(run_id):
+    run = store.get_run(run_id)
+    if not run:
         raise HTTPException(404, "没有这次运行")
+    eng = run.get("engine") or config.DEFAULT_ENGINE
     scope, upto = _scope(run_id, at_year)
     edges = {}
     names, last_seen, alive_cells = {}, {}, {}
@@ -309,8 +353,16 @@ def get_relations(run_id: str, at_year: Optional[int] = None):
                         "note": "recip.changed 是格×年的诊断，不属于任何一条边；"
                                 "也不要用 repay_transfers 代替它 —— 回助在 RECIP_M=0 时"
                                 "同样会发生，那是碰巧"},
+        "engine_supports": {
+            "sigma": "sigma_m" in config.ENGINES.get(eng, {}).get("params", []),
+            "move_mort": "move_mort_m" in config.ENGINES.get(eng, {}).get("params", []),
+            "share": "share_m" in config.ENGINES.get(eng, {}).get("params", []),
+            "aid": "aid_m" in config.ENGINES.get(eng, {}).get("params", []),
+            "recip": "recip_m" in config.ENGINES.get(eng, {}).get("params", []),
+        },
         "source": "只聚合本次运行已保存的逐笔援助事件（模型日志 st['aid_log']）；"
-                  "不含任何推断出来的关系、称谓或立场",
+                  "不含任何推断出来的关系、称谓或立场。"
+                  "engine_supports.aid=false 时边集为空是能力事实，不是缺年。",
     }
 
 
@@ -426,7 +478,7 @@ class NewRun(BaseModel):
     move_mort_m: StrictInt = Field(0, description="MOVE_MORT_M：迁移死亡强度，千分之一")
     arm: StrictStr = Field("memory", description="信息条件（对照臂）")
     label: StrictStr = Field("", description="备注")
-    engine: StrictStr = Field(config.DEFAULT_ENGINE, description="模拟引擎：exp03 | exp04")
+    engine: StrictStr = Field(config.DEFAULT_ENGINE, description="模拟引擎：exp01–exp06")
     share_m: StrictInt = Field(0, description="SHARE_M：同格信息交换的参与概率，千分之一（exp04 起）")
     aid_m: StrictInt = Field(0, description="AID_M：供给方愿意拿出的可援助余粮比例，千分之一（exp05 起）")
     recip_m: StrictInt = Field(0, description="RECIP_M：优先回助的预算比例，千分之一（仅 exp06）")
@@ -461,11 +513,19 @@ def _validate(body: NewRun) -> None:
         raise HTTPException(400, f"seed 越界，合法范围 [0, {config.MAX_SEED}]")
     if not (config.MIN_YEARS <= body.years <= config.MAX_YEARS):
         raise HTTPException(400, f"年数越界，合法范围 [{config.MIN_YEARS}, {config.MAX_YEARS}]")
-    if not (v3.SIGMA_M_MIN <= body.sigma_m <= v3.SIGMA_M_MAX):
-        raise HTTPException(400, f"SIGMA_M 越界，合法范围 [{v3.SIGMA_M_MIN}, {v3.SIGMA_M_MAX}]")
-    if not (v3.MOVE_MORT_M_MIN <= body.move_mort_m <= v3.MOVE_MORT_M_MAX):
-        raise HTTPException(
-            400, f"MOVE_MORT_M 越界，合法范围 [{v3.MOVE_MORT_M_MIN}, {v3.MOVE_MORT_M_MAX}]")
+    if "sigma_m" in params:
+        if not (v3.SIGMA_M_MIN <= body.sigma_m <= v3.SIGMA_M_MAX):
+            raise HTTPException(400, f"SIGMA_M 越界，合法范围 [{v3.SIGMA_M_MIN}, {v3.SIGMA_M_MAX}]")
+    elif body.sigma_m != 0:
+        raise HTTPException(400, f"引擎 {body.engine} 没有 SIGMA_M 这个参数，"
+                                 f"不要把 EXP-03 的波动参数套到 {body.engine} 上")
+    if "move_mort_m" in params:
+        if not (v3.MOVE_MORT_M_MIN <= body.move_mort_m <= v3.MOVE_MORT_M_MAX):
+            raise HTTPException(
+                400, f"MOVE_MORT_M 越界，合法范围 [{v3.MOVE_MORT_M_MIN}, {v3.MOVE_MORT_M_MAX}]")
+    elif body.move_mort_m != 0:
+        raise HTTPException(400, f"引擎 {body.engine} 没有 MOVE_MORT_M 这个参数，"
+                                 f"不要把 EXP-03 的迁移死亡参数套到 {body.engine} 上")
     if body.arm not in config.ARMS:
         raise HTTPException(400, f"arm 只能是 {list(config.ARMS)} 之一")
     if len(body.label) > 60:

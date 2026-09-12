@@ -12,6 +12,9 @@ const S = {
   evScope: "year", evFilter: "all",
   layer: "resource",
   cam: { x: 0, y: 0, k: 1 },
+  fxAnim: null,
+  fxAwayBand: null,
+  fxWalkRaf: null,
   lastYearLabel: null,
   yearWait: null,
   yearMiss: {},
@@ -212,7 +215,13 @@ const OverviewLogic = {
         metrics: yearMetricRows(input.aid, input.recip)
       };
     }
-    sentences.push("本年出生 " + births + " 人，原规则死亡 " + demo + " 人，迁移死亡 " + md + " 人。");
+    if (births == null && demo == null && md == null) {
+      sentences.push("本年人口分项账未记录（此引擎没有出生/原死亡/迁移死亡字段）。");
+    } else {
+      sentences.push("本年出生 " + (births == null ? "未记录" : births) +
+        " 人，原规则死亡 " + (demo == null ? "未记录" : demo) +
+        " 人，迁移死亡 " + (md == null ? "未记录" : md) + " 人。");
+    }
     if (ev.total === 0) {
       sentences.push("本年没有记录到迁移、分裂、消失、信息交换或援助事件。当前 " +
         agg.bands + " 个群体、" + agg.pop + " 人。");
@@ -404,6 +413,139 @@ const DirectorLogic = {
 };
 window.DirectorLogic = DirectorLogic;
 
+const UnitArt = {
+  hash(id) {
+    const s = String(id || "");
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  },
+  variant(id) { return this.hash(id) % 4; },
+  palette(id, skin) {
+    const h = this.hash(id);
+    const families = (skin === "console")
+      ? [
+          { cloth: "#2f6f6c", sash: "#8fd4d0", skin: "#d7c4a3", hair: "#1e2a28", accent: "#d7f4f2" },
+          { cloth: "#3d5a7a", sash: "#9ec4e8", skin: "#e0c8a8", hair: "#243040", accent: "#cfe4f4" },
+          { cloth: "#4a6a58", sash: "#b6e0bc", skin: "#dcc4a0", hair: "#1c2820", accent: "#d7f4f2" },
+          { cloth: "#5a4a6a", sash: "#c4b0e0", skin: "#e2cbb0", hair: "#2a2030", accent: "#e8d8f4" },
+        ]
+      : [
+          { cloth: "#8a4e2a", sash: "#d4b06a", skin: "#e2c39a", hair: "#3a2414", accent: "#f3deaa" },
+          { cloth: "#6b3a28", sash: "#c47a3a", skin: "#d7b08a", hair: "#2a1810", accent: "#e8a04a" },
+          { cloth: "#4a5c38", sash: "#8faf6a", skin: "#e0c4a0", hair: "#24301c", accent: "#c8d4a0" },
+          { cloth: "#5a3a4a", sash: "#c09080", skin: "#e6c8a8", hair: "#301820", accent: "#e8c4b0" },
+          { cloth: "#3d4a5c", sash: "#7aa7d8", skin: "#dec6a4", hair: "#1c2430", accent: "#b8cce0" },
+          { cloth: "#5c4a28", sash: "#e0c070", skin: "#e8d0a8", hair: "#302410", accent: "#f3deaa" },
+        ];
+    return families[h % families.length];
+  },
+  scale(size) {
+    const n = Math.max(1, Number(size) || 1);
+    return Math.max(0.78, Math.min(1.28, 0.7 + Math.sqrt(n) * 0.07));
+  },
+  slot(n, k, cx, cy) {
+    const count = Math.max(1, n || 1);
+    const spread = Math.min(24, 6 + count * 4.5);
+    const x = count === 1 ? cx : cx - spread / 2 + (spread / Math.max(1, count - 1)) * k;
+    return [x, cy - 7];
+  },
+  actionPlan(ev, focus) {
+    const foc = focus || DirectorLogic.eventFocus(ev);
+    if (!ev || !foc) return { kind: "none", animate: false, locate: false, cells: [], note: "无事件" };
+    if (!foc.locate) {
+      return { kind: foc.kind, animate: false, locate: false, cells: [], note: foc.note, path: "none" };
+    }
+    if (ev.type === "migrate") {
+      const from = Number.isFinite(+ev.from) ? +ev.from : null;
+      const to = Number.isFinite(+ev.to) ? +ev.to : null;
+      return {
+        kind: "migrate", animate: from != null && to != null, locate: true,
+        from: from, to: to, cells: foc.cells, band: ev.band || null,
+        note: foc.note, path: "endpoints-only",
+      };
+    }
+    if (ev.type === "share" || ev.type === "aid") {
+      return {
+        kind: ev.type, animate: true, locate: true,
+        cell: foc.cells[0], cells: foc.cells,
+        donor: ev.donor || null, receiver: ev.receiver || null, repay: !!ev.repay,
+        note: foc.note, path: "none",
+      };
+    }
+    return { kind: foc.kind, animate: false, locate: true, cells: foc.cells, note: foc.note, path: "none" };
+  },
+  lerp(a, b, u) {
+    const t = Math.max(0, Math.min(1, u));
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  },
+  midCells(from, to) {
+    return [];
+  },
+  propMarkup(v, pal) {
+    if (v === 0) {
+      return `<path class="unit-prop" d="M7.2,-6.5 L7.6,9.5" stroke="${pal.accent}" stroke-width="1.3" stroke-linecap="round" fill="none"/>`
+        + `<circle cx="7.2" cy="-7.4" r="1.3" fill="${pal.sash}"/>`;
+    }
+    if (v === 1) {
+      return `<ellipse class="unit-prop" cx="-7.4" cy="4.2" rx="2.4" ry="1.8" fill="${pal.sash}" stroke="${pal.accent}" stroke-width="0.6"/>`;
+    }
+    if (v === 2) {
+      return `<path class="unit-prop" d="M-5.6,-2.2 C-8.2,1.2 -7.4,8.2 -3.2,8.6" fill="${pal.sash}" opacity="0.85"/>`;
+    }
+    return `<path class="unit-prop" d="M-6.8,2.8 L-5.2,6.4 M6.6,2.8 L5.2,6.4" stroke="${pal.accent}" stroke-width="1.2" stroke-linecap="round" fill="none"/>`;
+  },
+  markup(b, x, y, opts) {
+    opts = opts || {};
+    const pal = this.palette(b && b.id, opts.skin);
+    const sc = (opts.scale != null ? opts.scale : this.scale(b && b.size)) * (opts.zoom || 1);
+    const on = !!opts.selected;
+    const pose = opts.pose || (on ? "select" : "idle");
+    const v = this.variant(b && b.id);
+    const ghost = opts.ghost ? " unit-ghost" : "";
+    const facing = opts.facing === "left" ? -1 : 1;
+    const name = (b && b.name) || "群体";
+    const size = (b && b.size) != null ? b.size : "";
+    const bid = b && b.id != null ? String(b.id) : "";
+    const cell = b && b.cell != null ? String(b.cell) : "";
+    const armY = pose === "give" ? "-2.6" : (pose === "select" ? "-1.4" : "3.3");
+    const armRY = pose === "talk" ? "-2.8" : "3.1";
+    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-pose="${esc(pose)}" data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
+      <title>${esc(name)} · 群体代表 · ${size}人。这是群体的可视替身，不是独立个人生平。</title>
+      <ellipse class="unit-shadow" cx="0" cy="11" rx="7.2" ry="2.3" fill="rgba(10,12,8,.42)"/>
+      <g class="unit-body unit-${esc(pose)}">
+        <path class="unit-leg unit-leg-l" d="M-2.2,6 L-3.4,11.2" stroke="${pal.hair}" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+        <path class="unit-leg unit-leg-r" d="M2.0,6 L3.2,11.2" stroke="${pal.hair}" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+        <path class="unit-tunic" d="M-5.2,-1.2 C-5.6,3.2 -4.8,7.2 -3.4,8.4 L3.4,8.4 C4.8,7.2 5.6,3.2 5.2,-1.2 C3.2,-2.4 -3.2,-2.4 -5.2,-1.2Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.7"/>
+        <path class="unit-sash" d="M-4.4,1.6 L4.6,2.6 L4.2,4.2 L-4.8,3.2Z" fill="${pal.sash}"/>
+        <path class="unit-arm-l" d="M-4.6,0.2 L-7.2,${armY}" stroke="${pal.skin}" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+        <path class="unit-arm-r" d="M4.6,0.2 L7.0,${armRY}" stroke="${pal.skin}" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+        <circle class="unit-head" cx="0" cy="-5.6" r="3.55" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.6"/>
+        <path class="unit-hair" d="M-3.3,-6.4 C-2.8,-9.4 2.8,-9.4 3.3,-6.4 C1.6,-7.6 -1.6,-7.6 -3.3,-6.4Z" fill="${pal.hair}"/>
+        ${this.propMarkup(v, pal)}
+      </g>
+      ${on ? `<circle class="unit-ring" cx="0" cy="1" r="13.5" fill="none" stroke="${pal.accent}" stroke-width="1.35"/>` : ""}
+      ${opts.hit === false ? "" : `<rect class="unit-hit" x="-12" y="-18" width="24" height="34" fill="transparent"/>`}
+      ${opts.showPop === false ? "" : `<text class="unit-pop" x="0" y="16.5" text-anchor="middle" font-size="7.2" fill="${on ? "#f3deaa" : "#1a1408"}" font-weight="700" pointer-events="none">${size}人</text>`}
+      ${opts.showName ? `<text class="unit-name" x="0" y="-16.5" text-anchor="middle" font-size="6.4" fill="#f3deaa" pointer-events="none">${esc(name)}</text>` : ""}
+    </g>`;
+  },
+  labelMarkup(b, x, y, opts) {
+    opts = opts || {};
+    const on = !!opts.selected;
+    const size = (b && b.size) != null ? b.size : "";
+    let s = `<text class="unit-pop" x="${Number(x).toFixed(1)}" y="${(Number(y) + 18).toFixed(1)}" text-anchor="middle" font-size="${on ? 8.5 : 7.5}" fill="${on ? "#f3deaa" : "#1a1408"}" font-weight="700" pointer-events="none">${size}人</text>`;
+    if (opts.showName) {
+      s += `<text class="unit-name" x="${Number(x).toFixed(1)}" y="${(Number(y) - 20).toFixed(1)}" text-anchor="middle" font-size="8" fill="#f3deaa" pointer-events="none">${esc((b && b.name) || "")}</text>`;
+    }
+    return s;
+  },
+};
+window.UnitArt = UnitArt;
+
 const NetworkLogic = {
   layoutCircle(nodes, w, h) {
     const list = nodes || [];
@@ -543,6 +685,8 @@ const LibraryLogic = {
       events: evs,
       selected_event: extra.selEvent || "",
       selected_band: extra.selBand || "",
+      repo_commit: run ? (run.repo_commit || "") : "",
+      identity_note: "engine_sha256 is the frozen engine file; repo_commit is the observer service identity stored with the run; neither is the browser page hash",
     };
   },
   hasForbidden(obj) {
@@ -596,6 +740,10 @@ const NEED = () => {
 };
 
 const nf = (x) => (x === null || x === undefined ? "—" : Number(x).toLocaleString("zh-CN"));
+function ledger(v) {
+  if (v === null || v === undefined) return `<span class="na">未记录</span>`;
+  return nf(v);
+}
 function py(kcal, digits) {
   if (digits == null) digits = 1;
   if (kcal === null || kcal === undefined) return "—";
@@ -607,6 +755,9 @@ function kcalCell(kcal) {
 }
 function pct(num, den, digits) {
   if (digits == null) digits = 3;
+  if (num === null || num === undefined || den === null || den === undefined) {
+    return `<span class="na">未记录</span>`;
+  }
   if (!den) return `<span class="na">不适用（分母为 0）</span>`;
   return (num / den * 100).toFixed(digits) + "%";
 }
@@ -793,9 +944,9 @@ function renderHudParams() {
   const bits = [
     "引擎 " + (S.run.engine || "exp03"),
     "seed " + S.run.seed,
-    "SIGMA_M " + S.run.sigma_m + "‰",
-    "MOVE_MORT_M " + S.run.move_mort_m + "‰",
   ];
+  if (engineHasParam(runEngineName(S.run), "sigma_m")) bits.push("SIGMA_M " + S.run.sigma_m + "‰");
+  if (engineHasParam(runEngineName(S.run), "move_mort_m")) bits.push("MOVE_MORT_M " + S.run.move_mort_m + "‰");
   if (engineHasParam(runEngineName(S.run), "share_m")) bits.push("SHARE_M " + (S.run.share_m ?? 0) + "‰");
   if (engineHasParam(runEngineName(S.run), "aid_m")) bits.push("AID_M " + (S.run.aid_m ?? 0) + "‰");
   if (engineHasParam(runEngineName(S.run), "recip_m")) bits.push("RECIP_M " + (S.run.recip_m ?? 0) + "‰");
@@ -836,8 +987,8 @@ function renderTech() {
     ["基线", S.run.baseline_commit || einfo.baseline_commit || "—"],
     ["引擎 sha256", ((S.run.engine_sha256 || einfo.engine_sha256 || "") + "").slice(0, 16) + "…"],
     ["种子 / 年数", S.run.seed + " / " + S.run.years],
-    ["SIGMA_M", S.run.sigma_m + "‰"],
-    ["MOVE_MORT_M", S.run.move_mort_m + "‰"],
+    ["SIGMA_M", engineHasParam(runEngineName(S.run), "sigma_m") ? (S.run.sigma_m + "‰") : "无此参数"],
+    ["MOVE_MORT_M", engineHasParam(runEngineName(S.run), "move_mort_m") ? (S.run.move_mort_m + "‰") : "无此参数"],
     ["SHARE_M", engineHasParam(runEngineName(S.run), "share_m")
       ? (S.run.share_m ?? 0) + "‰（本次运行实际值）" : "无此参数"],
     ["AID_M", engineHasParam(runEngineName(S.run), "aid_m")
@@ -850,8 +1001,8 @@ function renderTech() {
   ];
   if (rec) {
     rows.push(["状态哈希", rec.integrity.state_hash]);
-    rows.push(["能量守恒误差", String(rec.integrity.conservation_error)]);
-    rows.push(["人口恒等误差", String(rec.integrity.population_identity_error)]);
+    rows.push(["能量守恒误差", rec.integrity.conservation_error == null ? "未记录" : String(rec.integrity.conservation_error)]);
+    rows.push(["人口恒等误差", rec.integrity.population_identity_error == null ? "未记录" : String(rec.integrity.population_identity_error)]);
     if (rec.integrity.share_ledger_error != null) {
       rows.push(["信息账误差", String(rec.integrity.share_ledger_error)]);
     }
@@ -881,8 +1032,11 @@ function renderTech() {
       rows.push(["本次实际参数", used.map((p) =>
         (p.label || p.name) + "=" + p.value + (p.unit ? p.unit : "")).join(" · ")]);
     }
-    rows.push(["累计吃掉", py(rec.cum.out_eat) + " 人年口粮"]);
-    rows.push(["累计腐损", py(rec.cum.out_spoil) + " 人年口粮"]);
+    if (S.meta && S.meta.pop_start_note) {
+      rows.push(["开局人口来源", S.meta.pop_start_note]);
+    }
+    rows.push(["累计吃掉", rec.cum.out_eat == null ? "未记录" : py(rec.cum.out_eat) + " 人年口粮"]);
+    rows.push(["累计腐损", rec.cum.out_spoil == null ? "未记录" : py(rec.cum.out_spoil) + " 人年口粮"]);
   }
   box.innerHTML = `<div class="kv">${rows.map(([k, v]) =>
     `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join("")}</div>`;
@@ -1027,41 +1181,22 @@ function renderMap() {
     const list = byCell[c.i]; if (!list) return;
     const xy = cellCenter(c), cx = xy[0], cy = xy[1];
     const n = list.length;
-    const rCap = (48 - 2 * (n - 1)) / (2 * n);
-    const rads = list.map((b) =>
-      Math.min(rCap, Math.max(6, 4.2 + Math.sqrt(Math.max(b.size, 1)) * 1.35)));
-    const total = rads.reduce((a, r) => a + 2 * r, 0) + (n - 1) * 2;
-    let x0 = cx - total / 2;
+    const lodB = S.cam.k;
     list.forEach((b, k) => {
-      const rad = rads[k];
-      const x = x0 + rad, y = cy - 10;
-      x0 += 2 * rad + 2;
+      const slot = UnitArt.slot(n, k, cx, cy);
+      const x = slot[0], y = slot[1];
       bandPos[String(b.id)] = [x, y, c.i];
       const on = S.selBand === b.id;
-      const lodB = S.cam.k;
-      if (S.skin === "console") {
-        const d = rad * 0.92;
-        const fillC = on ? "#8fd4d0" : "#3d7a76";
-        const strokeC = on ? "#d7f4f2" : "#99e0dd";
-        out += `<polygon points="${x},${(y-d).toFixed(1)} ${(x+d).toFixed(1)},${y} ${x},${(y+d).toFixed(1)} ${(x-d).toFixed(1)},${y}"
-            fill="${fillC}" stroke="${strokeC}" stroke-width="${on ? 2.4 : 1.3}"
-            data-band="${b.id}" class="band" style="cursor:pointer">
-            <title>${esc(b.name)} · ${b.size}人</title></polygon>`;
-      } else {
-        out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad.toFixed(1)}"
-            fill="${on ? "#e8a04a" : "#c47a3a"}" fill-opacity="0.95"
-            stroke="${on ? "#f3deaa" : "#f6e7c8"}" stroke-width="${on ? 2.6 : 1.4}"
-            data-band="${b.id}" class="band" style="cursor:pointer"${on ? ' filter="url(#glow)"' : ""}>
-            <title>${esc(b.name)} · ${b.size}人</title></circle>`;
-      }
-      if (lodB >= 0.95 && rad >= 7) {
-        out += `<text x="${x.toFixed(1)}" y="${(y + 3.2).toFixed(1)}" text-anchor="middle"
-            font-size="${rad >= 11 ? 9 : 7.5}" fill="#1a1408" font-weight="700" pointer-events="none">${b.size}人</text>`;
-      }
-      if (lodB >= 1.7) {
-        out += `<text x="${x.toFixed(1)}" y="${(y - rad - 4).toFixed(1)}" text-anchor="middle"
-            font-size="8" fill="#f3deaa" pointer-events="none">${esc(b.name)}</text>`;
-      }
+      const ghost = !!(S.fxAwayBand && String(S.fxAwayBand) === String(b.id));
+      out += UnitArt.markup(b, x, y, {
+        selected: on,
+        ghost: ghost,
+        skin: S.skin,
+        pose: on ? "select" : "idle",
+        scale: UnitArt.scale(b.size) * (n > 3 ? 0.84 : 1),
+        showPop: lodB >= 0.92,
+        showName: lodB >= 1.55 || on,
+      });
     });
   });
 
@@ -1136,7 +1271,7 @@ function renderMap() {
 
   const keys = {
     resource: "资源层：绿色深浅 = 野外食物（人年口粮）。灰斜纹 = 不可通行。",
-    pop: "人口层：颜色按本格在世人口。圆点仍是各个群体。",
+    pop: "人口层：颜色按本格在世人口。人物是各个群体的代表，不是独立个人。",
     store: "储粮层：颜色按本格群体储粮合计。",
     mem: memBand ? ("记忆层（" + memBand.name + "）：未知格标灰，时间戳如实显示。") : "记忆层：先点一个群体。",
     event: "事件层：金色描边的格子本年有可核实事件。",
@@ -1146,10 +1281,10 @@ function renderMap() {
   if ($("maphint")) {
     $("maphint").textContent = memBand
       ? "记忆视图只替换资源读数；群体位置仍是世界真实位置。没有时间戳显示「时间未记录」。"
-      : "滚轮缩放，拖拽平移。点圆点看群体，点格子看地形。";
+      : "滚轮缩放，拖拽平移。点人物看群体（群体代表），点格子看位置。";
   }
   if ($("map-key")) {
-    $("map-key").textContent = "圆点是群体，数字是人口。" + (keys[layer] || "");
+    $("map-key").textContent = "人物是群体代表，不是独立个人。数字是人口。" + (keys[layer] || "");
   }
 }
 
@@ -1225,10 +1360,10 @@ function renderSide() {
     ["群体数", `${nf(agg.bands)} <small>个</small>`],
     ["野外食物", kcalCell(agg.stock_total)],
     ["群体储粮", kcalCell(agg.store_total)],
-    ["当年出生", `${nf(y.births_cum)} <small>人</small>`],
-    ["当年原规则死亡", `${nf(y.deaths_demo_cum)} <small>人</small>`],
-    ["当年迁移死亡", `${nf(y.mig_deaths_cum)} <small>人</small>`],
-    ["当年迁移（账本）", `${nf(y.mig_total)} <small>次</small>`],
+    ["当年出生", `${ledger(y.births_cum)} <small>人</small>`],
+    ["当年原规则死亡", `${ledger(y.deaths_demo_cum)} <small>人</small>`],
+    ["当年迁移死亡", `${ledger(y.mig_deaths_cum)} <small>人</small>`],
+    ["当年迁移（账本）", `${ledger(y.mig_total)} <small>次</small>`],
     ["当年缺粮 / 需求", pct(y.deficit_cum, y.need_cum)],
     ["当年迁移误判率", y.mig_total ? pct(y.mig_regret, y.mig_total, 1)
       : `<span class="na">不适用（当年迁移 0 次）</span>`],
@@ -1252,12 +1387,12 @@ function renderSide() {
   $("side-now").innerHTML = rows.map(([k, v]) =>
     `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
   const crows = [
-    ["累计出生", `${nf(cum.births_cum)} <small>人</small>`],
-    ["累计原规则死亡", `${nf(cum.deaths_demo_cum)} <small>人</small>`],
-    ["累计迁移死亡", `${nf(cum.mig_deaths_cum)} <small>人</small>`],
-    ["累计迁移（账本）", `${nf(cum.mig_total)} <small>次</small>`],
+    ["累计出生", `${ledger(cum.births_cum)} <small>人</small>`],
+    ["累计原规则死亡", `${ledger(cum.deaths_demo_cum)} <small>人</small>`],
+    ["累计迁移死亡", `${ledger(cum.mig_deaths_cum)} <small>人</small>`],
+    ["累计迁移（账本）", `${ledger(cum.mig_total)} <small>次</small>`],
     ["累计缺粮 / 需求", pct(cum.deficit_cum, cum.need_cum)],
-    ["累计人年", `${nf(cum.personyear_cum)} <small>人年</small>`],
+    ["累计人年", `${ledger(cum.personyear_cum)} <small>人年</small>`],
     ["累计吃掉", kcalCell(cum.out_eat)],
     ["累计腐损", kcalCell(cum.out_spoil)],
   ];
@@ -1272,7 +1407,10 @@ function renderSide() {
   }
   $("side-cum").innerHTML = crows.map(([k, v]) =>
     `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
-  const ok = (v) => v === 0 ? `<span style="color:var(--ok)">0 ✓</span>` : `<span class="err">${v} ✗</span>`;
+  const ok = (v) => {
+    if (v === null || v === undefined) return `<span class="na">未记录</span>`;
+    return v === 0 ? `<span style="color:var(--ok)">0 ✓</span>` : `<span class="err">${v} ✗</span>`;
+  };
   $("side-int").innerHTML =
     `<div class="k">能量守恒误差</div><div class="v">${ok(rec.integrity.conservation_error)}</div>
      <div class="k">人口恒等误差</div><div class="v">${ok(rec.integrity.population_identity_error)}</div>
@@ -1570,7 +1708,9 @@ function renderRelations(d) {
   if ($("net-note")) {
     $("net-note").textContent = "有向边：A→B 与 B→A 分开。普通援助 / 优先阶段 / 回助笔数分列。" +
       "分配改变 " + (diag.recip_changed_cellyears != null ? diag.recip_changed_cellyears : "未记录") +
-      " 次（格×年），不属于任何一条边。布局不是地理位置。";
+      " 次（格×年），不属于任何一条边。布局不是地理位置。" +
+      (d && d.engine_supports && d.engine_supports.aid === false
+        ? "此引擎没有援助机制，空关系网是能力事实，不是缺年。" : "");
   }
   if ($("rel-rail-summary")) {
     $("rel-rail-summary").textContent = (scope.mode === "full" ? "全档案" : ("截至第 " + S.t + " 年")) +
@@ -1968,7 +2108,7 @@ function lineChart(title, series, key, color, conv) {
   });
   if (!vals.length) {
     return `<div class="chart"><h4>${esc(title)}</h4>
-      <p class="muted">没有可画的点（分母为 0 或数据缺失，不画成 0%）</p></div>`;
+      <p class="muted">未记录或没有可画的点，不画成 0</p></div>`;
   }
   const mx = Math.max.apply(null, vals.concat([1]));
   const mn = Math.min.apply(null, vals.concat([0]));
@@ -2010,11 +2150,16 @@ function renderCharts() {
   const rows = s.map((r) => `<tr class="${r.t === S.t ? "on" : ""}" data-t="${r.t}">
     <td class="clickable">${r.t === 0 ? "开局" : r.t}</td><td>${nf(r.agg.pop)}</td><td>${nf(r.agg.bands)}</td>
     <td>${py(r.agg.stock_total, 0)}</td><td>${py(r.agg.store_total, 0)}</td>
-    <td>${nf(r.year.births_cum)}</td><td>${nf(r.year.deaths_demo_cum)}</td>
-    <td>${nf(r.year.mig_deaths_cum)}</td><td>${nf(r.year.mig_total)}</td>
-    <td>${r.year.need_cum ? (r.year.deficit_cum / r.year.need_cum * 100).toFixed(3) + "%" : "不适用"}</td>
-    <td>${nf(r.cum.births_cum)}</td><td>${nf(r.cum.deaths_demo_cum)}</td>
-    <td>${nf(r.cum.mig_deaths_cum)}</td><td>${r.integrity.conservation_error}</td></tr>`).join("");
+    <td>${r.year.births_cum == null ? "未记录" : nf(r.year.births_cum)}</td>
+    <td>${r.year.deaths_demo_cum == null ? "未记录" : nf(r.year.deaths_demo_cum)}</td>
+    <td>${r.year.mig_deaths_cum == null ? "未记录" : nf(r.year.mig_deaths_cum)}</td>
+    <td>${r.year.mig_total == null ? "未记录" : nf(r.year.mig_total)}</td>
+    <td>${r.year.need_cum == null && r.year.deficit_cum == null ? "未记录"
+      : (r.year.need_cum ? (r.year.deficit_cum / r.year.need_cum * 100).toFixed(3) + "%" : "不适用")}</td>
+    <td>${r.cum.births_cum == null ? "未记录" : nf(r.cum.births_cum)}</td>
+    <td>${r.cum.deaths_demo_cum == null ? "未记录" : nf(r.cum.deaths_demo_cum)}</td>
+    <td>${r.cum.mig_deaths_cum == null ? "未记录" : nf(r.cum.mig_deaths_cum)}</td>
+    <td>${r.integrity.conservation_error == null ? "未记录" : r.integrity.conservation_error}</td></tr>`).join("");
   $("yeartable").innerHTML = head + rows;
   $("yeartable").querySelectorAll("tr[data-t]").forEach((n) =>
     n.addEventListener("click", () => gotoYear(+n.dataset.t)));
@@ -2197,18 +2342,24 @@ function renderEvents() {
 function cancelFx(opts) {
   opts = opts || {};
   S.fxGen += 1;
+  S.fxAnim = null;
+  S.fxAwayBand = null;
   (S.fxTimers || []).forEach((id) => { clearTimeout(id); });
   S.fxTimers = [];
   if (S.fxRaf != null && typeof cancelAnimationFrame === "function") {
     cancelAnimationFrame(S.fxRaf);
   }
   S.fxRaf = null;
+  if (S.fxWalkRaf != null && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(S.fxWalkRaf);
+  }
+  S.fxWalkRaf = null;
   const svg = $("map");
   if (svg) {
     const layer = svg.querySelector("#fx-overlay");
     if (layer) layer.remove();
-    svg.querySelectorAll(".fx-hot,.fx-share,.fx-aid,.fx-repay,.fx-migrate").forEach((n) => {
-      n.classList.remove("fx-hot", "fx-share", "fx-aid", "fx-repay", "fx-migrate");
+    svg.querySelectorAll(".fx-hot,.fx-share,.fx-aid,.fx-repay,.fx-migrate,.unit-ghost").forEach((n) => {
+      n.classList.remove("fx-hot", "fx-share", "fx-aid", "fx-repay", "fx-migrate", "unit-ghost");
     });
   }
   if (opts.keepStatic && S.selEvent) paintDirectorFx({ staticOnly: true });
@@ -2293,19 +2444,27 @@ function svgEl(name, attrs) {
   Object.keys(attrs || {}).forEach((k) => n.setAttribute(k, attrs[k]));
   return n;
 }
-function paintDirectorFx(opts) {
-  opts = opts || {};
-  const svg = $("map");
-  if (!svg || !S.map) return;
-  const prev = svg.querySelector("#fx-overlay");
-  if (prev) prev.remove();
-  svg.querySelectorAll(".fx-hot,.fx-share,.fx-aid,.fx-repay,.fx-migrate").forEach((n) => {
-    n.classList.remove("fx-hot", "fx-share", "fx-aid", "fx-repay", "fx-migrate");
+function fxCaption(overlay, x, y, text) {
+  const n = svgEl("text", {
+    class: "fx-caption", x: Number(x).toFixed(1), y: Number(y).toFixed(1),
+    "text-anchor": "middle", "font-size": "8", fill: "#f3deaa",
   });
-  if (!S.selEvent) return;
-  const ev = findEventByKey(S.selEvent, S.t);
-  if (!ev) return;
-  const focus = DirectorLogic.eventFocus(ev);
+  n.textContent = text;
+  overlay.appendChild(n);
+}
+function shareGlyphMarkup(x, y) {
+  return `<g class="fx-share-mark fx-pulse" data-fx="share" transform="translate(${Number(x).toFixed(1)},${(Number(y) - 18).toFixed(1)})">
+    <circle r="3.2" fill="#6eb8b4" stroke="#e8eadc" stroke-width="0.8"/>
+    <circle cx="-5.2" r="1.5" fill="#8fd4d0"/><circle cx="5.2" r="1.5" fill="#8fd4d0"/>
+  </g>`;
+}
+function aidGlyphMarkup(x, y, repay) {
+  const fill = repay ? "#d4b06a" : "#6fb37c";
+  return `<g class="${repay ? "fx-repay-mark" : "fx-aid-mark"} fx-pulse" data-fx="${repay ? "repay" : "aid"}" transform="translate(${Number(x).toFixed(1)},${(Number(y) - 20).toFixed(1)})">
+    <path d="M-4,0 L0,-5 L4,0 L3,5 L-3,5 Z" fill="${fill}" stroke="#f3deaa" stroke-width="0.8"/>
+  </g>`;
+}
+function markEventCells(svg, ev, focus) {
   focus.cells.forEach((i) => {
     const p = svg.querySelector('.cell[data-cell="' + i + '"]');
     if (!p) return;
@@ -2315,35 +2474,136 @@ function paintDirectorFx(opts) {
     else if (ev.type === "aid") p.classList.add("fx-aid");
     else if (ev.type === "migrate") p.classList.add("fx-migrate");
   });
-  if (!focus.locate) return;
-  const overlay = svgEl("g", { id: "fx-overlay", "pointer-events": "none" });
-  const reduced = opts.staticOnly || DirectorLogic.prefersReducedMotion();
-  if (ev.type === "migrate") {
-    if (Number.isFinite(+ev.from) && S.map.cells[+ev.from]) {
-      const xy = cellCenter(S.map.cells[+ev.from]);
-      overlay.appendChild(svgEl("circle", {
-        class: "fx-endpoint fx-endpoint-from", cx: xy[0].toFixed(1), cy: xy[1].toFixed(1), r: "11",
-      }));
-    }
-    if (Number.isFinite(+ev.to) && S.map.cells[+ev.to]) {
-      const xy = cellCenter(S.map.cells[+ev.to]);
-      overlay.appendChild(svgEl("circle", {
-        class: "fx-endpoint fx-endpoint-to", cx: xy[0].toFixed(1), cy: xy[1].toFixed(1), r: "13",
-      }));
-    }
-  } else if ((ev.type === "share" || ev.type === "aid") && focus.cells.length) {
-    const cell = S.map.cells[focus.cells[0]];
-    if (cell) {
-      const xy = cellCenter(cell);
-      const mark = ev.type === "share" ? "fx-share-mark"
-        : (ev.repay ? "fx-repay-mark" : "fx-aid-mark");
-      overlay.appendChild(svgEl("circle", {
-        class: mark + (reduced ? "" : " fx-pulse"),
-        cx: xy[0].toFixed(1), cy: (xy[1] - 6).toFixed(1), r: "7",
-      }));
-    }
+}
+function paintMigrateAction(overlay, ev, plan, reduced) {
+  if (plan.from == null || plan.to == null || !S.map.cells[plan.from] || !S.map.cells[plan.to]) return;
+  const a = cellCenter(S.map.cells[plan.from]);
+  const b = cellCenter(S.map.cells[plan.to]);
+  overlay.appendChild(svgEl("circle", {
+    class: "fx-endpoint fx-endpoint-from", cx: a[0].toFixed(1), cy: a[1].toFixed(1), r: "10",
+  }));
+  overlay.appendChild(svgEl("circle", {
+    class: "fx-endpoint fx-endpoint-to", cx: b[0].toFixed(1), cy: b[1].toFixed(1), r: "12",
+  }));
+  const line = svgEl("line", {
+    class: "fx-endpoint-line", "data-path": "endpoints-only",
+    x1: a[0].toFixed(1), y1: a[1].toFixed(1), x2: b[0].toFixed(1), y2: b[1].toFixed(1),
+  });
+  overlay.appendChild(line);
+  const rec = recNow();
+  const band = {
+    id: ev.band || "walk", name: rec ? bandName(rec, ev.band) : "群体代表",
+    size: 1, cell: plan.from,
+  };
+  const u0 = reduced ? 1 : 0;
+  const xy = UnitArt.lerp(a, b, u0);
+  const walker = svgEl("g", { id: "fx-walker", "data-fx": "migrate-walk", "data-path": "endpoints-only" });
+  walker.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
+  walker.innerHTML = UnitArt.markup(band, 0, 0, {
+    pose: reduced ? "idle" : "walk", selected: true, hit: false, skin: S.skin, showPop: false,
+  });
+  overlay.appendChild(walker);
+  fxCaption(overlay, (a[0] + b[0]) / 2, Math.min(a[1], b[1]) - 22, "端点动作 · 路线未记录");
+  const tok = $("map") && $("map").querySelector('.band[data-band="' + String(ev.band || "") + '"]');
+  if (tok) tok.classList.add("unit-ghost");
+  S.fxAwayBand = ev.band ? String(ev.band) : null;
+  if (!reduced) {
+    const gen = S.fxGen;
+    S.fxAnim = { gen: gen, t0: performance.now(), dur: playDelay(), a: a, b: b, kind: "migrate" };
+    const step = (now) => {
+      if (gen !== S.fxGen || !S.fxAnim || S.fxAnim.gen !== gen) return;
+      const u = Math.min(1, (now - S.fxAnim.t0) / S.fxAnim.dur);
+      const p = UnitArt.lerp(a, b, u);
+      const w = document.getElementById("fx-walker");
+      if (w) w.setAttribute("transform", "translate(" + p[0].toFixed(1) + "," + p[1].toFixed(1) + ")");
+      if (u < 1) S.fxWalkRaf = requestAnimationFrame(step);
+      else {
+        const g = document.querySelector(".band.unit-ghost");
+        if (g) g.classList.remove("unit-ghost");
+        S.fxAwayBand = null;
+      }
+    };
+    S.fxWalkRaf = requestAnimationFrame(step);
   }
-  svg.appendChild(overlay);
+}
+function paintPairAction(overlay, ev, plan, reduced) {
+  if (plan.cell == null || !S.map.cells[plan.cell]) return;
+  const xy = cellCenter(S.map.cells[plan.cell]);
+  const rec = recNow();
+  const donor = { id: ev.donor || "d", name: rec ? bandName(rec, ev.donor) : "供给方", size: 1, cell: plan.cell };
+  const recv = { id: ev.receiver || "r", name: rec ? bandName(rec, ev.receiver) : "接收方", size: 1, cell: plan.cell };
+  const wrap = svgEl("g", { id: "fx-pair", "data-fx": plan.kind, "data-event-cell": String(plan.cell) });
+  wrap.innerHTML = UnitArt.markup(donor, -10, -6, {
+    pose: plan.kind === "share" ? "talk" : "give", hit: false, skin: S.skin, showPop: false,
+  }) + UnitArt.markup(recv, 10, -6, {
+    pose: "idle", hit: false, facing: "left", skin: S.skin, showPop: false,
+  }) + (plan.kind === "share" ? shareGlyphMarkup(0, 0) : aidGlyphMarkup(0, 0, plan.repay));
+  wrap.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
+  overlay.appendChild(wrap);
+  fxCaption(overlay, xy[0], xy[1] - 28,
+    plan.kind === "share" ? "同格信息传递（事件格，不是年末位置）"
+      : (plan.repay ? "同格回助（事件格）" : "同格援助（事件格）"));
+  void reduced;
+}
+function paintYearActions(svg, rec, opts) {
+  const overlay = svgEl("g", { id: "fx-overlay", "pointer-events": "none" });
+  const items = (rec.events || []).map((e, i) => Object.assign({}, e, { t: rec.t, _i: i }));
+  let n = 0;
+  items.forEach((ev) => {
+    const plan = UnitArt.actionPlan(ev);
+    if (!plan.locate || !plan.animate || n >= 8) return;
+    markEventCells(svg, ev, { cells: plan.cells });
+    if (plan.kind === "migrate" && plan.from != null && plan.to != null
+        && S.map.cells[plan.from] && S.map.cells[plan.to]) {
+      const a = cellCenter(S.map.cells[plan.from]);
+      const b = cellCenter(S.map.cells[plan.to]);
+      overlay.appendChild(svgEl("line", {
+        class: "fx-endpoint-line", "data-path": "endpoints-only",
+        x1: a[0].toFixed(1), y1: a[1].toFixed(1), x2: b[0].toFixed(1), y2: b[1].toFixed(1),
+      }));
+    } else if ((plan.kind === "share" || plan.kind === "aid") && plan.cell != null
+        && S.map.cells[plan.cell]) {
+      const xy = cellCenter(S.map.cells[plan.cell]);
+      const wrap = svgEl("g", {});
+      wrap.innerHTML = plan.kind === "share" ? shareGlyphMarkup(xy[0], xy[1])
+        : aidGlyphMarkup(xy[0], xy[1], plan.repay);
+      overlay.appendChild(wrap);
+    }
+    n += 1;
+  });
+  if (n) {
+    fxCaption(overlay, 260, 18, "本年可定位动作 " + n + " 项 · 只画记录端点/事件格");
+    svg.appendChild(overlay);
+  }
+  void opts;
+}
+function paintDirectorFx(opts) {
+  opts = opts || {};
+  const svg = $("map");
+  if (!svg || !S.map) return;
+  const prev = svg.querySelector("#fx-overlay");
+  if (prev) prev.remove();
+  svg.querySelectorAll(".fx-hot,.fx-share,.fx-aid,.fx-repay,.fx-migrate").forEach((n) => {
+    n.classList.remove("fx-hot", "fx-share", "fx-aid", "fx-repay", "fx-migrate");
+  });
+  const reduced = opts.staticOnly || DirectorLogic.prefersReducedMotion();
+  if (S.selEvent) {
+    const ev = findEventByKey(S.selEvent, S.t);
+    if (!ev) return;
+    const focus = DirectorLogic.eventFocus(ev);
+    markEventCells(svg, ev, focus);
+    if (!focus.locate) return;
+    const overlay = svgEl("g", { id: "fx-overlay", "pointer-events": "none" });
+    const plan = UnitArt.actionPlan(ev, focus);
+    if (plan.kind === "migrate") paintMigrateAction(overlay, ev, plan, reduced);
+    else if (plan.kind === "share" || plan.kind === "aid") paintPairAction(overlay, ev, plan, reduced);
+    svg.appendChild(overlay);
+    return;
+  }
+  if (S.playing && S.playMode === "year") {
+    const rec = recNow();
+    if (rec) paintYearActions(svg, rec, { reduced: reduced });
+  }
 }
 function panToCell(i, gen) {
   if (DirectorLogic.prefersReducedMotion()) return;
@@ -2406,6 +2666,7 @@ function renderDirectorCard() {
     <div class="dir-meta">来源：${esc(ev.source || "未标注")}${ev.unrecorded ? "　·　未记录：" + esc(ev.unrecorded) : ""}</div>
     <div class="dir-meta">${esc(focus.note)}</div>
     <div class="dir-meta">${esc(DirectorLogic.orderNote)}</div>
+    <div class="dir-meta">地图人物是群体代表的动作演示，不是独立个人生平。</div>
     ${related ? `<div class="dir-related">${related}</div>` : ""}`;
   body.querySelectorAll("[data-b]").forEach((n) => {
     n.addEventListener("click", (e) => {
@@ -2703,7 +2964,8 @@ function renderRuns() {
       ${r.kind === "preset" ? '<span class="badge s-off">预生成</span>' : ""}</td>
     <td>${statusBadge(r.status)}</td>
     <td>${esc(r.engine || "exp03")}</td><td>${r.seed}</td><td>${r.years}</td>
-    <td>${r.sigma_m}‰</td><td>${r.move_mort_m}‰</td>
+    <td>${engineHasParam(r.engine || "exp03", "sigma_m") ? (r.sigma_m + "‰") : "无此参数"}</td>
+    <td>${engineHasParam(r.engine || "exp03", "move_mort_m") ? (r.move_mort_m + "‰") : "无此参数"}</td>
     <td>${engineHasParam(r.engine || "exp03", "share_m") ? (r.share_m ?? 0) + "‰" : "—"}</td>
     <td>${engineHasParam(r.engine || "exp03", "aid_m") ? (r.aid_m ?? 0) + "‰" : "—"}</td>
     <td>${engineHasParam(r.engine || "exp03", "recip_m") ? (r.recip_m ?? 0) + "‰" : "—"}</td>
@@ -3043,8 +3305,13 @@ async function boot() {
     $("f-engine").addEventListener("change", syncEngineForm);
     syncEngineForm();
   }
-  $("footer").textContent = "仓库 " + (S.cfg.repo_commit || "") +
-    " · 本页只显示本服务自己的数据库。当前回放用的是该次运行自己的模型路径，不是默认引擎。";
+  const si = S.cfg.service_identity || {};
+  $("footer").textContent = "服务 " + (si.repo_commit || S.cfg.repo_commit || "unknown") +
+    (si.repo_commit_source ? "（" + si.repo_commit_source + "）" : "") +
+    " · API " + (S.cfg.api_version || "") +
+    (si.ui_build ? " · UI 标签 " + si.ui_build : "") +
+    " · 本页只显示本服务自己的数据库。当前回放用该次运行自己的引擎哈希，不是默认引擎。" +
+    "页脚不是浏览器已加载网页的哈希。";
 
   await refresh();
   const hp = hashParams();
@@ -3174,6 +3441,8 @@ function syncEngineForm() {
   const shareWrap = $("f-share-wrap");
   const aidWrap = $("f-aid-wrap");
   const recipWrap = $("f-recip-wrap");
+  if ($("f-sigma-wrap")) $("f-sigma-wrap").hidden = !engineHasParam(name, "sigma_m");
+  if ($("f-mort-wrap")) $("f-mort-wrap").hidden = !engineHasParam(name, "move_mort_m");
   if (shareWrap) shareWrap.hidden = !engineHasParam(name, "share_m");
   if (aidWrap) aidWrap.hidden = !engineHasParam(name, "aid_m");
   if (recipWrap) recipWrap.hidden = !engineHasParam(name, "recip_m");
@@ -3194,17 +3463,25 @@ function collectRunDraft() {
   const lim = S.cfg.limits;
   const seed = OverviewLogic.parseStrictInt($("f-seed").value, { name: "种子 seed", min: 0, max: lim.max_seed });
   const years = OverviewLogic.parseStrictInt($("f-years").value, { name: "年数 years", min: lim.min_years, max: lim.max_years });
-  const sigma = OverviewLogic.parseStrictInt($("f-sigma").value, { name: "SIGMA_M", min: 0, max: 1000 });
-  const mort = OverviewLogic.parseStrictInt($("f-mort").value, { name: "MOVE_MORT_M", min: 0, max: 1000 });
-  for (const x of [seed, years, sigma, mort]) {
-    if (!x.ok) return { ok: false, error: x.error };
-  }
+  if (!seed.ok) return { ok: false, error: seed.error };
+  if (!years.ok) return { ok: false, error: years.error };
   const engine = $("f-engine") ? $("f-engine").value : (S.cfg.default_engine || "exp03");
   const known = S.cfg.engines ? Object.keys(S.cfg.engines) : [];
   if (known.length && known.indexOf(engine) < 0) return { ok: false, error: "未知引擎：" + engine };
+  let sigma_m = 0, mort_m = 0;
+  if (engineHasParam(engine, "sigma_m")) {
+    const sigma = OverviewLogic.parseStrictInt($("f-sigma").value, { name: "SIGMA_M", min: 0, max: 1000 });
+    if (!sigma.ok) return { ok: false, error: sigma.error };
+    sigma_m = sigma.value;
+  }
+  if (engineHasParam(engine, "move_mort_m")) {
+    const mort = OverviewLogic.parseStrictInt($("f-mort").value, { name: "MOVE_MORT_M", min: 0, max: 1000 });
+    if (!mort.ok) return { ok: false, error: mort.error };
+    mort_m = mort.value;
+  }
   const body = {
-    seed: seed.value, years: years.value, sigma_m: sigma.value,
-    move_mort_m: mort.value, arm: $("f-arm").value, label: $("f-label").value.trim(),
+    seed: seed.value, years: years.value, sigma_m: sigma_m,
+    move_mort_m: mort_m, arm: $("f-arm").value, label: $("f-label").value.trim(),
     engine: engine,
   };
   const notes = [];
@@ -3236,8 +3513,8 @@ function collectRunDraft() {
     "引擎 " + engine,
     "seed " + body.seed,
     "年数 " + body.years,
-    "SIGMA_M " + body.sigma_m + "‰",
-    "MOVE_MORT_M " + body.move_mort_m + "‰",
+    engineHasParam(engine, "sigma_m") ? ("SIGMA_M " + body.sigma_m + "‰") : "SIGMA_M 此引擎无此参数",
+    engineHasParam(engine, "move_mort_m") ? ("MOVE_MORT_M " + body.move_mort_m + "‰") : "MOVE_MORT_M 此引擎无此参数",
     body.share_m != null ? ("SHARE_M " + body.share_m + "‰") : "SHARE_M 此引擎无此参数",
     body.aid_m != null ? ("AID_M " + body.aid_m + "‰") : "AID_M 此引擎无此参数（缺指标不填 0）",
     body.recip_m != null ? ("RECIP_M " + body.recip_m + "‰") : "RECIP_M 此引擎无此参数",
@@ -3299,7 +3576,8 @@ window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, rend
   loadCompare, CompareLogic, fillCompareSelects, fetchYearOrMiss, showTab, showRail,
   collectRunDraft, applyForgePreset, confirmStartRun, LibraryLogic, renderLibrary,
   pinCurrentYear, pinCurrentEvent, exportCurrentRecord, jumpToRecordedEvent,
-  clearRelEdgeCard, fillRelEdgeCard };
+  clearRelEdgeCard, fillRelEdgeCard, UnitArt, paintDirectorFx, OverviewLogic, DirectorLogic,
+  syncEngineForm, engineHasParam };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {

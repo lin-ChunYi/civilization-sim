@@ -1,4 +1,4 @@
-"""观察适配层 —— 只读地把冻结的 EXP-03 引擎变成可展示的年度记录。
+"""观察适配层 —— 只读地把冻结的 EXP-01..06 引擎变成可展示的年度记录。
 
 纪律（对应验收第 1 条）：
   1. 只调用引擎的 make_world / step 与纯读函数；
@@ -6,8 +6,9 @@
   3. **一次都不调用引擎的 rng**，不消耗模型随机数；
   4. 观察用的显示名、事件来源标注放在本层自己的结构里，不进模型实体。
 
-引擎以 importlib 按路径只读加载（和 EXP-02/03 判定退化恒等时的做法一致），
-exp03/ 目录本身不被修改。
+引擎以 importlib 按路径只读加载。exp01/–exp06/ 冻结源码一个字节都不改。
+只把该引擎声明支持的参数传入 make_world；缺的账本字段从记录里省略，不填 0。
+默认引擎仍是 exp03，不用 EXP-03 归零冒充 EXP-01/02。
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ def _param_spec(name: str, engine_mod) -> Dict[str, Any]:
     return spec
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=8)
 def load_engine(name: str = None):
     """只读加载指定引擎，返回 (module, sha256)。"""
     name = name or config.DEFAULT_ENGINE
@@ -45,30 +46,47 @@ def load_engine(name: str = None):
     return mod, sha
 
 
+_CONST_NAMES = (
+    "NEED_PC", "MILLE", "SPLIT_SIZE", "SPOIL_M", "MOVE_LOSS_M",
+    "MIG_E_M", "MIG_GAIN_M", "SHOCK_P_M", "K_HALF",
+    "SIGMA_M_MAX", "MOVE_MORT_M_MAX", "SHARE_M_MAX", "AID_M_MAX", "RECIP_M_MAX",
+)
+
+
+def _params_fingerprint(mod, param_names: List[str]) -> str:
+    if not param_names:
+        return mod.params_fingerprint()
+    return mod.params_fingerprint(*([0] * len(param_names)))
+
+
 def engine_info(name: str = None) -> Dict[str, Any]:
     name = name or config.DEFAULT_ENGINE
     cfg = config.ENGINES[name]
     v3, sha = load_engine(name)
+    param_names = list(cfg["params"])
     return {
         "engine": name,
         "engine_label": cfg["label"],
-        "engine_params": cfg["params"],          # 参数名（obs-1.2 起，保持不变）
-        # obs-1.5：参数能力表 —— 范围 / 默认值 / 单位 / 含义，前端按能力展示
-        "params": [_param_spec(name, v3) for name in ("seed", "years") + tuple(cfg["params"])],
+        "engine_params": param_names,
+        "params": [_param_spec(n, v3) for n in ("seed", "years") + tuple(param_names)],
         "engine_path": str(cfg["path"].relative_to(config.REPO_ROOT)),
         "engine_sha256": sha,
         "baseline_commit": cfg["baseline_commit"],
-        "params_fingerprint": v3.params_fingerprint(*([0] * len(cfg["params"]))),
-        "constants": {
-            "NEED_PC": v3.NEED_PC, "MILLE": v3.MILLE, "SPLIT_SIZE": v3.SPLIT_SIZE,
-            "SPOIL_M": v3.SPOIL_M, "MOVE_LOSS_M": v3.MOVE_LOSS_M,
-            "MIG_E_M": v3.MIG_E_M, "MIG_GAIN_M": v3.MIG_GAIN_M,
-            "SHOCK_P_M": v3.SHOCK_P_M, "K_HALF": v3.K_HALF,
-            "SIGMA_M_MAX": v3.SIGMA_M_MAX, "MOVE_MORT_M_MAX": v3.MOVE_MORT_M_MAX,
-            **({"SHARE_M_MAX": v3.SHARE_M_MAX} if hasattr(v3, "SHARE_M_MAX") else {}),
-            **({"AID_M_MAX": v3.AID_M_MAX} if hasattr(v3, "AID_M_MAX") else {}),
-            **({"RECIP_M_MAX": v3.RECIP_M_MAX} if hasattr(v3, "RECIP_M_MAX") else {}),
+        "params_fingerprint": _params_fingerprint(v3, param_names),
+        "unsupported_params": [p for p in ("sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m")
+                               if p not in param_names],
+        "metrics": {
+            "population_identity": hasattr(v3, "population_identity_error"),
+            "conservation": hasattr(v3, "conservation_error"),
+            "sigma": "sigma_m" in param_names,
+            "move_mort": "move_mort_m" in param_names,
+            "share": "share_m" in param_names,
+            "aid": "aid_m" in param_names,
+            "recip": "recip_m" in param_names,
         },
+        "recorded_note": ("year/cum 与 band 只含冻结引擎状态里实际存在的键；"
+                          "省略的指标未测量，界面须显示未记录，禁止填 0 冒充。"),
+        "constants": {n: getattr(v3, n) for n in _CONST_NAMES if hasattr(v3, n)},
     }
 
 
@@ -97,15 +115,23 @@ def map_geometry(engine: str = None) -> Dict[str, Any]:
 def make_world(seed: int, sigma_m: int, move_mort_m: int, arm: str,
                engine: str = None, share_m: int = 0, aid_m: int = 0,
                recip_m: int = 0):
-    """建世界。参数校验由引擎自己做（严格整数 + 范围），这里不重复实现一份。"""
-    v3, _ = load_engine(engine)
+    """建世界。只把该引擎声明支持的参数传进去；不支持的非零值由 API 层拒绝。"""
+    name = engine or config.DEFAULT_ENGINE
+    v3, _ = load_engine(name)
     poison = config.ARMS[arm]["poison"]
-    params = config.ENGINES[engine or config.DEFAULT_ENGINE]["params"]
-    extra = []
-    if "share_m" in params: extra.append(share_m)
-    if "aid_m" in params: extra.append(aid_m)
-    if "recip_m" in params: extra.append(recip_m)
-    return v3.make_world(seed, poison, sigma_m, move_mort_m, *extra)
+    params = config.ENGINES[name]["params"]
+    extra: List[int] = []
+    if "sigma_m" in params:
+        extra.append(sigma_m)
+    if "move_mort_m" in params:
+        extra.append(move_mort_m)
+    if "share_m" in params:
+        extra.append(share_m)
+    if "aid_m" in params:
+        extra.append(aid_m)
+    if "recip_m" in params:
+        extra.append(recip_m)
+    return v3.make_world(seed, poison, *extra)
 
 
 def step(st, engine: str = None):
@@ -199,16 +225,19 @@ class Recorder:
         bands: List[Dict[str, Any]] = []
         for bid, b in sorted(st["bands"].items()):
             sid = str(bid)
-            bands.append({
+            row = {
                 "id": sid,
                 "name": self._name(sid, bid),
                 "cell": b["cell"],
                 "size": b["size"],
                 "store": b["store"],
-                "macc": b["macc"],
-                "bacc": b["bacc"],
-                "dacc": b["dacc"],
                 "mem": {str(c): [b["mem"][c], b["memt"].get(c)] for c in sorted(b["mem"])},
+            }
+            for k in ("macc", "bacc", "dacc"):
+                if k in b:
+                    row[k] = b[k]
+            bands.append({
+                **row,
                 # EXP-06：援助记忆（谁实际援助过我）。只由实际转移累加，来源见 source 字段。
                 # last_year 是**引擎内部 tick**，保持原语义不动；
                 # last_year_display / last_event_id 是**展示口径**，由本次运行里那笔
@@ -222,7 +251,8 @@ class Recorder:
                    if "amem" in b else {}),
             })
 
-        fields = (tuple(CUM_FIELDS) + tuple(f for f in SHARE_FIELDS if f in st)
+        fields = (tuple(k for k in CUM_FIELDS if k in st)
+                  + tuple(f for f in SHARE_FIELDS if f in st)
                   + tuple(f for f in AID_FIELDS if f in st)
                   + tuple(f for f in RECIP_FIELDS if f in st))
         cum = {k: st[k] for k in fields}
@@ -237,9 +267,10 @@ class Recorder:
         }
         integrity = {
             "conservation_error": v3.conservation_error(st),
-            "population_identity_error": v3.population_identity_error(st),
             "state_hash": v3.state_hash(st),
         }
+        if hasattr(v3, "population_identity_error"):
+            integrity["population_identity_error"] = v3.population_identity_error(st)
         if "share_ledger_error" in dir(v3):
             integrity["share_ledger_error"] = v3.share_ledger_error(st)
         if "aid_ledger_error" in dir(v3):
@@ -412,11 +443,18 @@ def run_identity(st, engine: str = None) -> Dict[str, str]:
 def static_run_meta(st) -> Dict[str, Any]:
     """一次运行里不随年份变化的东西：格容量、年再生、初始禀赋。"""
     cell_ids = sorted(st["stock"])
+    if "pop_start" in st:
+        pop_start = st["pop_start"]
+        pop_note = "engine field pop_start"
+    else:
+        pop_start = sum(b["size"] for b in st["bands"].values())
+        pop_note = "sum of initial band sizes; engine has no pop_start field"
     return {
         "cell_ids": cell_ids,
         "cap": [st["cap"][i] for i in cell_ids],
         "regen": [st["regen"][i] for i in cell_ids],
         "start_stock": st["start_stock"],
         "start_store": st["start_store"],
-        "pop_start": st["pop_start"],
+        "pop_start": pop_start,
+        "pop_start_note": pop_note,
     }
