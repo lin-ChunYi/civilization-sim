@@ -143,6 +143,15 @@ def largest_remainder(keys, weight, total):
     return base
 
 
+def alloc_totals(pairs):
+    """把逐笔转移聚合成 {(供给方, 接收方): 总额}。
+    判断"优先规则是否真的改变了分配"用的是它 —— 拆成两笔但总额不变不算改变。"""
+    out = {}
+    for d, r, a, _ph in pairs:
+        out[(d, r)] = out.get((d, r), 0) + a
+    return out
+
+
 def settle_cell(members, pre_avail, pre_need, am, recip_m, amem_pre, P, order=None):
     """一个格子里的援助结算。**纯函数**：只读入参，不改状态。
 
@@ -621,6 +630,9 @@ def step(st, suppress_split_in=None):
     aid_in = {bid: 0 for bid in st['bands']}
     aid_out = {bid: 0 for bid in st['bands']}
     st['aid_pre'] = {}          # 援助前状态快照：{bid: (avail, need, cell)}；不进哈希
+    # 只读诊断：同一份援助前状态下"开优先回助"与"关优先回助"各算一遍的逐笔结果。
+    # 这是**观察数据**，每 tick 重写，不进哈希，也不回灌规则（poison-recipdiag 盯着）。
+    st['recip_compare'] = []
     am = st['aid_m']
     if am > 0:
         pre_avail = {bid: harvest.get(bid, 0) + st['bands'][bid]['store']
@@ -650,10 +662,23 @@ def step(st, suppress_split_in=None):
             # 两次结果不同 ⇒ **优先规则确实改变了分配**（而不是"刚好帮了旧伙伴"）。
             base_pairs, _, _, _ = settle_cell(members, pre_avail, pre_need, am,
                                               0, amem_pre, P, order)
-            changed = sorted((d, r, a) for d, r, a, _ in pairs) != \
-                      sorted((d, r, a) for d, r, a, _ in base_pairs)
+            # "分配改变"比的是**逐对群体的总额**，不是转移笔数。
+            # 同一对群体、同样的总额，只是被拆成"优先 + 普通"两笔，**不算**分配改变 ——
+            # 那只是记账分阶段，谁拿到多少一点没变。
+            changed = alloc_totals(pairs) != alloc_totals(base_pairs)
             if changed:
                 st['recip_changed'] += 1
+            if st['recip_m'] > 0:
+                st['recip_compare'].append({
+                    'cell': c, 'changed': bool(changed),
+                    'with_recip': [(d, r, a, ph) for d, r, a, ph in pairs],
+                    'without_recip': [(d, r, a, ph) for d, r, a, ph in base_pairs],
+                    # 逐对总额（判据本身），方便界面直接比"谁拿到多少"
+                    'with_totals': [(d, r, a) for (d, r), a in
+                                    sorted(alloc_totals(pairs).items())],
+                    'without_totals': [(d, r, a) for (d, r), a in
+                                       sorted(alloc_totals(base_pairs).items())],
+                })
             if 'recipdiag' in P and st['recip_changed'] % 2 == 1:
                 continue                          # 注入：只读诊断回灌规则
             st['aid_events'] += 1
