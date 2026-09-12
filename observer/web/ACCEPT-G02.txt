@@ -1,0 +1,11 @@
+G02_SANDBOX
+主页面：沙盘棋子（地图优先 + 圆形棋子 + 右侧标签轨）
+实验室：/static/index.html?skin=console 或 visual-lab.html（三栏 + 菱形棋子）
+
+选择依据：主页面把方法学收进「口径」，地图进入视口主体，解决 390px 首屏看不到地图、桌面左栏被长说明占满的问题。指挥台方案保留作对照，不给终端用户加试验按钮。
+
+状态修复：gotoYear 未缓存时先盖加载层，到齐再改标题/事件/地图；新建运行 setHash t=0。
+gotoYear 缓存命中实测 10.0ms（G02 测试 G4）。无编造 FPS。
+
+reduced-motion：style.css 已对 flow-line / year-display.pulse 关闭动画。
+素材：本轮未用 Imagine，纯 SVG/CSS。若后续要木质棋盘纹理/棋子法线，可用本地 PNG，不要画山川疆界。

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>G02 布局与年份状态</title>
+<style>body{font:13px/1.5 monospace;background:#111;color:#ddd;padding:8px}#result{white-space:pre-wrap}#mount{max-height:220px;overflow:auto}</style>
+</head>
+<body>
+<pre id="result">running…</pre>
+<div id="mount"></div>
+<script>window.__OBS_MANUAL_BOOT__ = true;</script>
+<script>
+(async () => {
+  const realFetch = window.fetch.bind(window);
+  const out = [];
+  const ok = (name, cond, detail) => out.push((cond ? "PASS" : "FAIL") + " " + name + (detail ? " :: " + detail : ""));
+  const txt = (sel) => (document.querySelector(sel) || { textContent: "" }).textContent.replace(/\s+/g, " ").trim();
+  try {
+    const html = await realFetch("/static/index.html").then((r) => r.text());
+    const body = html.split("<body>")[1].split("</body>")[0].replace(/<script[\s\S]*?<\/script>/g, "");
+    document.getElementById("mount").innerHTML = body;
+    await new Promise((res, rej) => {
+      const el = document.createElement("script");
+      el.src = "/static/app.js?g02=" + Date.now(); el.onload = res; el.onerror = () => rej(new Error("app.js"));
+      document.head.appendChild(el);
+    });
+    const O = window.__obs;
+    history.replaceState(null, "", "#tab=world&t=125");
+    await O.boot();
+    ok("G0 契约钩子", !!(O.gotoYear && O.startRun && O.setLayer && O.ykey));
+    document.getElementById("f-engine").value = "exp06";
+    document.getElementById("f-engine").dispatchEvent(new Event("change"));
+    document.getElementById("f-seed").value = "7";
+    document.getElementById("f-years").value = "3";
+    document.getElementById("f-sigma").value = "0";
+    document.getElementById("f-mort").value = "50";
+    document.getElementById("f-share").value = "0";
+    document.getElementById("f-aid").value = "0";
+    document.getElementById("f-recip").value = "0";
+    document.getElementById("f-label").value = "G02 url-t 同步";
+    await O.startRun();
+    ok("G1 新运行当前年是开局", O.S.t === 0, "t=" + O.S.t);
+    ok("G2 URL t 同步为 0，不是停留在 125", /(?:^|#|&)t=0(?:&|$)/.test(location.hash), location.hash);
+    const map = document.getElementById("map");
+    const hud = document.getElementById("overview");
+    ok("G3 地图与 HUD 都在 DOM", !!(map && hud && document.getElementById("year-load")));
+    const t0 = performance.now();
+    await O.gotoYear(0);
+    const dt = performance.now() - t0;
+    ok("G4 gotoYear 缓存命中耗时已测", dt >= 0, dt.toFixed(1) + "ms");
+    document.getElementById("rail-tabs").querySelector("[data-rail=dossier]").click();
+    ok("G5 档案轨可切换", document.getElementById("pane-dossier").hidden === false);
+    document.getElementById("rail-tabs").querySelector("[data-rail=chronicle]").click();
+    ok("G6 卷宗轨切回", document.getElementById("pane-chronicle").hidden === false);
+    ok("G7 口径长文不在首屏卷宗", txt("#pane-chronicle").indexOf("64 格") < 0);
+  } catch (e) {
+    out.push("FAIL 脚本出错 :: " + (e && e.stack ? e.stack.split("\n")[0] : e));
+  }
+  const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
+  out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
+  document.getElementById("result").textContent = out.join("\n");
+})();
+</script>
+</body></html>

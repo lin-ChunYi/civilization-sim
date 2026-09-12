@@ -87,7 +87,7 @@ window.__OBS_MANUAL_BOOT__ = true;
     const blob = s1.sentences.join("");
     ok("L23 摘要用账本增量而不是净变化", /出生 6 人/.test(blob) && /原规则死亡/.test(blob) && /迁移死亡 2 人/.test(blob));
     ok("L24 不把死亡解释成病死或战争", !/病死|战争|自然死亡/.test(blob));
-    ok("L25 记录到 2 次迁移", /记录到 2 次迁移/.test(blob));
+    ok("L25 记录 2 次迁移", /记录 2 次迁移/.test(blob));
 
     const s2 = L.buildYearSummary({
       t: 10, year: { births_cum: 957, deaths_demo_cum: 0, mig_deaths_cum: 0 },
@@ -95,7 +95,7 @@ window.__OBS_MANUAL_BOOT__ = true;
     });
     const b2 = s2.sentences.join("");
     ok("L26 出生 957 不等于 957 条事件", /出生 957/.test(b2) && /没有记录到迁移/.test(b2));
-    ok("L27 账本迁移次数与事件条数不一致时分开说", /账本统计本年迁移 3 次/.test(b2) && /已记录的迁移事件 0 条/.test(b2));
+    ok("L27 默认摘要不含计数定义长文", !/一次多人援助算 1/.test(b2) && !/不是同一个计数/.test(b2) && /出生 957/.test(b2));
 
     ok("L28 契约钩子仍在", !!(window.__obs && window.__obs.ykey && window.__obs.esc && window.__obs.boot));
     ok("L29 ykey 按 run+year 隔离", window.__obs.ykey("A", 3) !== window.__obs.ykey("B", 3));
@@ -117,8 +117,9 @@ window.__OBS_MANUAL_BOOT__ = true;
       aid: { events: 1, transfers: 2, kcal: 1000 }
     });
     const aidBlob = sAid.sentences.join("");
-    ok("L34 摘要区分援助活动次数与逐笔转移笔数",
-      /援助活动 1 次/.test(aidBlob) && /逐笔转移 2 笔/.test(aidBlob) && /2 条食物援助/.test(aidBlob));
+    const aidM = (sAid.metrics || []).map((m) => m.key + m.value).join(",");
+    ok("L34 指标条区分活动与转移且摘要不含定义长文",
+      aidM.indexOf("活动1") >= 0 && aidM.indexOf("转移2") >= 0 && !/一次多人援助算 1/.test(aidBlob));
     ok("L35 小数 AID_M 被拒绝", !L.parseStrictInt("100.5", { name: "AID_M" }).ok);
     ok("L36 AID_M=1000 通过", L.parseStrictInt("1000", { name: "AID_M", min: 0, max: 1000 }).ok);
     const sRec = L.buildYearSummary({
@@ -128,8 +129,9 @@ window.__OBS_MANUAL_BOOT__ = true;
       recip: { repay_transfers: 3, transfers: 1, changed: 0 }
     });
     const rb = sRec.sentences.join("");
-    ok("L37 回助含碰巧与 changed 分开", /回助/.test(rb) && /3 笔/.test(rb) && /改变 0 次/.test(rb));
-    ok("L38 援助活动与逐笔转移仍分开", /援助活动 1 次/.test(rb) && /逐笔转移 2 笔/.test(rb));
+    const rm = (sRec.metrics || []).map((m) => m.key + m.value).join(",");
+    ok("L37 回助与分配改变分开计", rm.indexOf("回助3") >= 0 && rm.indexOf("分配改变0") >= 0 && !/不是同一个计数/.test(rb));
+    ok("L38 援助活动与逐笔转移仍分开", rm.indexOf("活动1") >= 0 && rm.indexOf("转移2") >= 0);
     ok("L39 RECIP_M=0 是合法整数", L.parseStrictInt("0", { name: "RECIP_M", min: 0, max: 1000 }).ok);
     const fa = L.flowAnchor(
       { type: "share", id: "t125-share-1", cell: 0, donor: "A", receiver: "B" },

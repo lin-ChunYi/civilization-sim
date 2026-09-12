@@ -15,6 +15,9 @@ const S = {
   lastYearLabel: null,
   yearWait: null,
   yearMiss: {},
+  hoverCell: null,
+  yearLoading: null,
+  skin: "sandtable",
 };
 const ykey = (runId, t) => `${runId}|${t}`;
 const bump = () => ++S.epoch;
@@ -29,6 +32,18 @@ function esc(x) {
 }
 
 /* ---------------- 展示层纯函数（也给自检用） ---------------- */
+function yearMetricRows(aid, recip) {
+  const rows = [];
+  if (aid) {
+    rows.push({ key: "活动", value: aid.events, unit: "次" });
+    rows.push({ key: "转移", value: aid.transfers, unit: "笔" });
+  }
+  if (recip) {
+    rows.push({ key: "回助", value: recip.repay_transfers, unit: "笔" });
+    rows.push({ key: "分配改变", value: recip.changed, unit: "次" });
+  }
+  return rows;
+}
 const OverviewLogic = {
   parseStrictInt(raw, opts) {
     const o = opts || {};
@@ -119,29 +134,26 @@ const OverviewLogic = {
           " 次群体分裂、" + ev.extinct + " 次群体消失、" + ev.share +
           " 次信息交换、" + ev.aid + " 条食物援助（逐笔转移）。");
       }
-      OverviewLogic._appendAidLedger(sentences, input.aid);
-      OverviewLogic._appendRecipLedger(sentences, input.recip);
-      return { sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md };
+      return {
+        sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md,
+        metrics: yearMetricRows(input.aid, input.recip)
+      };
     }
-    sentences.push("本年出生 " + births + " 人，非迁移死亡（模型的原规则死亡） " +
-      demo + " 人，迁移死亡 " + md + " 人。");
+    sentences.push("本年出生 " + births + " 人，原规则死亡 " + demo + " 人，迁移死亡 " + md + " 人。");
     if (ev.total === 0) {
-      sentences.push("本年没有记录到迁移、分裂、群体消失、信息交换或食物援助事件。");
+      sentences.push("本年没有记录到迁移、分裂、消失、信息交换或援助事件。当前 " +
+        agg.bands + " 个群体、" + agg.pop + " 人。");
     } else {
-      sentences.push("记录到 " + ev.migrate + " 次迁移、" + ev.split +
-        " 次群体分裂、" + ev.extinct + " 次群体消失、" + ev.share +
-        " 次信息交换、" + ev.aid + " 条食物援助（逐笔转移）。");
+      sentences.push("记录 " + ev.migrate + " 次迁移、" + ev.split + " 次分裂、" +
+        ev.share + " 次信息交换、" + ev.aid + " 条援助。当前 " +
+        agg.bands + " 个群体、" + agg.pop + " 人。");
     }
-    sentences.push("当前共有 " + agg.bands + " 个群体、" + agg.pop + " 人。");
-    if (input.ledgerMig != null && input.ledgerMig !== ev.migrate) {
-      sentences.push("模型账本统计本年迁移 " + input.ledgerMig +
-        " 次，已记录的迁移事件 " + ev.migrate +
-        " 条；人数与事件条数不能混加，也不强行对齐。");
-    }
-    OverviewLogic._appendAidLedger(sentences, input.aid);
-    OverviewLogic._appendRecipLedger(sentences, input.recip);
-    return { sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md };
+    return {
+      sentences, events: ev, births: births, demoDeaths: demo, migDeaths: md,
+      metrics: yearMetricRows(input.aid, input.recip)
+    };
   },
+  yearMetrics: yearMetricRows,
   _appendAidLedger(sentences, aid) {
     if (!aid) return;
     sentences.push("援助账本：援助活动 " + aid.events + " 次（格×年，一次多人援助算 1），" +
@@ -382,6 +394,10 @@ function renderOverview() {
       recip: rec.recip || null,
     });
     $("year-summary").textContent = sum.sentences.join("");
+    if ($("year-metrics")) {
+      $("year-metrics").innerHTML = (sum.metrics || []).map((m) =>
+        `<span class="metric-chip"><b>${esc(m.key)}</b> ${nf(m.value)} <small>${esc(m.unit)}</small></span>`).join("");
+    }
   }
 
   const cum = OverviewLogic.cumulativeRecordedEvents(S.series, S.t);
@@ -615,14 +631,18 @@ function renderMap() {
       title += " · 格子编号 " + c.i;
     } else title += " · 不可通行";
     const selected = S.selCell === c.i;
+    const hovered = S.hoverCell === c.i;
     const hot = eventCells.has(c.i) && (layer === "event" || layer === "flow");
-    out += `<path d="${hexPath(cx, cy)}" fill="${fill}" stroke="${selected ? "#f3deaa" : (hot ? "#d4b06a" : "#2a3530")}"
-        stroke-width="${selected ? 2.8 : hot ? 1.8 : 1}" data-cell="${c.i}" class="cell"${selected ? ' filter="url(#glow)"' : ""}>
+    const stroke = selected ? "#f3deaa" : hovered ? "#e6c888" : (hot ? "#d4b06a" : (S.skin === "console" ? "#2c4a48" : "#2a3530"));
+    out += `<path d="${hexPath(cx, cy)}" fill="${fill}" stroke="${stroke}"
+        stroke-width="${selected ? 2.8 : hovered ? 2 : hot ? 1.8 : 1}" data-cell="${c.i}" class="cell${hovered ? " hover" : ""}"${selected ? ' filter="url(#glow)"' : ""}>
         <title>${esc(title)}</title></path>`;
-    if (c.passable && label) {
+    const lod = S.cam.k;
+    const showNum = lod >= 1.45 || selected || S.hoverCell === c.i;
+    if (c.passable && label && showNum) {
       out += `<text x="${cx}" y="${cy + (sub ? 6 : 12)}" text-anchor="middle" font-size="10"
           fill="#e8eadc" opacity="0.9" pointer-events="none">${esc(label)}</text>`;
-      if (sub) out += `<text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="8"
+      if (sub && lod >= 1.6) out += `<text x="${cx}" y="${cy + 18}" text-anchor="middle" font-size="8"
           fill="#d4b06a" pointer-events="none">${esc(sub)}</text>`;
     }
   });
@@ -643,14 +663,29 @@ function renderMap() {
       x0 += 2 * rad + 2;
       bandPos[String(b.id)] = [x, y, c.i];
       const on = S.selBand === b.id;
-      out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad.toFixed(1)}"
-          fill="${on ? "#e8a04a" : "#c47a3a"}" fill-opacity="0.95"
-          stroke="${on ? "#f3deaa" : "#f6e7c8"}" stroke-width="${on ? 2.6 : 1.4}"
-          data-band="${b.id}" class="band" style="cursor:pointer"${on ? ' filter="url(#glow)"' : ""}>
-          <title>${esc(b.name)} · ${b.size}人</title></circle>`;
-      if (rad >= 7) {
+      const lodB = S.cam.k;
+      if (S.skin === "console") {
+        const d = rad * 0.92;
+        const fillC = on ? "#8fd4d0" : "#3d7a76";
+        const strokeC = on ? "#d7f4f2" : "#99e0dd";
+        out += `<polygon points="${x},${(y-d).toFixed(1)} ${(x+d).toFixed(1)},${y} ${x},${(y+d).toFixed(1)} ${(x-d).toFixed(1)},${y}"
+            fill="${fillC}" stroke="${strokeC}" stroke-width="${on ? 2.4 : 1.3}"
+            data-band="${b.id}" class="band" style="cursor:pointer">
+            <title>${esc(b.name)} · ${b.size}人</title></polygon>`;
+      } else {
+        out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rad.toFixed(1)}"
+            fill="${on ? "#e8a04a" : "#c47a3a"}" fill-opacity="0.95"
+            stroke="${on ? "#f3deaa" : "#f6e7c8"}" stroke-width="${on ? 2.6 : 1.4}"
+            data-band="${b.id}" class="band" style="cursor:pointer"${on ? ' filter="url(#glow)"' : ""}>
+            <title>${esc(b.name)} · ${b.size}人</title></circle>`;
+      }
+      if (lodB >= 0.95 && rad >= 7) {
         out += `<text x="${x.toFixed(1)}" y="${(y + 3.2).toFixed(1)}" text-anchor="middle"
             font-size="${rad >= 11 ? 9 : 7.5}" fill="#1a1408" font-weight="700" pointer-events="none">${b.size}人</text>`;
+      }
+      if (lodB >= 1.7) {
+        out += `<text x="${x.toFixed(1)}" y="${(y - rad - 4).toFixed(1)}" text-anchor="middle"
+            font-size="8" fill="#f3deaa" pointer-events="none">${esc(b.name)}</text>`;
       }
     });
   });
@@ -700,14 +735,25 @@ function renderMap() {
   svg.querySelectorAll(".band").forEach((n) =>
     n.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (S._suppressClick) { S._suppressClick = false; return; }
-      selectBand(n.dataset.band);
+      if (S._ignoreClickUntil && performance.now() < S._ignoreClickUntil) return;
+      selectBand(n.dataset.band, { force: true });
     }));
-  svg.querySelectorAll(".cell").forEach((n) =>
+  svg.querySelectorAll(".cell").forEach((n) => {
     n.addEventListener("click", () => {
-      if (S._suppressClick) { S._suppressClick = false; return; }
-      S.selCell = +n.dataset.cell; S.selBand = null; renderMap(); renderSide();
-    }));
+      if (S._ignoreClickUntil && performance.now() < S._ignoreClickUntil) return;
+      S.selCell = +n.dataset.cell; S.selBand = null; showRail("dossier"); renderMap(); renderSide();
+    });
+    n.addEventListener("pointerenter", () => {
+      const c = +n.dataset.cell;
+      if (S.hoverCell === c) return;
+      S.hoverCell = c;
+      n.classList.add("hover");
+    });
+    n.addEventListener("pointerleave", () => {
+      if (S.hoverCell === +n.dataset.cell) S.hoverCell = null;
+      n.classList.remove("hover");
+    });
+  });
 
   const keys = {
     resource: "资源层：绿色深浅 = 野外食物（人年口粮）。灰斜纹 = 不可通行。",
@@ -933,6 +979,17 @@ async function loadBand(id) {
   }
 }
 
+function showRail(name) {
+  const tabs = document.querySelectorAll("#rail-tabs button");
+  if (!tabs.length) return;
+  tabs.forEach((x) => x.classList.toggle("on", x.dataset.rail === name));
+  ["chronicle", "dossier", "help"].forEach((n) => {
+    const pane = $("pane-" + n); if (!pane) return;
+    const on = n === name;
+    pane.hidden = !on;
+    pane.classList.toggle("on", on);
+  });
+}
 function selectBand(id, opts) {
   opts = opts || {};
   bump();
@@ -942,6 +999,7 @@ function selectBand(id, opts) {
   setHash({ b: S.selBand || "" });
   S.selCell = null;
   if (!S.selBand && S.view === "mem") setView("truth");
+  if (S.selBand) showRail("dossier");
   renderMap(); renderSide();
 }
 function setView(v) {
@@ -969,34 +1027,56 @@ function syncYearWidgets(t) {
     $("tl-calc").textContent = "已计算到：第 " + maxT() + " 年 / 目标 " + S.run.years + " 年";
   }
 }
+function setYearLoadOverlay(t, on) {
+  const el = $("year-load");
+  if (!el) return;
+  if (on) {
+    S.yearLoading = t;
+    el.hidden = false;
+    if ($("year-load-n")) $("year-load-n").textContent = String(t);
+  } else {
+    S.yearLoading = null;
+    el.hidden = true;
+  }
+}
+function commitYear(t) {
+  S.t = t;
+  S.yearWait = null;
+  setYearLoadOverlay(t, false);
+  syncYearWidgets(t);
+  setHash({ t: String(t) });
+}
 async function gotoYear(t, opts) {
   opts = opts || {};
   if (!S.run) return;
   const myRun = S.run.run_id;
   const myEpoch = bump();
   t = Math.max(0, Math.min(t, maxT()));
-  S.t = t;
-  syncYearWidgets(t);
-  if (!S.years.has(ykey(myRun, t))) {
-    let rec;
-    try { rec = await api(`/api/runs/${myRun}/year/${t}`); }
-    catch (e) {
-      if (stale(myEpoch, myRun)) return;
-      const pending = isPendingYearError(e, t);
-      S.yearWait = { runId: myRun, t: t, pending: pending, status: e.status, message: e.message };
-      if (!pending) flash("读取第 " + t + " 年失败：" + e.message, true);
-      renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents();
-      return;
-    }
-    S.years.set(ykey(myRun, t), rec);
-    delete S.yearMiss[yearMissKey(myRun, t)];
-    S.yearWait = null;
+  if (S.years.has(ykey(myRun, t))) {
     if (stale(myEpoch, myRun)) return;
+    commitYear(t);
+    renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents(); renderTech();
+    if (!opts.quiet) renderCharts();
+    if (S.evScope === "until") prefetchYears(myRun, t);
+    return;
   }
+  setYearLoadOverlay(t, true);
+  let rec;
+  try { rec = await api(`/api/runs/${myRun}/year/${t}`); }
+  catch (e) {
+    if (stale(myEpoch, myRun)) return;
+    const pending = isPendingYearError(e, t);
+    S.yearWait = { runId: myRun, t: t, pending: pending, status: e.status, message: e.message };
+    commitYear(t);
+    if (!pending) flash("读取第 " + t + " 年失败：" + e.message, true);
+    renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents();
+    return;
+  }
+  S.years.set(ykey(myRun, t), rec);
+  delete S.yearMiss[yearMissKey(myRun, t)];
   if (stale(myEpoch, myRun)) return;
-  S.yearWait = null;
+  commitYear(t);
   renderOverview(); renderMap(); renderSide(); renderStatus(); renderEvents(); renderTech();
-  setHash({ t: String(t) });
   if (!opts.quiet) renderCharts();
   if (S.evScope === "until") prefetchYears(myRun, t);
 }
@@ -1342,9 +1422,9 @@ async function openRun(id) {
   if ($("v-truth")) $("v-truth").classList.add("on");
   if ($("v-mem")) $("v-mem").classList.remove("on");
   $("scrub").max = maxT();
-  setHash({ run: id, b: "", view: "" });
   S.t = 0;
   syncYearWidgets(0);
+  setHash({ run: id, b: "", view: "", t: "0" });
   renderOverview(); renderMap(); renderSide(); renderEvents(); renderStatus();
   await gotoYear(0);
   renderRuns(); renderCharts(); renderStatus(); renderOverview();
@@ -1451,6 +1531,14 @@ async function refresh() {
 }
 
 async function boot() {
+  const skin = new URLSearchParams(location.search).get("skin");
+  if (skin === "console") {
+    S.skin = "console";
+    document.documentElement.classList.add("skin-console");
+  }
+  if (new URLSearchParams(location.search).get("tex") === "0") {
+    document.documentElement.classList.add("notex");
+  }
   $("token").value = S.token;
   $("tokbtn").addEventListener("click", () => {
     S.token = $("token").value.trim();
@@ -1481,6 +1569,27 @@ async function boot() {
   $("b-start").addEventListener("click", startRun);
   if ($("recip-off")) $("recip-off").addEventListener("click", () => { $("f-recip").value = "0"; });
   if ($("recip-on")) $("recip-on").addEventListener("click", () => { $("f-recip").value = "1000"; });
+  const railTabs = $("rail-tabs");
+  if (railTabs) railTabs.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-rail]"); if (!b) return;
+    document.querySelectorAll("#rail-tabs button").forEach((x) => x.classList.toggle("on", x === b));
+    ["chronicle", "dossier", "help"].forEach((name) => {
+      const pane = $("pane-" + name); if (!pane) return;
+      const on = name === b.dataset.rail;
+      pane.hidden = !on;
+      pane.classList.toggle("on", on);
+    });
+  });
+  document.addEventListener("keydown", (e) => {
+    const el = e.target || document.activeElement;
+    const tag = (el && el.tagName) || "";
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") return;
+    if (el && el.isContentEditable) return;
+    if (e.key === "ArrowLeft") { e.preventDefault(); setPlaying(false); gotoYear(S.t - 1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); setPlaying(false); gotoYear(S.t + 1); }
+    else if (e.key === "Home") { e.preventDefault(); setPlaying(false); gotoYear(0); }
+    else if (e.key === " " || e.code === "Space") { e.preventDefault(); setPlaying(!S.playing); }
+  });
   $("ev-scope").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-scope]"); if (!b) return;
     S.evScope = b.dataset.scope; renderEvents();
@@ -1534,6 +1643,37 @@ async function boot() {
   setInterval(refresh, 1500);
 }
 
+function applyCam() {
+  const svg = $("map");
+  if (svg) svg.setAttribute("viewBox", camViewBox());
+}
+function mapHitAt(clientX, clientY) {
+  const el = document.elementFromPoint(clientX, clientY);
+  let n = el;
+  while (n && n !== document.body) {
+    if (n.getAttribute) {
+      const band = n.getAttribute("data-band");
+      if (band) return { kind: "band", id: band };
+      if (n.classList && n.classList.contains("cell") && n.getAttribute("data-cell") != null) {
+        return { kind: "cell", i: +n.getAttribute("data-cell") };
+      }
+    }
+    n = n.parentElement || n.parentNode;
+  }
+  return null;
+}
+function endMapPointer(e) {
+  const drag = S._drag;
+  S._drag = null;
+  S._suppressClick = false;
+  try {
+    if (e && e.pointerId != null && $("mapbox") && $("mapbox").hasPointerCapture &&
+        $("mapbox").hasPointerCapture(e.pointerId)) {
+      $("mapbox").releasePointerCapture(e.pointerId);
+    }
+  } catch (err) { /* 已释放 */ }
+  return drag;
+}
 function bindMapCam() {
   const box = $("mapbox"); if (!box) return;
   box.addEventListener("wheel", (e) => {
@@ -1544,20 +1684,38 @@ function bindMapCam() {
   }, { passive: false });
   box.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    S._drag = { x: e.clientX, y: e.clientY, cx: S.cam.x, cy: S.cam.y, moved: false };
-    box.setPointerCapture(e.pointerId);
+    S._drag = {
+      x: e.clientX, y: e.clientY, cx: S.cam.x, cy: S.cam.y,
+      moved: false, pointerId: e.pointerId
+    };
   });
   box.addEventListener("pointermove", (e) => {
-    if (!S._drag) return;
+    if (!S._drag || S._drag.pointerId !== e.pointerId) return;
     const dx = e.clientX - S._drag.x, dy = e.clientY - S._drag.y;
-    if (Math.abs(dx) + Math.abs(dy) > 4) S._drag.moved = true;
+    if (!S._drag.moved) {
+      if (Math.abs(dx) + Math.abs(dy) <= 6) return;
+      S._drag.moved = true;
+      try { box.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+    }
     S.cam.x = S._drag.cx + dx / S.cam.k;
     S.cam.y = S._drag.cy + dy / S.cam.k;
-    renderMap();
+    applyCam();
   });
-  box.addEventListener("pointerup", () => {
-    if (S._drag && S._drag.moved) S._suppressClick = true;
-    S._drag = null;
+  box.addEventListener("pointerup", (e) => {
+    const drag = endMapPointer(e);
+    if (drag && drag.moved) {
+      S._ignoreClickUntil = performance.now() + 80;
+      return;
+    }
+    const hit = mapHitAt(e.clientX, e.clientY);
+    if (hit && hit.kind === "band") selectBand(hit.id, { force: true });
+    else if (hit && hit.kind === "cell") {
+      S.selBand = null; S.selCell = hit.i; showRail("dossier"); renderMap(); renderSide();
+    }
+  });
+  box.addEventListener("pointercancel", (e) => { endMapPointer(e); });
+  box.addEventListener("lostpointercapture", () => {
+    if (S._drag && !S._drag.moved) return;
   });
 }
 
