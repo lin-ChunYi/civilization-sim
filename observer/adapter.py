@@ -18,6 +18,18 @@ from typing import Any, Dict, List, Optional
 
 from . import config
 
+def _param_spec(name: str, engine_mod) -> Dict[str, Any]:
+    """参数能力：展示信息来自 config.PARAM_SPECS，取值范围以**引擎常量**为准。"""
+    spec = dict(config.PARAM_SPECS.get(name, {"label": name, "unit": "", "min": 0,
+                                              "max": 0, "default": 0, "note": ""}))
+    lo = getattr(engine_mod, f"{name.upper()}_MIN", None)
+    hi = getattr(engine_mod, f"{name.upper()}_MAX", None)
+    if lo is not None: spec["min"] = lo
+    if hi is not None: spec["max"] = hi
+    spec["name"] = name
+    return spec
+
+
 @lru_cache(maxsize=4)
 def load_engine(name: str = None):
     """只读加载指定引擎，返回 (module, sha256)。"""
@@ -40,7 +52,9 @@ def engine_info(name: str = None) -> Dict[str, Any]:
     return {
         "engine": name,
         "engine_label": cfg["label"],
-        "engine_params": cfg["params"],
+        "engine_params": cfg["params"],          # 参数名（obs-1.2 起，保持不变）
+        # obs-1.5：参数能力表 —— 范围 / 默认值 / 单位 / 含义，前端按能力展示
+        "params": [_param_spec(name, v3) for name in ("seed", "years") + tuple(cfg["params"])],
         "engine_path": str(cfg["path"].relative_to(config.REPO_ROOT)),
         "engine_sha256": sha,
         "baseline_commit": cfg["baseline_commit"],
@@ -134,6 +148,8 @@ class Recorder:
 
     def __init__(self, engine: str = None):
         self.engine = engine or config.DEFAULT_ENGINE
+        # (供给方, 接收方) -> 这对之间**以前**每一笔援助的事件 id，用来给回助事件挂依据
+        self._aid_by_pair: Dict[Any, List[str]] = {}
         self._prev_cum: Optional[Dict[str, int]] = None
         self._prev_cells: Dict[str, int] = {}
         self._log_len = 0
@@ -244,6 +260,22 @@ class Recorder:
                 "cum_repay_transfers": cum.get("repay_transfers", 0),
                 "memory_entries": sum(len(b.get("amem", {})) for b in st["bands"].values()),
                 "memory_dropped": cum.get("amem_entries_dropped", 0),
+                # 同状态分配对照：同一份援助前状态下"开/关优先回助"各算一遍的逐笔结果。
+                # **这才是"优先规则确实改变了分配"的依据**，不能只凭双方以前有往来就认定。
+                "compare": [{
+                    "cell": c["cell"], "changed": c["changed"],
+                    "with_recip": [{"donor": str(d), "receiver": str(r),
+                                    "kcal": a, "phase": ph}
+                                   for d, r, a, ph in c["with_recip"]],
+                    "without_recip": [{"donor": str(d), "receiver": str(r),
+                                       "kcal": a, "phase": ph}
+                                      for d, r, a, ph in c["without_recip"]],
+                    # 判据本身：逐对群体的总额。拆成两笔但总额不变 -> changed = false
+                    "with_totals": [{"donor": str(d), "receiver": str(r), "kcal": a}
+                                    for d, r, a in c.get("with_totals", [])],
+                    "without_totals": [{"donor": str(d), "receiver": str(r), "kcal": a}
+                                       for d, r, a in c.get("without_totals", [])],
+                } for c in st.get("recip_compare", [])],
             }
         self._prev_cum = cum
         self._prev_cells = cells_now
@@ -284,6 +316,7 @@ class Recorder:
         aid_log = st.get("aid_log")                 # 来源四：模型记录的食物援助（EXP-05）
         if aid_log is not None:
             need_pc = load_engine(self.engine)[0].NEED_PC
+            amem_pre = st.get("amem_pre", {})
             for entry in aid_log[self._aid_len:]:
                 tick, cell, donor, recv, amt = entry[:5]
                 phase = entry[5] if len(entry) > 5 else "normal"
@@ -292,7 +325,7 @@ class Recorder:
                 tag = "回助 · " if repay else ""
                 why = ("（优先回助阶段：供给方记得对方帮过自己）" if phase == "recip"
                        else ("（普通阶段，但供给方确实记得对方帮过自己）" if repay else ""))
-                out.append({
+                ev = {
                     "type": "aid", "source": "模型日志 st['aid_log']",
                     "band": r, "donor": d, "receiver": r, "cell": cell,
                     "kcal": amt, "person_years": amt / need_pc,
@@ -300,7 +333,21 @@ class Recorder:
                     "text": f"{tag}{self._names.get(d, d)} 向 {self._names.get(r, r)} "
                             f"援助了 {amt} kcal（{amt / need_pc:.2f} 人年口粮），"
                             f"地点在第 {cell} 号格{why}",
-                })
+                    "unrecorded": "动机、路线与因果关系未记录：模型里没有这些量，"
+                                  "不要为动画补编。",
+                }
+                if repay:
+                    # 依据：对方**以前**实际援助过我的那几笔（事件 id 可直接跳转），
+                    # 以及供给方在援助前记住的累计量与最近年份。
+                    mem = amem_pre.get(donor, {}).get(recv)
+                    ev["basis"] = {
+                        "why": "供给方的援助记忆里有接收方，且该记忆只由实际转移累加",
+                        "remembered_kcal": mem[0] if mem else None,
+                        "remembered_last_year": mem[1] if mem else None,
+                        "prior_events": list(self._aid_by_pair.get((recv, donor), [])),
+                        "source": "模型状态 band['amem'] 的援助前快照 + 本次运行的援助日志",
+                    }
+                out.append(ev)
             self._aid_len = len(aid_log)
 
         for sid, cell in cells_now.items():          # 来源二：状态差分（可核实）
@@ -311,6 +358,15 @@ class Recorder:
                             "text": f"{self._names.get(sid, sid)} 由 {old} 号格迁至 {cell} 号格",
                             "unrecorded": "本次迁移的死亡人数未记录：当年账本只记全局分项，"
                                           "群体层的出生/原死亡/迁移死亡无法从年末快照拆开"})
+
+        # 稳定标识：同一次运行里唯一且可复现（年份 + 类型 + 当年序号），供时间轴定位与详情面板用
+        for i, e in enumerate(out):
+            e["id"] = f"t{t}-{e['type']}-{i}"
+            e["year"] = t
+        for e in out:                               # 登记援助配对，供后续回助事件挂依据
+            if e["type"] == "aid":
+                self._aid_by_pair.setdefault(
+                    (int(e["donor"]), int(e["receiver"])), []).append(e["id"])
         return out
 
 

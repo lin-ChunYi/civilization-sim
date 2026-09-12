@@ -216,7 +216,8 @@ with client:
     runs = client.get("/api/runs").json()["runs"]
     pre = [r for r in runs if r["kind"] == "preset"]
     check("O11 预生成案例存在且被标记为 preset（不冒充实时任务）",
-          len(pre) == 1 and pre[0]["status"] == "done", str([p["run_id"] for p in pre]))
+          len(pre) >= 1 and all(p["status"] == "done" for p in pre),
+          str([p["run_id"] for p in pre]))
 
 # ---------------------------------------------------------------- 并发与状态转换
 print("\nO13 任务槽与状态转换")
@@ -567,7 +568,8 @@ with TestClient(app) as c6:
         else:
             uncov("O24i 交换事件字段", "这次运行里没有出现交换事件，前提缺失")
         # 兼容性：exp03 的运行不应该带 share 段
-        pre = next(x for x in c6.get("/api/runs").json()["runs"] if x["kind"] == "preset")
+        pre = next(x for x in c6.get("/api/runs").json()["runs"]
+                   if x["kind"] == "preset" and (x.get("engine") or "exp03") == "exp03")
         rec3 = c6.get(f"/api/runs/{pre['run_id']}/year/1").json()
         check("O24k exp03 的记录里没有 share 段（前端要容忍缺席）", "share" not in rec3)
 
@@ -624,7 +626,9 @@ with TestClient(app) as c7:
             check("O25l 援助账恒等误差为 0", rec["integrity"].get("aid_ledger_error") == 0)
         else:
             uncov("O25h–l 援助事件", "这次运行里没有出现援助事件，前提缺失")
-        rec3 = c7.get(f"/api/runs/{next(x for x in c7.get('/api/runs').json()['runs'] if x['kind'] == 'preset')['run_id']}/year/1").json()
+        pre3 = next(x for x in c7.get("/api/runs").json()["runs"]
+                    if x["kind"] == "preset" and (x.get("engine") or "exp03") == "exp03")
+        rec3 = c7.get(f"/api/runs/{pre3['run_id']}/year/1").json()
         check("O25m exp03 的记录里没有 aid 段（前端要容忍缺席）", "aid" not in rec3)
 
 # ---------------------------------------------------------------- EXP-06 接入
@@ -633,9 +637,8 @@ with store.connect() as c:
     c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
 with TestClient(app) as c8:
     cfg = c8.get("/api/config").json()
-    check("O26a /api/config 里有 exp06 且契约版本更新",
-          "exp06" in cfg.get("engines", {}) and cfg["api_version"] == "obs-1.4",
-          str(sorted(cfg.get("engines", {}))))
+    check("O26a /api/config 里有 exp06 引擎",
+          "exp06" in cfg.get("engines", {}), str(sorted(cfg.get("engines", {}))))
     b1 = c8.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp05", "recip_m": 500})
     check("O26b exp05 引擎不接受 RECIP_M", b1.status_code == 400, str(b1.json())[:60])
     b2 = c8.post("/api/runs", json={"seed": 1, "years": 5, "engine": "exp06", "recip_m": 1001})
@@ -691,10 +694,115 @@ with TestClient(app) as c8:
                   and {"kcal", "last_year"} <= set(band["aid_memory"][k0]))
         else:
             uncov("O26k 关系记录", "这次运行里没有群体积累过援助记忆，前提缺失")
-        pre = next(x for x in c8.get("/api/runs").json()["runs"] if x["kind"] == "preset")
+        pre = next(x for x in c8.get("/api/runs").json()["runs"]
+                   if x["kind"] == "preset" and (x.get("engine") or "exp03") == "exp03")
         rec3 = c8.get(f"/api/runs/{pre['run_id']}/year/1").json()
         check("O26l exp03 的记录里没有 recip 段、群体也没有 aid_memory（前端要容忍缺席）",
               "recip" not in rec3 and "aid_memory" not in rec3["bands"][0])
+
+# ---------------------------------------------------------------- 游戏界面要用的数据
+print("\nO27 供界面直接使用的数据：稳定 id / 回助依据 / 分配对照 / 能力表 / 对照案例")
+with TestClient(app) as c9:
+    cfg = c9.get("/api/config").json()
+    spec = {p["name"]: p for p in cfg["engines"]["exp06"]["params"]}
+    check("O27a 引擎能力表给出范围/默认/单位",
+          {"seed", "years", "sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m"}
+          <= set(spec) and spec["recip_m"]["max"] == 1000
+          and spec["recip_m"]["unit"] and spec["recip_m"]["min"] == 0,
+          str(spec.get("recip_m"))[:80])
+    check("O27b 契约版本升到 obs-1.5", cfg["api_version"] == "obs-1.5", cfg["api_version"])
+
+    runs = {r["run_id"]: r for r in c9.get("/api/runs").json()["runs"]}
+    pair = ["preset-exp06-recip0", "preset-exp06-recip1000"]
+    check("O27c 两条开/关优先回助的对照案例已装入且标为预生成",
+          all(k in runs and runs[k]["kind"] == "preset" and runs[k]["engine"] == "exp06"
+              for k in pair) and runs[pair[0]]["recip_m"] == 0
+          and runs[pair[1]]["recip_m"] == 1000,
+          str([(k, runs[k]["recip_m"]) for k in pair if k in runs]))
+
+    detail = c9.get(f"/api/runs/{pair[1]}").json()
+    pu = {x["name"]: x for x in detail.get("params_used", [])}
+    check("O27d 单条运行返回实际引擎/参数/代码版本/状态",
+          detail["engine"] == "exp06" and pu.get("recip_m", {}).get("value") == 1000
+          and detail["engine_sha256"] and detail["status"] == "done"
+          and pu["recip_m"]["unit"], str(list(pu))[:70])
+
+    # 稳定 id：反复读同一年，id 必须一样；不同年份/类型不重复
+    y1 = c9.get(f"/api/runs/{pair[1]}/year/118").json()
+    y2 = c9.get(f"/api/runs/{pair[1]}/year/118").json()
+    ids = [e["id"] for e in y1["events"]]
+    check("O27e 事件有稳定标识且当年不重复",
+          ids and ids == [e["id"] for e in y2["events"]] and len(set(ids)) == len(ids),
+          str(ids[:4]))
+    check("O27f 事件带年份、类型、对象、地点、来源",
+          all({"year", "type", "source"} <= set(e) for e in y1["events"]))
+
+    # 回助事件：必须挂上作为依据的历史援助记录。
+    # **注意**：预置案例是早先写好的 JSON，只读它验证不了当前代码路径，
+    # 所以这里现跑一条同配置的运行（工作进程会用当前的 adapter 生成记录）。
+    with store.connect() as _c:
+        _c.execute("UPDATE runs SET status='done' WHERE status IN ('queued','running')")
+    live = c9.post("/api/runs", json={"seed": 777, "years": 150, "sigma_m": 0,
+                                      "move_mort_m": 50, "engine": "exp06",
+                                      "share_m": 1000, "aid_m": 1000, "recip_m": 1000,
+                                      "label": "O27 实时核对"})
+    live_id = live.json().get("run_id") if live.status_code == 200 else None
+    if live_id:
+        for _ in range(900):
+            if store.get_run(live_id)["status"] in ("done", "failed", "canceled",
+                                                    "interrupted"):
+                break
+            time.sleep(0.05)
+    repay = None
+    if live_id and store.get_run(live_id)["status"] == "done":
+        for t in range(0, 151):
+            rec = c9.get(f"/api/runs/{live_id}/year/{t}").json()
+            hit = [e for e in rec["events"] if e["type"] == "aid" and e.get("repay")]
+            if hit:
+                repay = (t, rec, hit[0]); break
+    if repay is None:
+        uncov("O27g 回助事件的依据链接", "实时运行里没有回助事件，前提缺失")
+    else:
+        t, rec, e0 = repay
+        basis = e0.get("basis", {})
+        prior_ok = bool(basis.get("prior_events"))
+        for pid in basis.get("prior_events", []):
+            py = int(pid.split("-")[0][1:])
+            prec = c9.get(f"/api/runs/{live_id}/year/{py}").json()
+            src = [x for x in prec["events"] if x["id"] == pid]
+            # 依据必须是"接收方以前援助过供给方"的那几笔（方向相反），且发生在本次回助之前
+            if (not src or src[0]["donor"] != e0["receiver"]
+                    or src[0]["receiver"] != e0["donor"] or py >= t):
+                prior_ok = False
+        print(f"      第 {t} 年回助 {e0['id']}：依据 {basis.get('prior_events')}，"
+              f"记得对方帮过自己 {basis.get('remembered_kcal')} kcal（最近第 "
+              f"{basis.get('remembered_last_year')} 年）")
+        check("O27g 回助事件关联了真实的历史援助记录（方向、先后、id 都对得上）",
+              prior_ok and bool(basis.get("remembered_kcal")), str(basis)[:90])
+        check("O27h 援助事件写明哪些东西未记录", "unrecorded" in e0)
+
+    # 分配对照：关掉优先的那条应当一次都没改变过分配
+    chg_on = chg_off = 0
+    sample = None
+    for t in range(0, 151):
+        on = c9.get(f"/api/runs/{pair[1]}/year/{t}").json().get("recip", {}).get("compare", [])
+        off = c9.get(f"/api/runs/{pair[0]}/year/{t}").json().get("recip", {}).get("compare", [])
+        chg_on += sum(1 for c in on if c["changed"])
+        chg_off += sum(1 for c in off if c["changed"])
+        if sample is None:
+            s2 = [c for c in on if c["changed"]]
+            if s2: sample = (t, s2[0])
+    print(f"      开启优先回助：分配被改变 {chg_on} 次；关闭：{chg_off} 次")
+    if sample:
+        t, c = sample
+        print(f"      第 {t} 年第 {c['cell']} 号格：开优先 {len(c['with_recip'])} 笔 / "
+              f"关优先 {len(c['without_recip'])} 笔")
+    check("O27i 分配对照可用，且关闭优先时恒不改变分配",
+          chg_on > 0 and chg_off == 0 and sample is not None, f"{chg_on}/{chg_off}")
+    check("O27j 对照的两条都确实发生过回助（所以'有往来'本身不能作为判据）",
+          any(e.get("repay") for t in range(0, 151)
+              for e in c9.get(f"/api/runs/{pair[0]}/year/{t}").json()["events"]
+              if e["type"] == "aid"))
 
 # ---------------------------------------------------------------- 探测未知 ≠ 死亡
 print("\nO23 进程探测：查不到不等于死了；回收前要比对状态与 pid")

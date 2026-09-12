@@ -29,8 +29,17 @@ def install_presets() -> int:
     for src in available():
         info = json.loads((src / "run.json").read_text(encoding="utf-8"))
         run_id = info["run_id"]
-        if store.get_run(run_id):
-            continue
+        old = store.get_run(run_id)
+        if old is not None:
+            # 已经装过：只有内容确实变了（换了参数/重跑过）才刷新，否则跳过。
+            # 以前这里无条件跳过，结果更新了预置数据、库里还是旧的一份。
+            if old["full_digest"] == info["full_digest"]:
+                continue
+            with store.connect() as conn:
+                conn.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
+            _CACHE_RESET = getattr(store, "_CACHE", None)
+            if isinstance(_CACHE_RESET, dict):
+                _CACHE_RESET.pop(run_id, None)
         dst = store.run_dir(run_id)
         dst.mkdir(parents=True, exist_ok=True)
         for name in ("years.jsonl", "meta.json"):
@@ -39,12 +48,14 @@ def install_presets() -> int:
         with store.connect() as conn:
             conn.execute(
                 "INSERT INTO runs (run_id,label,kind,status,created_at,started_at,finished_at,"
-                "seed,years,sigma_m,move_mort_m,arm,years_done,engine_sha256,engine_path,"
-                "baseline_commit,repo_commit,model_run_id,full_digest) "
-                "VALUES (?,?,'preset','done',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "seed,years,sigma_m,move_mort_m,share_m,aid_m,recip_m,engine,arm,years_done,"
+                "engine_sha256,engine_path,baseline_commit,repo_commit,model_run_id,"
+                "full_digest) VALUES (?,?,'preset','done',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (run_id, info["label"], info["created_at"], info["created_at"],
                  info["created_at"], info["seed"], info["years"], info["sigma_m"],
-                 info["move_mort_m"], info["arm"], info["years"], info["engine_sha256"],
+                 info["move_mort_m"], info.get("share_m", 0), info.get("aid_m", 0),
+                 info.get("recip_m", 0), info.get("engine", "exp03"),
+                 info["arm"], info["years"], info["engine_sha256"],
                  info["engine_path"], info["baseline_commit"], info.get("repo_commit", ""),
                  info["model_run_id"], info["full_digest"]))
         n += 1
@@ -52,28 +63,32 @@ def install_presets() -> int:
 
 
 def build(seed: int, years: int, sigma_m: int, move_mort_m: int, arm: str,
-          label: str, run_id: str) -> Path:
+          label: str, run_id: str, engine: str = None, share_m: int = 0,
+          aid_m: int = 0, recip_m: int = 0) -> Path:
     """真跑一次，把结果写进 observer/preset/<run_id>/。"""
     from . import adapter
     out = PRESET_DIR / run_id
     out.mkdir(parents=True, exist_ok=True)
-    st = adapter.make_world(seed, sigma_m, move_mort_m, arm)
+    st = adapter.make_world(seed, sigma_m, move_mort_m, arm, engine=engine,
+                            share_m=share_m, aid_m=aid_m, recip_m=recip_m)
     meta = adapter.static_run_meta(st)
     meta["engine"] = adapter.engine_info()
     ident0 = adapter.run_identity(st)
     meta["model_run_id"] = ident0["model_run_id"]
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
-    rec = adapter.Recorder()
+    rec = adapter.Recorder(engine)
     with (out / "years.jsonl").open("w", encoding="utf-8") as fh:
         fh.write(json.dumps(rec.year_record(st), ensure_ascii=False, separators=(",", ":")) + "\n")
         for _ in range(years):
-            adapter.step(st)
+            adapter.step(st, engine)
             fh.write(json.dumps(rec.year_record(st), ensure_ascii=False,
                                 separators=(",", ":")) + "\n")
-    final = adapter.run_identity(st)
+    final = adapter.run_identity(st, engine)
     info = {"run_id": run_id, "label": label, "seed": seed, "years": years,
             "sigma_m": sigma_m, "move_mort_m": move_mort_m, "arm": arm,
+            "engine": engine or config.DEFAULT_ENGINE, "share_m": share_m,
+            "aid_m": aid_m, "recip_m": recip_m,
             "created_at": time.time(),
             "engine_sha256": meta["engine"]["engine_sha256"],
             "engine_path": meta["engine"]["engine_path"],

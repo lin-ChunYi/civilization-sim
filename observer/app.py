@@ -141,6 +141,18 @@ def get_run(run_id: str):
         raise HTTPException(404, "没有这次运行")
     run["years_recorded"] = max(store.year_count(run_id) - 1, 0)
     run["meta"] = store.read_meta(run_id)
+    # obs-1.5：这次运行**实际用的**引擎、参数（带标签与单位）、代码版本与状态，
+    # 一次给全，前端不用再去拼 /api/config。
+    eng = run.get("engine") or config.DEFAULT_ENGINE
+    try:
+        info = adapter.engine_info(eng)
+        run["params_used"] = [
+            {**spec, "value": run.get(spec["name"])}
+            for spec in info["params"] if spec["name"] in run.keys()
+        ]
+        run["engine_label"] = info["engine_label"]
+    except Exception:                                   # noqa: BLE001 引擎缺失也不能打挂接口
+        run["params_used"] = []
     return run
 
 
@@ -158,6 +170,10 @@ def get_year(run_id: str, t: int):
     rec = store.read_year(run_id, t)
     if rec is None:
         raise HTTPException(404, f"第 {t} 年还没有被计算出来（或超出本次运行范围）")
+    # 老记录里没有事件 id（obs-1.5 之前写的），按同一套规则补上，保证前端拿到的都有稳定标识
+    for i, e in enumerate(rec.get("events", [])):
+        e.setdefault("id", f"t{rec['t']}-{e.get('type', 'event')}-{i}")
+        e.setdefault("year", rec["t"])
     return rec
 
 
