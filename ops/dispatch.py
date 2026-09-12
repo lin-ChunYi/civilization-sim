@@ -234,8 +234,13 @@ def assistant_text(job):
     for idx, item in enumerate(records):
         role = record_role(item, job['owner'])
         if role == 'user':
-            buffer = normalize_ws(buffer + ' ' + record_text(item, job['owner']))
-            if (tag and tag in buffer) or (not tag and head and head in buffer):
+            # Grok 的连续 user chunk 是**同一句话被切开的**，必须原样接起来：
+            # 中间补空格会把跨 chunk 的 tag（如 "[dispa" + "tch T1 ..."）拼成
+            # "[dispa tch T1 ..." 而找不到。Claude 的每条 text 是独立消息，保留换行分隔。
+            buffer += record_text(item, job['owner']) if job['owner'] == 'grok' \
+                else ('\n' + record_text(item, job['owner']))
+            probe = normalize_ws(buffer)
+            if (tag and tag in probe) or (not tag and head and head in probe):
                 start = idx + 1
         else:
             buffer = ''
@@ -479,8 +484,16 @@ def tick_once(root, hub, queue, allow_dispatch=True):
 
     # review/blocked 会占住 owner（防止越过验收就发下一个任务），
     # 但**明确指向它的返工任务**可以放行。rejected 不占用。
-    holding = {j['owner']: j['task_id'] for j in queue['jobs'].values()
-               if j['status'] in ('running', 'blocked', 'review')}
+    # 占位身份按优先级取：running > blocked > review —— 已经在跑的那条必须优先占住 owner，
+    # 否则字典顺序会让一条 review 顶掉真正在跑的任务。
+    rank = {'running': 0, 'blocked': 1, 'review': 2}
+    holding = {}
+    for j in queue['jobs'].values():
+        if j['status'] not in rank:
+            continue
+        cur = holding.get(j['owner'])
+        if cur is None or rank[j['status']] < rank[queue['jobs'][cur]['status']]:
+            holding[j['owner']] = j['task_id']
     busy = set(holding)
     sent = False
     for job in sorted(queue['jobs'].values(), key=lambda j: j.get('created_at', '')):
@@ -498,7 +511,11 @@ def tick_once(root, hub, queue, allow_dispatch=True):
             continue
         try:
             dispatch(job, root, hub, snapshot, queue)
+            # 立刻把本轮的占用身份换成刚派出去的这条。
+            # 少了这一步，第二条 rework_of 指向同一个 review 的 pending 任务
+            # 会在**同一个 tick 里**被一起派出去（同一个会话收到两份活）。
             busy.add(job['owner'])
+            holding[job['owner']] = job['task_id']
             sent = True
         except (ValueError, OSError) as exc:
             job['blocking_reason'] = str(exc)

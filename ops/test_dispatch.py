@@ -195,7 +195,12 @@ class TestInjectionAnchor(Base):
         self.append([grok_rec('assistant', 'z' * 2000)])      # 先有历史，offset 才非 0
         self.submit_and_dispatch(owner='grok')
         text = self.cockpit_normalized(self.injected_text())
-        cut = len(text) // 3
+        tag = self.queue()['jobs']['T1']['inject_tag']
+        # **把唯一 tag 本身切断**（"[dispa" / "tch T1 ..."）—— 在完整 tag 之后切是不承重的：
+        # 那样即使中间多塞一个空格也照样找得到。
+        cut = 6
+        self.assertNotIn(tag, text[:cut])
+        self.assertNotIn(tag, text[cut:2 * cut])
         self.tpath.write_text('\n'.join([
             json.dumps(grok_rec('user', text[:cut]), ensure_ascii=False),
             json.dumps(grok_rec('user', text[cut:2 * cut]), ensure_ascii=False),
@@ -476,6 +481,44 @@ class TestReworkLoop(Base):
         self.run_cli('tick')
         self.assertEqual(self.queue()['jobs']['T1_R1']['status'], 'running',
                          '合法的返工闭环被拦住了')
+
+    def test_R18c_only_one_rework_per_tick(self):
+        """两条都指向同一个 review 的返工任务同时 pending 时，**一个 tick 只能派一份**。
+        否则同一个会话会在同一轮里收到两份活。"""
+        self.submit_and_dispatch()
+        self.append([claude_rec('assistant', MARKER + ' {"status":"done"}')])
+        self.run_cli('tick')
+        self.assertEqual(self.queue()['jobs']['T1']['status'], 'review')
+        before = len(self.envelopes())
+        for name in ('T1_R1', 'T1_R2'):
+            rw = self.job(task=name); rw['rework_of'] = 'T1'
+            jf = self.tmp / (name + '.json')
+            jf.write_text(json.dumps(rw), encoding='utf-8')
+            self.run_cli('submit', str(jf))
+        self.run_cli('tick')
+        jobs = self.queue()['jobs']
+        running = [t for t in ('T1_R1', 'T1_R2') if jobs[t]['status'] == 'running']
+        self.assertEqual(len(running), 1, '同一个 tick 派出了两份返工：%s' % running)
+        self.assertEqual(len(self.envelopes()), before + 1, '同一轮投了两个信封')
+        # 下一轮也不能补派：owner 已经被刚派出的那条占住
+        self.run_cli('tick')
+        self.assertEqual(len(self.envelopes()), before + 1)
+
+    def test_R18d_running_job_holds_the_owner(self):
+        """同 owner 已经有任务在跑时，指向 review 的返工也不能插队。"""
+        self.submit_and_dispatch()                       # T1 running
+        q = self.queue()
+        q['jobs']['OLD'] = dict(q['jobs']['T1'], task_id='OLD', status='review',
+                                corr_id=None, created_at='2020-01-01')
+        D.atomic(self.root / 'queue.json', q)
+        rw = self.job(task='OLD_R1'); rw['rework_of'] = 'OLD'
+        jf = self.tmp / 'rw.json'; jf.write_text(json.dumps(rw), encoding='utf-8')
+        self.run_cli('submit', str(jf))
+        before = len(self.envelopes())
+        self.run_cli('tick')
+        self.assertEqual(self.queue()['jobs']['OLD_R1']['status'], 'pending',
+                         '已有 running 的 owner 被返工任务插队了')
+        self.assertEqual(len(self.envelopes()), before)
 
     def test_R18b_reject_frees_the_owner(self):
         self.submit_and_dispatch()

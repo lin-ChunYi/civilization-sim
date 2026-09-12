@@ -116,6 +116,10 @@ python3 ops/dispatch.py submit ops/jobs/G01_R1.json
 只有它能在 owner 还压着 review 的时候被派出去。**普通的下一个任务仍然要等 `accept`**，
 这条规矩没有松。
 
+两条边界也写死了：**一个 tick 最多派一份返工**（两条都指向同一个 review 的返工同时排队时，
+派出第一份后本轮的占用身份立刻换成它，第二份等下一轮再说）；
+**同 owner 已经有任务在跑时，返工也不能插队**（占位身份按 running > blocked > review 取）。
+
 ## 转录被截短了怎么办（已处理）
 
 `request_transcript(tail_bytes)` 会把本机物化的转录文件**截短重写**，
@@ -128,7 +132,10 @@ python3 ops/dispatch.py submit ops/jobs/G01_R1.json
    * Cockpit 的 `composeInjection` 会把 CR/LF/Tab 折成空格
      （`cockpit-cloud-hub/internal/inject/attachment.go:94`），
      所以两边都按同一套**空白规范化**再比；
-   * Grok 会把用户提示词拆成多条 `user chunk`，所以连续的用户记录先拼起来再比。
+   * Grok 会把用户提示词拆成多条 `user chunk`，所以连续的用户记录先**原样**拼起来、
+     再统一做空白规范化 —— 中间补空格会把跨 chunk 的 tag（`[dispa` + `tch T1 …`）
+     拼成 `[dispa tch T1 …` 而找不到。Claude 的每条 text 是独立消息，保留换行分隔，
+     两种格式不混用。
    找不到就报 `rebind-failed`，宁可等人看，也不拿孤立的标记当完成。
 
 配套的两条硬规矩：**只认助手说的话**（派工提示词里本来就带着 `CIV_RESULT_` 模板，
@@ -147,7 +154,7 @@ python3 ops/dispatch.py submit ops/jobs/G01_R1.json
 ## 测试
 
 ```bash
-python3 ops/test_dispatch.py      # 25 项，全部在临时目录里造假 hub
+python3 ops/test_dispatch.py      # 27 项，全部在临时目录里造假 hub
 ```
 
 不碰本机任何真实会话与真实 outbox（PID 复用那条也只拿测试自己起的 `sleep` 当靶子）。
@@ -158,8 +165,8 @@ python3 ops/test_dispatch.py      # 25 项，全部在临时目录里造假 hub
 `stop` 拒绝对身份不明的 pid 发信号、损坏 queue.json 保留原件并拦住派发、
 拒收/返工闭环、`screenshots[]`、自报不等于验收、STATUS 脱敏。
 
-每条都验证过"把对应防护去掉就会红"：把这 25 项拿去跑上一版
-（commit `aff0ed5`）会红 12 项。
+每条都验证过"把对应防护去掉就会红"：把这 27 项拿去跑 `aff0ed5` 会红 13 项，
+跑 `3abe009` 会红 3 项（跨 chunk 的 tag、同 tick 两份返工、running 被返工插队）。
 
 ## 边界（写明，别指望）
 
