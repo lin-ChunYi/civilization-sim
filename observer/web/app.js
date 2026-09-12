@@ -430,18 +430,18 @@ const UnitArt = {
     const h = this.hash(id);
     const families = (skin === "console")
       ? [
-          { cloth: "#2f6f6c", sash: "#8fd4d0", skin: "#d7c4a3", hair: "#1e2a28", accent: "#d7f4f2" },
-          { cloth: "#3d5a7a", sash: "#9ec4e8", skin: "#e0c8a8", hair: "#243040", accent: "#cfe4f4" },
-          { cloth: "#4a6a58", sash: "#b6e0bc", skin: "#dcc4a0", hair: "#1c2820", accent: "#d7f4f2" },
-          { cloth: "#5a4a6a", sash: "#c4b0e0", skin: "#e2cbb0", hair: "#2a2030", accent: "#e8d8f4" },
+          { cloth: "#1a4a48", sash: "#9fe8e4", skin: "#f0dcc0", hair: "#101818", accent: "#d7f4f2" },
+          { cloth: "#243a58", sash: "#9ec4e8", skin: "#f3e0c4", hair: "#101820", accent: "#cfe4f4" },
+          { cloth: "#2a4636", sash: "#b6e0bc", skin: "#f0d8b8", hair: "#101810", accent: "#d7f4f2" },
+          { cloth: "#3a2e52", sash: "#d0b8f0", skin: "#f4e2c8", hair: "#141018", accent: "#e8d8f4" },
         ]
       : [
-          { cloth: "#8a4e2a", sash: "#d4b06a", skin: "#e2c39a", hair: "#3a2414", accent: "#f3deaa" },
-          { cloth: "#6b3a28", sash: "#c47a3a", skin: "#d7b08a", hair: "#2a1810", accent: "#e8a04a" },
-          { cloth: "#4a5c38", sash: "#8faf6a", skin: "#e0c4a0", hair: "#24301c", accent: "#c8d4a0" },
-          { cloth: "#5a3a4a", sash: "#c09080", skin: "#e6c8a8", hair: "#301820", accent: "#e8c4b0" },
-          { cloth: "#3d4a5c", sash: "#7aa7d8", skin: "#dec6a4", hair: "#1c2430", accent: "#b8cce0" },
-          { cloth: "#5c4a28", sash: "#e0c070", skin: "#e8d0a8", hair: "#302410", accent: "#f3deaa" },
+          { cloth: "#6a3216", sash: "#f0c56a", skin: "#f4dfb6", hair: "#1a1008", accent: "#ffe7a8" },
+          { cloth: "#4a2216", sash: "#ee8840", skin: "#f6e2b8", hair: "#140c08", accent: "#ffb060" },
+          { cloth: "#2a3a1c", sash: "#c8e070", skin: "#f3ddb4", hair: "#10180c", accent: "#eaf6b4" },
+          { cloth: "#3c1e2a", sash: "#f0a090", skin: "#f7e3c2", hair: "#180c12", accent: "#ffd0c4" },
+          { cloth: "#1e2c40", sash: "#86c4f4", skin: "#f2dcc0", hair: "#0c141c", accent: "#d4ecff" },
+          { cloth: "#3a2c10", sash: "#f0d070", skin: "#f8e6c2", hair: "#181208", accent: "#ffe9a0" },
         ];
     return families[h % families.length];
   },
@@ -451,6 +451,15 @@ const UnitArt = {
   },
   silhouetteName(v) {
     return ["staff", "stocky", "cloak", "scout"][(Number(v) || 0) % 4];
+  },
+  luma(hex) {
+    const h = String(hex || "").replace("#", "");
+    if (h.length < 6) return 0;
+    const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  },
+  faceLit(cx, cy) {
+    return `<ellipse class="unit-face-lit" cx="${(cx - 1.15).toFixed(2)}" cy="${(cy - 0.55).toFixed(2)}" rx="1.4" ry="0.8" fill="#fff8ea" opacity="0.5"/>`;
   },
   partyCount(size) {
     const n = Math.max(1, Number(size) || 1);
@@ -529,14 +538,16 @@ const UnitArt = {
       tunic = `<path class="unit-tunic" d="M-8.4,-1.0 C-9.2,4.6 -7.2,9.0 -4.6,9.8 L4.6,9.8 C7.2,9.0 9.2,4.6 8.4,-1.0 C4.6,-2.8 -4.6,-2.8 -8.4,-1.0Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.85"/>`;
       sash = `<path class="unit-sash" d="M-7.2,2.0 L7.4,3.2 L6.8,5.4 L-7.6,4.2Z" fill="${pal.sash}"/>`;
       head = `<circle class="unit-head" cx="0" cy="-5.6" r="4.55" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.75"/>`
-        + `<path class="unit-hair" d="M-4.4,-6.2 C-3.4,-9.4 3.4,-9.4 4.4,-6.2 C2.0,-7.4 -2.0,-7.4 -4.4,-6.2Z" fill="${pal.hair}"/>`;
+        + `<path class="unit-hair" d="M-4.4,-6.2 C-3.4,-9.4 3.4,-9.4 4.4,-6.2 C2.0,-7.4 -2.0,-7.4 -4.4,-6.2Z" fill="${pal.hair}"/>`
+        + this.faceLit(0, -5.6);
     } else if (kind === 2) {
       legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-2.4,7.6 L-3.8,13.4" : "M-2.2,7.6 L-2.8,13.2"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`
         + `<path class="unit-leg unit-leg-r" d="${walk ? "M2.4,7.6 L3.8,13.4" : "M2.2,7.6 L2.8,13.2"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`;
       tunic = `<path class="unit-tunic" d="M-7.6,-2.4 C-9.6,2.8 -8.8,10.4 -3.6,11.2 L3.6,11.2 C8.8,10.4 9.6,2.8 7.6,-2.4 C3.2,-4.6 -3.2,-4.6 -7.6,-2.4Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.8"/>`;
       sash = `<path class="unit-sash" d="M-4.8,3.4 L5.2,4.2 L4.8,6.0 L-5.2,5.2Z" fill="${pal.sash}"/>`;
       head = `<circle class="unit-head" cx="0" cy="-7.2" r="3.9" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.6"/>`
-        + `<path class="unit-hair" d="M-4.6,-6.4 C-5.2,-11.6 5.2,-11.6 4.6,-6.4 C2.4,-8.8 -2.4,-8.8 -4.6,-6.4Z" fill="${pal.hair}"/>`;
+        + `<path class="unit-hair" d="M-4.6,-6.4 C-5.2,-11.6 5.2,-11.6 4.6,-6.4 C2.4,-8.8 -2.4,-8.8 -4.6,-6.4Z" fill="${pal.hair}"/>`
+        + this.faceLit(0, -7.2);
       extra = `<path class="unit-hood" d="M-4.8,-7.8 C-2.2,-12.4 2.2,-12.4 4.8,-7.8 L3.4,-5.4 C1.4,-6.6 -1.4,-6.6 -3.4,-5.4Z" fill="${pal.sash}" opacity="0.92"/>`;
     } else if (kind === 3) {
       legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-2.8,6.4 L-4.8,11.6" : "M-2.6,6.4 L-3.4,11.4"}" stroke="${pal.hair}" stroke-width="2.05" stroke-linecap="round" fill="none"/>`
@@ -545,14 +556,16 @@ const UnitArt = {
       sash = `<path class="unit-sash" d="M-5.0,0.6 L5.2,1.4 L4.8,2.8 L-5.4,2.0Z" fill="${pal.sash}"/>`
         + `<path class="unit-sash" d="M-5.0,3.6 L5.2,4.4 L4.8,5.6 L-5.4,4.8Z" fill="${pal.accent}" opacity="0.85"/>`;
       head = `<circle class="unit-head" cx="0.6" cy="-6.2" r="3.7" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.7"/>`
-        + `<path class="unit-hair" d="M-3.0,-6.8 C-2.2,-10.2 3.6,-10.4 4.4,-6.6 C2.4,-7.8 -0.6,-7.6 -3.0,-6.8Z" fill="${pal.hair}"/>`;
+        + `<path class="unit-hair" d="M-3.0,-6.8 C-2.2,-10.2 3.6,-10.4 4.4,-6.6 C2.4,-7.8 -0.6,-7.6 -3.0,-6.8Z" fill="${pal.hair}"/>`
+        + this.faceLit(0.6, -6.2);
     } else {
       legs = `<path class="unit-leg unit-leg-l" d="${walk ? "M-2.2,8.0 L-3.6,14.2" : "M-2.0,8.0 L-2.8,14.0"}" stroke="${pal.hair}" stroke-width="2.15" stroke-linecap="round" fill="none"/>`
         + `<path class="unit-leg unit-leg-r" d="${walk ? "M2.2,8.0 L3.6,14.2" : "M2.0,8.0 L2.8,14.0"}" stroke="${pal.hair}" stroke-width="2.15" stroke-linecap="round" fill="none"/>`;
       tunic = `<path class="unit-tunic" d="M-5.6,-2.4 C-6.0,4.8 -4.6,10.2 -3.0,11.2 L3.0,11.2 C4.6,10.2 6.0,4.8 5.6,-2.4 C3.2,-4.0 -3.2,-4.0 -5.6,-2.4Z" fill="${pal.cloth}" stroke="${pal.accent}" stroke-width="0.8"/>`;
       sash = `<path class="unit-sash" d="M-4.8,1.8 L4.8,3.0 L4.4,4.8 L-5.2,3.6Z" fill="${pal.sash}"/>`;
       head = `<circle class="unit-head" cx="0" cy="-7.4" r="4.05" fill="${pal.skin}" stroke="${pal.hair}" stroke-width="0.7"/>`
-        + `<path class="unit-hair" d="M-3.8,-8.2 C-3.2,-12.0 3.2,-12.0 3.8,-8.2 C1.6,-9.6 -1.6,-9.6 -3.8,-8.2Z" fill="${pal.hair}"/>`;
+        + `<path class="unit-hair" d="M-3.8,-8.2 C-3.2,-12.0 3.2,-12.0 3.8,-8.2 C1.6,-9.6 -1.6,-9.6 -3.8,-8.2Z" fill="${pal.hair}"/>`
+        + this.faceLit(0, -7.4);
     }
     const arms = kind === 2 ? ""
       : `<path class="unit-arm-l" d="M-5.4,0.4 L-8.8,${armY}" stroke="${pal.skin}" stroke-width="1.9" stroke-linecap="round" fill="none"/>`
@@ -1368,10 +1381,14 @@ function renderMap() {
   if ($("maphint")) {
     $("maphint").textContent = memBand
       ? "记忆视图只替换资源读数；群体位置仍是世界真实位置。没有时间戳显示「时间未记录」。"
-      : "滚轮缩放，拖拽平移。点人物看群体（群体代表），点格子看位置。";
+      : (compactPlay()
+        ? "拖动平移，用 +/− 缩放。点人物看群体。"
+        : "滚轮或按钮缩放，拖拽平移。点人物看群体。");
   }
   if ($("map-key")) {
-    $("map-key").textContent = "人物是群体代表，不是独立个人。数字是人口。" + (keys[layer] || "");
+    $("map-key").textContent = (compactPlay()
+      ? "拖动平移，用 +/− 缩放。"
+      : "滚轮或 +/− 缩放，拖拽平移。") + (keys[layer] || "");
   }
 }
 
@@ -1507,6 +1524,7 @@ function renderSide() {
        ? `<div class="k">援助记忆误差</div><div class="v">${ok(rec.integrity.aid_memory_error)}</div>` : ""}
      <div class="k">状态哈希</div><div class="v"><small>${esc(rec.integrity.state_hash.slice(0, 16))}…</small></div>`;
 
+  fillSelSheet();
   const selWrap = $("side-sel"), h = $("side-sel-h");
   if (S.selCell !== null && S.selBand === null) {
     const c = S.map.cells[S.selCell];
@@ -1919,6 +1937,8 @@ function showRail(name) {
   });
   if (name === "network") loadRelations();
   if (name === "library") renderLibrary();
+  const rail = $("rail");
+  if (rail) rail.classList.add("open");
 }
 function selectBand(id, opts) {
   opts = opts || {};
@@ -1929,9 +1949,10 @@ function selectBand(id, opts) {
   setHash({ b: S.selBand || "" });
   if (!opts.keepCell) S.selCell = null;
   if (!S.selBand && S.view === "mem") setView("truth");
-  if (S.selBand && opts.rail !== "none") showRail(opts.rail || "dossier");
+  if (S.selBand && opts.rail !== "none" && !compactPlay()) showRail(opts.rail || "dossier");
   if (!opts.skipMap) renderMap();
   renderSide();
+  fillSelSheet();
   if (S.selBand && !opts.skipPan && !DirectorLogic.prefersReducedMotion()) {
     const rec = recNow();
     const b = rec && rec.bands.find((x) => String(x.id) === String(S.selBand));
@@ -2105,6 +2126,9 @@ async function gotoYear(t, opts) {
   S.years.set(ykey(myRun, t), rec);
   delete S.yearMiss[yearMissKey(myRun, t)];
   return finishOk();
+}
+function compactPlay() {
+  return typeof window !== "undefined" && window.innerWidth <= 900;
 }
 function playDelay() {
   return Math.max(80, (S.playMode === "events" ? 1600 : 720) / Math.max(S.speed || 1, 0.25));
@@ -2716,19 +2740,25 @@ function paintDirectorFx(opts) {
     if (rec) paintYearActions(svg, rec, { reduced: reduced });
   }
 }
+function clampCam(x, y) {
+  return {
+    x: Math.max(-140, Math.min(140, x)),
+    y: Math.max(-110, Math.min(110, y)),
+  };
+}
 function panToCell(i, gen) {
   if (DirectorLogic.prefersReducedMotion()) return;
   if (!S.map || !S.map.cells[i]) return;
   const xy = cellCenter(S.map.cells[i]);
   const start = { x: S.cam.x, y: S.cam.y };
-  const tx = 260 - xy[0], ty = 215 - xy[1];
+  const dest = clampCam(260 - xy[0], 200 - xy[1]);
   const t0 = performance.now();
   const dur = 280;
   const step = (now) => {
     if (gen !== S.fxGen) return;
     const u = Math.min(1, (now - t0) / dur);
-    S.cam.x = start.x + (tx - start.x) * u;
-    S.cam.y = start.y + (ty - start.y) * u;
+    S.cam.x = start.x + (dest.x - start.x) * u;
+    S.cam.y = start.y + (dest.y - start.y) * u;
     applyCam();
     if (u < 1) S.fxRaf = requestAnimationFrame(step);
   };
@@ -2758,12 +2788,49 @@ function renderDirectorChrome() {
     }
   }
 }
+function fillSelSheet() {
+  const sheet = $("sel-sheet"), main = $("sel-sheet-main");
+  if (!sheet || !main) return;
+  const rec = recNow();
+  const b = rec && S.selBand && rec.bands.find((x) => String(x.id) === String(S.selBand));
+  if (!b) { sheet.hidden = true; return; }
+  const act = S.selEvent ? String(S.selEvent) : "待机";
+  main.innerHTML = `<div class="sel-name">${esc(b.name)}</div>
+    <div class="sel-meta">${nf(b.size)}人 · 第 ${b.cell} 格 · ${esc(UnitArt.silhouetteName(UnitArt.variant(b.id)))}</div>
+    <div class="sel-act">${esc(act)}</div>`;
+  sheet.hidden = false;
+}
+function closeSheets() {
+  const sheet = $("sel-sheet");
+  if (sheet) sheet.hidden = true;
+  const rail = $("rail");
+  if (rail) rail.classList.remove("open");
+}
+function fillMapEventChip(ev, focus) {
+  const chip = $("map-event-chip");
+  const title = $("map-event-chip-title");
+  if (!chip || !title) return;
+  if (!ev) {
+    chip.hidden = true;
+    if (chip.removeAttribute) chip.removeAttribute("data-eid");
+    return;
+  }
+  const loc = focus && focus.locate ? "" : " · 地点未记录";
+  title.textContent = (ev.t === 0 ? "开局" : ("第 " + ev.t + " 年")) + " · "
+    + TYPE_LABEL(ev.type) + (ev.repay ? " · 回助" : "") + loc;
+  chip.hidden = false;
+  if (chip.setAttribute) chip.setAttribute("data-eid", DirectorLogic.eventKey(ev, ev.t, ev._i));
+}
 function renderDirectorCard() {
   const box = $("director-card");
   const body = $("director-card-body");
   if (!box || !body) return;
   const ev = findEventByKey(S.selEvent, S.t);
-  if (!ev) { box.hidden = true; body.innerHTML = ""; return; }
+  if (!ev) {
+    box.hidden = true; body.innerHTML = "";
+    fillMapEventChip(null);
+    return;
+  }
   box.hidden = false;
   const focus = DirectorLogic.eventFocus(ev);
   const rec = recNow();
@@ -2772,19 +2839,20 @@ function renderDirectorCard() {
     const role = ({ parent: "父群体", donor: "供给方", receiver: "接收方", band: "相关群体" })[r.role] || r.role;
     return `<button type="button" class="prior-jump" data-b="${esc(r.id)}">${esc(role)} · ${esc(name)}</button>`;
   }).join("");
-  body.innerHTML = `<div class="dir-title">${ev.t === 0 ? "开局" : "第 " + ev.t + " 年"} · ${esc(TYPE_LABEL(ev.type))}${ev.repay ? " · 回助" : ""} · ${esc(DirectorLogic.eventKey(ev, ev.t, ev._i))}</div>
+  body.innerHTML = `<div class="dir-title">${ev.t === 0 ? "开局" : "第 " + ev.t + " 年"} · ${esc(TYPE_LABEL(ev.type))}${ev.repay ? " · 回助" : ""}</div>
     <p class="dir-text">${esc(ev.text || "")}</p>
-    <div class="dir-meta">来源：${esc(ev.source || "未标注")}${ev.unrecorded ? "　·　未记录：" + esc(ev.unrecorded) : ""}</div>
-    <div class="dir-meta">${esc(focus.note)}</div>
-    <div class="dir-meta">${esc(DirectorLogic.orderNote)}</div>
-    <div class="dir-meta">地图人物是群体代表的动作演示，不是独立个人生平。</div>
-    ${related ? `<div class="dir-related">${related}</div>` : ""}`;
+    ${related ? `<div class="dir-related">${related}</div>` : ""}
+    <details class="tech-details"><summary>来源与口径</summary>
+      <div class="dir-meta">${esc(DirectorLogic.eventKey(ev, ev.t, ev._i))} · 来源：${esc(ev.source || "未标注")}${ev.unrecorded ? "　·　" + esc(ev.unrecorded) : ""}</div>
+      <div class="dir-meta">${esc(focus.note)}</div>
+    </details>`;
   body.querySelectorAll("[data-b]").forEach((n) => {
     n.addEventListener("click", (e) => {
       e.preventDefault();
       selectBand(n.dataset.b, { force: true, keepCell: true, skipMap: mapIsCurrent(), rail: "dossier" });
     });
   });
+  fillMapEventChip(ev, focus);
 }
 function setPlayMode(mode, opts) {
   opts = opts || {};
@@ -2941,8 +3009,10 @@ async function focusEvent(ev, opts) {
     mode: S.playMode === "events" ? "events" : "",
     b: S.selBand || "",
   });
-  if (resolved.type === "split" || resolved.type === "extinct") showRail("dossier");
-  else showRail("chronicle");
+  if (!compactPlay()) {
+    if (resolved.type === "split" || resolved.type === "extinct") showRail("dossier");
+    else showRail("chronicle");
+  }
   const skipMap = opts.skipMap && mapIsCurrent();
   if (!skipMap) renderMap();
   else paintDirectorFx();
@@ -2951,6 +3021,7 @@ async function focusEvent(ev, opts) {
   renderDirectorCard();
   const evNode = document.querySelector('#events .ev[data-eid="' + S.selEvent + '"]');
   if (evNode && evNode.scrollIntoView) evNode.scrollIntoView({ block: "nearest" });
+  fillMapEventChip(resolved, focus);
   if (focus.locate && focus.cells.length) panToCell(focus.cells[0], myFx);
   return navResult("success", { t: S.t, event: S.selEvent });
 }
@@ -3196,6 +3267,8 @@ function showTab(name) {
     setTimeout(() => { const p = $("events"); if (p) p.scrollIntoView({ block: "start" }); }, 0);
   }
   if (["world", "network", "compare", "metrics", "runs", "progress"].indexOf(name) < 0) name = "world";
+  if (document.documentElement && document.documentElement.dataset)
+    document.documentElement.dataset.tab = name;
   ["world", "network", "compare", "metrics", "events", "runs", "progress"].forEach((t) => {
     const el = $("tab-" + t); if (el) el.hidden = t !== name;
   });
@@ -3288,6 +3361,9 @@ async function boot() {
     if (e.target.value) openRun(e.target.value);
   });
   bindMapCam();
+  if ($("b-back-map")) $("b-back-map").addEventListener("click", () => { closeSheets(); });
+  if ($("b-open-rail")) $("b-open-rail").addEventListener("click", () => { showRail("chronicle"); });
+  window.addEventListener("resize", () => { if (compactPlay()) closeSheets(); });
   if ($("b-motion")) $("b-motion").addEventListener("click", () => {
     S.reduceMotion = !S.reduceMotion;
     $("b-motion").textContent = S.reduceMotion ? "动效关" : "动效开";

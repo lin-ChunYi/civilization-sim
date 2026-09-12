@@ -97,14 +97,43 @@
           <button type="button" class="btn small on" id="b-motion" title="动效开关">动效开</button>
         </div>
       </div>
-      <p class="map-key" id="map-key">人物是群体代表，不是独立个人。格子颜色是所选图层的相对量，不是真实地形。滚轮缩放，拖拽平移。</p>
+      <p class="map-key" id="map-key">拖动平移，滚轮或 +/− 缩放。点人物看群体。</p>
       <div class="mapbox" id="mapbox">
         <div id="year-load" class="year-load" hidden>正在读取第 <span id="year-load-n">0</span> 年…</div>
         <svg id="map" viewBox="0 0 520 430" preserveAspectRatio="xMidYMid meet" role="img" aria-label="世界沙盘"></svg>
+        <div id="map-event-chip" class="map-event-chip" hidden>
+          <div id="map-event-chip-title"></div>
+        </div>
+        <div id="sel-sheet" class="sel-sheet" hidden>
+          <div id="sel-sheet-main"></div>
+          <button type="button" class="btn primary" id="b-back-map">回沙盘</button>
+        </div>
+      </div>
+      <div class="play-dock" id="play-dock">
+        <div class="seg" id="play-mode" role="tablist" aria-label="回放模式">
+          <button type="button" data-mode="year" class="on" id="mode-year">逐年</button>
+          <button type="button" data-mode="events" id="mode-events">事件</button>
+        </div>
+        <div class="tlctl">
+          <button id="b-home" class="btn" title="开局">⏮</button>
+          <button id="b-prev" class="btn" title="上一年或上一事件年">◀</button>
+          <button id="b-play" class="btn primary play">▶ 播放</button>
+          <button id="b-next" class="btn" title="下一年或下一事件年">▶</button>
+          <button id="b-prev-ev" class="btn" title="前一事件年">上一事件</button>
+          <button id="b-next-ev" class="btn" title="下一事件年">下一事件</button>
+          <label class="spd">速率
+            <select id="speed">
+              <option value="0.5">0.5×</option><option value="1" selected>1×</option>
+              <option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
+            </select>
+          </label>
+          <span class="yearbox">第 <b id="scrub-year">0</b> 年</span>
+          <button type="button" class="btn small" id="b-open-rail">卷宗</button>
+        </div>
       </div>
       <div class="mapfoot">
         <div class="legend" id="legend"></div>
-        <div class="maphint" id="maphint">点人物看群体代表，点格子看位置。同格多个代表可分别点选。</div>
+        <div class="maphint" id="maphint">点人物看群体，点格子看位置。</div>
       </div>
     </div>
 
@@ -153,10 +182,11 @@
           <p class="muted" id="band-scope-note">默认只用当前回放年及以前的记录，避免把尚未发生的轨迹画进来。</p>
           <div class="emptystate" id="side-empty">还没有选中任何运行。</div>
           <div id="side-body" hidden>
-            <h3>第 <span id="side-year">0</span> 年 · 当年读数</h3>
-            <div class="kv" id="side-now"></div>
             <h3 id="side-sel-h" hidden>选中对象</h3>
             <div id="side-sel"></div>
+            <details id="side-year-wrap"><summary>第 <span id="side-year">0</span> 年全世界读数</summary>
+              <div class="kv" id="side-now"></div>
+            </details>
             <details id="side-cum-wrap"><summary>累计值与技术账</summary>
               <div class="kv" id="side-cum"></div>
               <div class="kv" id="side-int" style="margin-top:8px"></div>
@@ -205,28 +235,9 @@
 
   <div class="console glass" id="timeline">
     <div class="tlhead">
-      <div class="seg" id="play-mode" role="tablist" aria-label="回放模式">
-        <button type="button" data-mode="year" class="on" id="mode-year">逐年播放</button>
-        <button type="button" data-mode="events" id="mode-events">只看有记录的事件</button>
-      </div>
-      <span class="pill" id="dir-mode-note">逐年推进已保存年份。出生人数不是事件。</span>
-    </div>
-    <div class="tlctl">
-      <button id="b-home" class="btn" title="开局">⏮</button>
-      <button id="b-prev" class="btn" title="上一年或上一事件年">◀</button>
-      <button id="b-play" class="btn primary play">▶ 播放</button>
-      <button id="b-next" class="btn" title="下一年或下一事件年">▶</button>
-      <button id="b-prev-ev" class="btn" title="前一事件年">前一事件年</button>
-      <button id="b-next-ev" class="btn" title="下一事件年">下一事件年</button>
-      <label class="spd">速率
-        <select id="speed">
-          <option value="0.5">0.5×</option><option value="1" selected>1×</option>
-          <option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
-        </select>
-      </label>
       <span class="pill strong" id="tl-play">回放：—</span>
       <span class="pill" id="tl-calc">已计算：—</span>
-      <span class="yearbox">第 <b id="scrub-year">0</b> 年</span>
+      <span class="pill" id="dir-mode-note">逐年推进已保存年份。</span>
     </div>
     <div id="year-fail" class="year-fail" hidden>
       <span id="year-fail-text"></span>

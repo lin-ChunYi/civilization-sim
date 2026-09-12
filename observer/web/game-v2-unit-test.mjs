@@ -101,6 +101,11 @@ ok("U19 four silhouettes stay distinct at default mass",
   && f2.indexOf("unit-hood") >= 0 && f2.indexOf('data-silhouette="cloak"') >= 0
   && f3.indexOf('data-silhouette="scout"') >= 0
   && f0 !== f1 && f1 !== f2 && f2 !== f3);
+const palGap = [idA, idB, "1", "2", "3", "99"].every((id) => {
+  const p = U.palette(id);
+  return U.luma(p.skin) - U.luma(p.cloth) >= 70;
+});
+ok("U20 skin is lighter than cloth for readable faces", palGap && f0.indexOf("unit-face-lit") >= 0);
 
 const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
 out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);

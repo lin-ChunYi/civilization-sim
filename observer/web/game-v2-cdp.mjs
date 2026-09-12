@@ -12,7 +12,7 @@ mkdirSync(SHOT, { recursive: true });
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9341;
 const RUN = "preset-exp06-recip1000";
-const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v3#tab=world&run=" + RUN + "&t=0";
+const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v5#tab=world&run=" + RUN + "&t=0";
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
   `--remote-debugging-port=${PORT}`,
@@ -78,6 +78,16 @@ try {
 
   const ready = await ev("!!(window.__obs && window.__obs.S && window.__obs.S.run && document.querySelector('#map .unit[data-unit=\"group-rep\"]'))");
   ok("V0 世界里有群体代表", !!ready, JSON.stringify(ready));
+  const dock = await ev(`(function(){
+    var d=document.getElementById('play-dock'); var m=document.getElementById('mapbox');
+    if(!d||!m) return null;
+    var dr=d.getBoundingClientRect(), mr=m.getBoundingClientRect();
+    return {dockTop:Math.round(dr.top), dockBot:Math.round(dr.bottom), vh:window.innerHeight,
+      mapTop:Math.round(mr.top), mapH:Math.round(mr.height),
+      dockIn: dr.bottom<=window.innerHeight+4 && dr.top>=0,
+      mapIn: mr.top>=0 && mr.height>120};
+  })()`);
+  ok("V0b 桌面首屏播放条与地图同时可见", dock && dock.dockIn && dock.mapIn, JSON.stringify(dock));
 
   const census = await ev(`(function(){
     var units=[].slice.call(document.querySelectorAll('#map .unit[data-unit="group-rep"]'));
@@ -114,9 +124,17 @@ try {
     return {selBand:O.S.selBand, selected: !!(n && n.getAttribute('data-band')===O.S.selBand),
       pose: n && n.getAttribute('data-pose'), rail: document.querySelector('#pane-dossier') && !document.querySelector('#pane-dossier').hidden};
   })()`);
+  const sheet = await ev(`(function(){
+    var s=document.getElementById('sel-sheet');
+    return {hidden: !s || s.hidden, text: s ? s.textContent : '', inView: (function(){
+      if(!s || s.hidden) return false; var r=s.getBoundingClientRect();
+      return r.top>=0 && r.bottom<=window.innerHeight+4;
+    })()};
+  })()`);
   ok("V2 真实鼠标选中群体代表并打开档案",
     clicked && sel && sel.selBand === firstBand && sel.selected && sel.pose === "select",
     JSON.stringify({ firstBand, clicked, sel }));
+  ok("V2b 选中后群体卡片在视口内", sheet && sheet.hidden === false && sheet.inView, JSON.stringify(sheet));
   await shot("desktop-select-unit.png");
 
   const mig = await ev(`(async function(){
@@ -219,14 +237,32 @@ try {
   await ev(`(async function(){ var O=window.__obs; await O.gotoYear(0); O.S.selEvent=null; O.cancelFx(); O.S.cam={x:0,y:0,k:1}; 
     var n=document.querySelector('#map'); if(n) n.setAttribute('viewBox', '0 0 520 430'); return true; })()`);
   await sleep(200);
-  const mobile = await ev(`(function(){
+  const mobile = await ev(`(async function(){
+    var O=window.__obs;
+    await O.gotoYear(4);
+    var rec=O.S.years.get(O.S.run.run_id+'|4');
+    var e=(rec.events||[]).find(function(x){return x.type==='migrate';});
+    if(e) await O.focusEvent(Object.assign({}, e, {t:4}));
     var units=document.querySelectorAll('#map .unit[data-unit="group-rep"]').length;
     var hud=document.querySelector('.hud');
     var hr=hud?hud.getBoundingClientRect().height:0;
-    return {units:units, hud:Math.round(hr), vw:window.innerWidth};
+    var chip=document.getElementById('map-event-chip');
+    var cr=chip?chip.getBoundingClientRect():null;
+    var map=document.getElementById('mapbox');
+    var mr=map?map.getBoundingClientRect():null;
+    var onMap= !!(cr && mr && cr.top>=mr.top-2 && cr.bottom<=mr.bottom+8);
+    var dock=document.getElementById('play-dock');
+    var dr=dock?dock.getBoundingClientRect():null;
+    var dockIn= !!(dr && dr.bottom<=window.innerHeight+8 && dr.top>=0);
+    return {units:units, hud:Math.round(hr), vw:window.innerWidth,
+      chip: chip && !chip.hidden && /迁移/.test(chip.textContent||''),
+      eid: chip && chip.getAttribute('data-eid'),
+      onMap:onMap, chipH: cr?Math.round(cr.height):0,
+      dockIn:dockIn, mapH: mr?Math.round(mr.height):0};
   })()`);
-  ok("V8 390 宽仍能看见群体代表",
-    mobile && mobile.units > 0 && mobile.vw <= 400 && mobile.hud <= 120,
+  ok("V8 390 宽地图上能看见事件条且人物仍在",
+    mobile && mobile.units > 0 && mobile.vw <= 400 && mobile.hud <= 120
+    && mobile.chip && mobile.onMap && mobile.dockIn && mobile.mapH > 140,
     JSON.stringify(mobile));
   await shot("mobile-390-units.png");
 
