@@ -54,7 +54,8 @@ ok("U4 markup is a group representative not a lone circle token",
   /data-unit="group-rep"/.test(mk) && /class="band unit selected"/.test(mk) && /unit-tunic/.test(mk)
   && /unit-head/.test(mk) && /群体代表/.test(mk));
 ok("U5 selected ring and data-band preserved for clicks",
-  /data-band="10431967184297706310"/.test(mk) && /unit-ring/.test(mk) && /unit-hit/.test(mk));
+  /data-band="10431967184297706310"/.test(mk) && /unit-ring/.test(mk) && /unit-hit/.test(mk)
+  && /data-art="sprite"/.test(mk));
 ok("U6 name is escaped", !mk.includes("<script>") && U.markup({ id: "1", name: "<x>", size: 1, cell: 0 }, 0, 0).includes("&lt;x&gt;"));
 
 const mig = U.actionPlan({ type: "migrate", from: 18, to: 10, band: idA }, D.eventFocus({ type: "migrate", from: 18, to: 10, band: idA }));
@@ -83,9 +84,9 @@ ok("U15 same-cell representatives are offset not stacked", slot0[0] < 100 && slo
 ok("U16 party count follows group size not individuals",
   U.partyCount(10) === 1 && U.partyCount(20) === 2 && U.partyCount(40) === 3);
 const mk2 = U.markup({ id: idA, name: "群体-ABC123", size: 20, cell: 10 }, 100, 80, { selected: true });
-ok("U17 twenty-person group is a two-figure camp with banner",
-  /data-party="2"/.test(mk2) && /unit-camp/.test(mk2) && /unit-banner/.test(mk2)
-  && /unit-companion/.test(mk2) && /unit-lead/.test(mk2) && /M0,15/.test(mk2));
+ok("U17 twenty-person group keeps party=2 camp as one sprite representative",
+  /data-party="2"/.test(mk2) && /unit-camp/.test(mk2) && /data-art="sprite"/.test(mk2)
+  && /char-/.test(mk2) && /unit-prop-art/.test(mk2) && !/unit-companion/.test(mk2));
 ok("U18 migrate stages stay on the endpoint segment",
   U.migrateStage(0) === "leave" && U.migrateStage(0.5) === "travel" && U.migrateStage(1) === "arrive");
 const pal = U.palette(idA);
@@ -93,19 +94,20 @@ const f0 = U.figureMarkup(pal, "idle", 0, 0, 0, 1, true);
 const f1 = U.figureMarkup(pal, "idle", 1, 0, 0, 1, true);
 const f2 = U.figureMarkup(pal, "idle", 2, 0, 0, 1, true);
 const f3 = U.figureMarkup(pal, "idle", 3, 0, 0, 1, true);
-ok("U19 four silhouettes stay distinct at default mass",
-  U.silhouetteName(0) === "staff" && U.silhouetteName(1) === "stocky"
-  && U.silhouetteName(2) === "cloak" && U.silhouetteName(3) === "scout"
-  && f0.indexOf('data-silhouette="staff"') >= 0
-  && f1.indexOf('data-silhouette="stocky"') >= 0
-  && f2.indexOf("unit-hood") >= 0 && f2.indexOf('data-silhouette="cloak"') >= 0
-  && f3.indexOf('data-silhouette="scout"') >= 0
+ok("U19 six silhouettes and sprite href stay distinct",
+  U.silhouetteName(0) === "staff" && U.silhouetteName(1) === "scout"
+  && U.silhouetteName(2) === "gather" && U.silhouetteName(3) === "stocky"
+  && U.silhouetteName(4) === "cloak" && U.silhouetteName(5) === "elder"
+  && /\/static\/assets\/sprites\/char-/.test(mk)
+  && /walk-a/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" }))
+  && /walk-b/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" }))
+  && /approx-poses/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" }))
   && f0 !== f1 && f1 !== f2 && f2 !== f3);
 const palGap = [idA, idB, "1", "2", "3", "99"].every((id) => {
   const p = U.palette(id);
   return U.luma(p.skin) - U.luma(p.cloth) >= 70;
 });
-ok("U20 skin is lighter than cloth for readable faces", palGap && f0.indexOf("unit-face-lit") >= 0);
+ok("U20 skin is lighter than cloth for camp contrast", palGap && /port-/.test(U.portraitHref(idA)));
 
 const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
 out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);

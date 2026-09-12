@@ -12,7 +12,7 @@ mkdirSync(SHOT, { recursive: true });
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9341;
 const RUN = "preset-exp06-recip1000";
-const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v6#tab=world&run=" + RUN + "&t=0";
+const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v7#tab=world&run=" + RUN + "&t=0";
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
   `--remote-debugging-port=${PORT}`,
@@ -102,12 +102,18 @@ try {
       bands: rec && rec.bands ? rec.bands.length : 0, t:O.S.t, run:O.S.run && O.S.run.run_id,
       hasHead: !!document.querySelector('#map .unit-head'), hasTunic: !!document.querySelector('#map .unit-tunic'),
       hasCamp: !!document.querySelector('#map .unit-camp'), skirts: document.querySelectorAll('#map .cell-skirt').length,
+      art: units[0] && units[0].getAttribute('data-art'),
+      hexArt: document.querySelectorAll('#map .hex-art').length,
+      whiteJpg: !![].slice.call(document.querySelectorAll('#map image')).find(function(n){
+        var h=n.getAttribute('href')||''; return /variant-0|\.jpg/.test(h);
+      }),
       party: party, sil: sil, silN: Object.keys(silSet).length};
   })()`);
   ok("V1 代表人数等于在世群体且不是圆点/菱形棋子",
     census && census.units === census.bands && census.units > 0
     && census.circleTokens === 0 && census.diamondTokens === 0 && census.hasHead && census.hasTunic
-    && census.hasCamp && census.skirts > 0 && census.silN >= 2,
+    && census.hasCamp && census.skirts > 0 && census.silN >= 2
+    && census.art === "sprite" && census.hexArt > 0 && !census.whiteJpg,
     JSON.stringify(census));
   await shot("desktop-t0-units.png");
 
@@ -175,10 +181,10 @@ try {
     return {ok: !!(fe && fe.ok), t:O.S.t, eid:e.id, cell:e.cell,
       pairCell: pair && pair.getAttribute('data-event-cell'),
       fx: pair && pair.getAttribute('data-fx'),
-      units: pair ? pair.querySelectorAll('.unit').length : 0};
+      pairArt: !!(pair && pair.querySelector('.fx-pair-art'))};
   })()`);
   ok("V4 信息交换在事件格演示两人互动",
-    share && share.ok && String(share.pairCell) === String(share.cell) && share.fx === "share" && share.units >= 2,
+    share && share.ok && String(share.pairCell) === String(share.cell) && share.fx === "share" && share.pairArt,
     JSON.stringify(share));
   await shot("desktop-share-cell.png");
 

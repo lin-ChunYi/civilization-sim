@@ -1,0 +1,463 @@
+{
+  "source": "/Users/ecool/Desktop/civilization/art-assets/grok-imagine-20260912",
+  "style": "variant-01 across 01-16",
+  "walk": "two approximate poses, not a verified loop",
+  "files": [
+    {
+      "file": "char-staff.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 34184,
+      "note": "idle group representative; not an individual biography"
+    },
+    {
+      "file": "char-scout.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 26007,
+      "note": "idle group representative; not an individual biography"
+    },
+    {
+      "file": "char-gather.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 32365,
+      "note": "idle group representative; not an individual biography"
+    },
+    {
+      "file": "char-stocky.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 32639,
+      "note": "idle group representative; not an individual biography"
+    },
+    {
+      "file": "char-cloak.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 28002,
+      "note": "idle group representative; not an individual biography"
+    },
+    {
+      "file": "char-elder.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 33184,
+      "note": "idle group representative; not an individual biography"
+    },
+    {
+      "file": "walk-a.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 28568,
+      "note": "approximate walk pose A; not a verified cycle"
+    },
+    {
+      "file": "walk-b.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 30513,
+      "note": "approximate walk pose B; not a verified cycle"
+    },
+    {
+      "file": "hex-res-low.png",
+      "w": 128,
+      "h": 112,
+      "bytes": 24175,
+      "note": "decorative resource look; value still from ledger"
+    },
+    {
+      "file": "hex-res-mid.png",
+      "w": 128,
+      "h": 112,
+      "bytes": 25162,
+      "note": "decorative resource look; value still from ledger"
+    },
+    {
+      "file": "hex-res-high.png",
+      "w": 128,
+      "h": 112,
+      "bytes": 24524,
+      "note": "decorative resource look; value still from ledger"
+    },
+    {
+      "file": "hex-block.png",
+      "w": 128,
+      "h": 112,
+      "bytes": 23663,
+      "note": "impassable cell look; not a mountain"
+    },
+    {
+      "file": "hex-unknown.png",
+      "w": 128,
+      "h": 112,
+      "bytes": 14083,
+      "note": "memory unknown; not a new biome"
+    },
+    {
+      "file": "hex-mem.png",
+      "w": 128,
+      "h": 112,
+      "bytes": 15881,
+      "note": "remembered cell look"
+    },
+    {
+      "file": "port-staff.png",
+      "w": 160,
+      "h": 160,
+      "bytes": 42111,
+      "note": "group dossier portrait; not a personal history"
+    },
+    {
+      "file": "port-scout.png",
+      "w": 160,
+      "h": 160,
+      "bytes": 41455,
+      "note": "group dossier portrait; not a personal history"
+    },
+    {
+      "file": "port-gather.png",
+      "w": 160,
+      "h": 160,
+      "bytes": 41103,
+      "note": "group dossier portrait; not a personal history"
+    },
+    {
+      "file": "port-stocky.png",
+      "w": 160,
+      "h": 160,
+      "bytes": 42077,
+      "note": "group dossier portrait; not a personal history"
+    },
+    {
+      "file": "port-cloak.png",
+      "w": 160,
+      "h": 160,
+      "bytes": 41572,
+      "note": "group dossier portrait; not a personal history"
+    },
+    {
+      "file": "port-elder.png",
+      "w": 160,
+      "h": 160,
+      "bytes": 46809,
+      "note": "group dossier portrait; not a personal history"
+    },
+    {
+      "file": "emblem-migrate.png",
+      "w": 96,
+      "h": 96,
+      "bytes": 11792,
+      "note": "migrate mark"
+    },
+    {
+      "file": "emblem-aid.png",
+      "w": 96,
+      "h": 96,
+      "bytes": 17086,
+      "note": "aid mark"
+    },
+    {
+      "file": "emblem-share.png",
+      "w": 96,
+      "h": 96,
+      "bytes": 12518,
+      "note": "share mark"
+    },
+    {
+      "file": "emblem-split.png",
+      "w": 96,
+      "h": 96,
+      "bytes": 15046,
+      "note": "split mark; still no map locate"
+    },
+    {
+      "file": "emblem-repay.png",
+      "w": 96,
+      "h": 96,
+      "bytes": 15105,
+      "note": "repay mark"
+    },
+    {
+      "file": "sel-ring.png",
+      "w": 128,
+      "h": 80,
+      "bytes": 12457,
+      "note": "selection ring"
+    },
+    {
+      "file": "fx-spark.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 4341,
+      "note": "event spark"
+    },
+    {
+      "file": "sel-corners.png",
+      "w": 96,
+      "h": 96,
+      "bytes": 4028,
+      "note": "selection corners"
+    },
+    {
+      "file": "pair-aid.png",
+      "w": 200,
+      "h": 176,
+      "bytes": 46148,
+      "note": "aid/repay pose pair; event still uses e.cell"
+    },
+    {
+      "file": "pair-share.png",
+      "w": 200,
+      "h": 176,
+      "bytes": 44566,
+      "note": "share pose pair; event still uses e.cell"
+    },
+    {
+      "file": "state-idle.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 24421,
+      "note": "gatherer idle pose; not a mood record"
+    },
+    {
+      "file": "state-wave.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 27280,
+      "note": "gatherer wave pose; select overlay only"
+    },
+    {
+      "file": "state-give.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 30127,
+      "note": "gatherer give pose; event still uses e.cell"
+    },
+    {
+      "file": "face-east.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 24135,
+      "note": "hooded facing east; walk facing helper, not a new band"
+    },
+    {
+      "file": "face-west.png",
+      "w": 128,
+      "h": 176,
+      "bytes": 26023,
+      "note": "hooded facing west; walk facing helper, not a new band"
+    },
+    {
+      "file": "prop-bedroll.png",
+      "w": 96,
+      "h": 72,
+      "bytes": 11729,
+      "note": "decorative camp prop; not a city or building"
+    },
+    {
+      "file": "prop-pack.png",
+      "w": 96,
+      "h": 96,
+      "bytes": 20731,
+      "note": "decorative camp prop; not a city or building"
+    },
+    {
+      "file": "ico-play.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 6204,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-pause.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 7369,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-next.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 3485,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-prev.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 5571,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-home.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 6340,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-zoomin.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 7976,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-zoomout.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 3558,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-compass.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 6246,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-eye.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 6534,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-person.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 7262,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-link.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 3477,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-book.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 5932,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-mark.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 6538,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-back.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 7124,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-sound.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 3277,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "ico-mute.png",
+      "w": 64,
+      "h": 64,
+      "bytes": 6207,
+      "note": "UI control; keep accessible name"
+    },
+    {
+      "file": "panel-banner.png",
+      "w": 512,
+      "h": 96,
+      "bytes": 52448,
+      "note": "HUD/menu panel; not a map tile"
+    },
+    {
+      "file": "panel-card.png",
+      "w": 256,
+      "h": 256,
+      "bytes": 87496,
+      "note": "sel-sheet panel; must not crowd the map"
+    },
+    {
+      "file": "panel-pill.png",
+      "w": 160,
+      "h": 48,
+      "bytes": 8659,
+      "note": "chip/pill; keep text labels"
+    },
+    {
+      "file": "menu-bg.jpg",
+      "w": 1280,
+      "h": 720,
+      "note": "menu/hud illustration only; not the replay map"
+    }
+  ],
+  "halo": {
+    "char-staff.png": 0.0,
+    "char-scout.png": 0.0,
+    "char-gather.png": 0.0,
+    "char-stocky.png": 0.0,
+    "char-cloak.png": 0.0,
+    "char-elder.png": 0.0,
+    "walk-a.png": 0.0,
+    "walk-b.png": 0.0,
+    "hex-res-low.png": 0.0,
+    "hex-res-mid.png": 0.0,
+    "hex-res-high.png": 0.0,
+    "hex-block.png": 0.0,
+    "hex-unknown.png": 0.0,
+    "hex-mem.png": 0.0,
+    "port-staff.png": 0.0,
+    "port-scout.png": 0.0,
+    "port-gather.png": 0.0,
+    "port-stocky.png": 0.0,
+    "port-cloak.png": 0.0,
+    "port-elder.png": 0.0,
+    "emblem-migrate.png": 0.0,
+    "emblem-aid.png": 0.0,
+    "emblem-share.png": 0.0,
+    "emblem-split.png": 0.0,
+    "emblem-repay.png": 0.0,
+    "sel-ring.png": 0.0,
+    "fx-spark.png": 0.0,
+    "sel-corners.png": 0.0,
+    "pair-aid.png": 0.0,
+    "pair-share.png": 0.0,
+    "state-idle.png": 0.0,
+    "state-wave.png": 0.0,
+    "state-give.png": 0.0,
+    "face-east.png": 0.0,
+    "face-west.png": 0.0,
+    "prop-bedroll.png": 0.0,
+    "prop-pack.png": 0.0,
+    "ico-play.png": 0.0,
+    "ico-pause.png": 0.0,
+    "ico-next.png": 0.0,
+    "ico-prev.png": 0.0,
+    "ico-home.png": 0.0,
+    "ico-zoomin.png": 0.0,
+    "ico-zoomout.png": 0.0,
+    "ico-compass.png": 0.0,
+    "ico-eye.png": 0.0,
+    "ico-person.png": 0.0,
+    "ico-link.png": 0.0,
+    "ico-book.png": 0.0,
+    "ico-mark.png": 0.0,
+    "ico-back.png": 0.0,
+    "ico-sound.png": 0.0,
+    "ico-mute.png": 0.0,
+    "panel-banner.png": 0.0,
+    "panel-card.png": 0.0,
+    "panel-pill.png": 0.0
+  }
+}

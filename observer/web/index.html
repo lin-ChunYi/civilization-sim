@@ -91,9 +91,9 @@
           <button class="btn small" data-layer="flow">流向</button>
         </div>
         <div class="map-tools">
-          <button type="button" class="btn small" id="zoom-out" title="缩小">−</button>
-          <button type="button" class="btn small" id="zoom-reset" title="复位">⌂</button>
-          <button type="button" class="btn small" id="zoom-in" title="放大">+</button>
+          <button type="button" class="btn small" id="zoom-out" title="缩小" aria-label="缩小">−</button>
+          <button type="button" class="btn small" id="zoom-reset" title="复位" aria-label="复位">⌂</button>
+          <button type="button" class="btn small" id="zoom-in" title="放大" aria-label="放大">+</button>
           <button type="button" class="btn small on" id="b-motion" title="动效开关">动效开</button>
         </div>
       </div>
@@ -222,7 +222,7 @@
           <p id="summary-note">出生与死亡来自年度账本增量，不是人口净变化。不编写动机或因果。</p>
           <p class="unit-note">1 人年口粮 = 模型标准下 1 人一年的食物量。格子颜色只表示相对存量，不能据此说某个群体一定能活多少年。</p>
           <p class="muted">64 格、六邻接、A/B 被不可通行屏障列隔开。屏障只表示不可通行，不是山脉、国界或城市。</p>
-          <p class="muted">缩放：缩小时只保留群体代表；放大后显示人口与名称。流向层锚定事件记录的格子，不是年末位置。迁移只演示记录的起点和终点，不编中间路线。</p>
+          <p class="muted">缩放：缩小时只保留群体代表；放大后显示人口与名称。流向层锚定事件记录的格子，不是年末位置。迁移只演示记录的起点和终点，不编中间路线。地图人物是去底后的群体代表图，不是白底整张贴图。行走为两帧近似姿势加程序摆动，不是已验证循环。地块草叶与随身包袱是装饰，不新增城市/道路/作物数据。</p>
           <p class="muted">导演模式：逐年播放会经过没有事件的年份；只看有记录的事件则按 series.events 与当年事件清单跳年，不把人口或出生账冒充事件。同一年列表顺序不保证机制先后，也不是因果。</p>
           <p class="muted">迁移只标 from/to 端点，具体路线未记录时不补画中间格。分裂/消失日志没有事件格，只在档案里给谱系或消失提示，不拿年末位置定位。</p>
           <p class="muted">援助<strong>活动</strong>次数 = 格×年（一次多人援助算 1）。<strong>转移</strong> = 一个供给方给一个接收方算 1 笔。

@@ -1,5 +1,15 @@
 # 连续开发进度
 
+## GROK_BUILD_006 检查点
+- ART-PACK-001 选 variant-01，去底/裁切/对齐写入 `observer/web/assets/sprites/`（源目录只读）。未把白底 JPG 整张贴上地图。
+- 人物/地块/头像已接入；援助/信息用 pair 图锚事件格；迁移两帧近似走姿+程序摆动（不是已验证循环）；创世页用 menu-bg；随身包袱只作装饰。
+- PLAYTEST-001 布局保留：桌面/390 地图与播放同屏，选中卡片+回沙盘，事件条在地图顶。
+- 试玩：http://127.0.0.1:8788/static/index.html#tab=world&run=preset-exp06-recip1000&t=0
+  建议 t=0 看人物与地块；点人物看头像卡片；t=4 迁移；t=83 援助；t=125 信息；创世页看菜单插画。
+- tests：game-v2-unit 21/0；game-v2-cdp 21/0（V1 data-art=sprite hexArt=64 无白底JPG；V0b 桌面 dock 788–837 mapH=503；V8 390 mapH=489 dockIn chipH=26）；director-logic 18/0；g04-fix 6/0
+- 本波完成后按用户指令停下，不等 Codex 试玩，不开始下一轮优化。
+- 8765/8772 仍 obs-1.7，未动。
+
 ## GROK_BUILD_005 检查点
 - 素材包尚未落到 observer/web/assets，未空等、未生图。
 - 390：隐藏概览卡，地图高度约 489px；卷宗浮层上限 28vh 且可再点「卷宗」关闭；格子侧裙加高、顶边高光、赭石/苔绿资源色、营地改等距菱形、深棕轮廓。

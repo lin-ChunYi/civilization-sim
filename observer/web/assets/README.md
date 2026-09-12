@@ -8,3 +8,7 @@
 - 关闭对比：在页面 URL 加 `?tex=0`
 
 格子颜色与棋子仍只表示模型图层相对量。
+
+## ART-PACK-001 精灵
+
+处理后的透明 PNG 在 `sprites/`。原包只读。不要把白底 JPG 整张贴上地图。详见 `sprites/README.md` 与 `sprites/PACK.json`。

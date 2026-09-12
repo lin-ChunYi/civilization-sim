@@ -425,7 +425,7 @@ const UnitArt = {
     }
     return h >>> 0;
   },
-  variant(id) { return this.hash(id) % 4; },
+  variant(id) { return this.hash(id) % 6; },
   palette(id, skin) {
     const h = this.hash(id);
     const families = (skin === "console")
@@ -447,10 +447,19 @@ const UnitArt = {
   },
   scale(size) {
     const n = Math.max(1, Number(size) || 1);
-    return Math.max(1.08, Math.min(1.58, 0.98 + Math.sqrt(n) * 0.08));
+    return Math.max(1.12, Math.min(1.58, 1.02 + Math.sqrt(n) * 0.08));
   },
   silhouetteName(v) {
-    return ["staff", "stocky", "cloak", "scout"][(Number(v) || 0) % 4];
+    return ["staff", "scout", "gather", "stocky", "cloak", "elder"][(Number(v) || 0) % 6];
+  },
+  spriteHref(kind) {
+    return "/static/assets/sprites/" + kind + ".png";
+  },
+  charHref(id) {
+    return this.spriteHref("char-" + this.silhouetteName(this.variant(id)));
+  },
+  portraitHref(id) {
+    return this.spriteHref("port-" + this.silhouetteName(this.variant(id)));
   },
   luma(hex) {
     const h = String(hex || "").replace("#", "");
@@ -589,26 +598,31 @@ const UnitArt = {
     const bid = b && b.id != null ? String(b.id) : "";
     const cell = b && b.cell != null ? String(b.cell) : "";
     const nParty = opts.party != null ? opts.party : this.partyCount(b && b.size);
-    const campRx = (6.2 + nParty * 3.1).toFixed(1);
-    let party = "";
-    if (nParty >= 3) party += this.figureMarkup(pal, pose, v, -9.2, 2.4, 0.68, false);
-    if (nParty >= 2) party += this.figureMarkup(pal, pose, v, 8.8, 2.8, 0.7, false);
-    party += this.figureMarkup(pal, pose, v, 0, 0, 1, true);
-    const banner = on
-      ? `<g class="unit-banner" pointer-events="none">
-          <path d="M9.5,-20 L9.5,5" stroke="${pal.accent}" stroke-width="1.25"/>
-          <path d="M9.5,-20 L20.5,-15.5 L9.5,-11Z" fill="${pal.sash}" stroke="${pal.accent}" stroke-width="0.5"/>
-        </g>`
-      : "";
-    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-silhouette="${this.silhouetteName(v)}" data-pose="${esc(pose)}" data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
-      <title>${esc(name)} · 群体代表（${this.silhouetteName(v)} · ${nParty}人造型）· ${size}人。这是群体的可视替身，不是独立个人生平。</title>
-      <path class="unit-camp" d="M0,15.2 L${campRx},11.2 L0,7.2 L-${campRx},11.2 Z" fill="${pal.cloth}" fill-opacity="0.5" stroke="#2a1810" stroke-width="1.15"/>
-      <g class="unit-body unit-${esc(pose)}">${party}</g>
-      ${on ? `<circle class="unit-ring" cx="0" cy="2" r="17.2" fill="none" stroke="${pal.accent}" stroke-width="1.55"/>` : ""}
-      ${banner}
-      ${opts.hit === false ? "" : `<rect class="unit-hit" x="-22" y="-26" width="44" height="50" fill="transparent"/>`}
-      ${opts.showPop === false ? "" : `<text class="unit-pop" x="0" y="20.4" text-anchor="middle" font-size="7.4" fill="${on ? "#f3deaa" : "#1a1408"}" font-weight="700" pointer-events="none">${size}人</text>`}
-      ${opts.showName ? `<text class="unit-name" x="0" y="-20.2" text-anchor="middle" font-size="7.0" fill="#f3deaa" pointer-events="none">${esc(name)}</text>` : ""}
+    const sil = this.silhouetteName(v);
+    const campRx = (7.2 + nParty * 2.2).toFixed(1);
+    const ring = on ? `<image class="unit-sel-ring unit-ring" href="${this.spriteHref("sel-ring")}" x="-22" y="2" width="44" height="22" preserveAspectRatio="none" pointer-events="none"/>` : "";
+    const prop = `<image class="unit-prop-art" href="${this.spriteHref(v % 2 ? "prop-pack" : "prop-bedroll")}" x="-7" y="10" width="12" height="9" preserveAspectRatio="xMidYMid meet" pointer-events="none"/>`;
+    const spr = 'x="-20" y="-46" width="40" height="56" preserveAspectRatio="xMidYMax meet"';
+    let body;
+    if (pose === "walk") {
+      body = `<g class="unit-body unit-walk" data-walk="approx-poses">
+        <image class="unit-sprite unit-walk-a unit-head unit-tunic" href="${this.spriteHref("walk-a")}" ${spr}/>
+        <image class="unit-sprite unit-walk-b" href="${this.spriteHref("walk-b")}" ${spr}/>
+      </g>`;
+    } else {
+      body = `<g class="unit-body unit-${esc(pose)}">
+        <image class="unit-sprite unit-head unit-tunic" href="${this.charHref(b && b.id)}" ${spr}/>
+      </g>`;
+    }
+    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-silhouette="${sil}" data-pose="${esc(pose)}" data-art="sprite" data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
+      <title>${esc(name)} · 群体代表（${sil}）· ${size}人。这是群体的可视替身，不是独立个人生平。行走为两帧近似姿势加程序摆动，不是已验证循环。</title>
+      <path class="unit-camp" d="M0,16 L${campRx},12 L0,8 L-${campRx},12 Z" fill="${pal.cloth}" fill-opacity="0.45" stroke="#2a1810" stroke-width="1.1"/>
+      ${prop}
+      ${ring}
+      ${body}
+      ${opts.hit === false ? "" : `<rect class="unit-hit" x="-22" y="-48" width="44" height="70" fill="transparent"/>`}
+      ${opts.showPop === false ? "" : `<text class="unit-pop" x="0" y="22" text-anchor="middle" font-size="7.4" fill="${on ? "#f3deaa" : "#1a1408"}" font-weight="700" pointer-events="none">${size}人</text>`}
+      ${opts.showName ? `<text class="unit-name" x="0" y="-48" text-anchor="middle" font-size="7.0" fill="#f3deaa" pointer-events="none">${esc(name)}</text>` : ""}
     </g>`;
   },
   labelMarkup(b, x, y, opts) {
@@ -1227,6 +1241,7 @@ function renderMap() {
       <rect width="7" height="7" fill="#1c1610"/><line x1="0" y1="0" x2="0" y2="7" stroke="#5a4030" stroke-width="3"/>
     </pattern>
     <filter id="glow"><feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="hexclip"><path d="${hexPath(0, 0)}"/></clipPath>
   </defs>`;
 
   S.map.cells.forEach((c, idx) => {
@@ -1271,12 +1286,38 @@ function renderMap() {
     const hot = eventCells.has(c.i) && (layer === "event" || layer === "flow");
     const stroke = selected ? "#f3deaa" : hovered ? "#e6c888" : (hot ? "#d4b06a" : (S.skin === "console" ? "#2c4a48" : "#3a2818"));
     const skirtFill = c.passable ? shadeFill(fill, 0.48) : "#1a120c";
+    const baseFill = c.passable ? fill : "url(#hatch)";
     out += `<path class="cell-skirt" d="${hexSkirtPath(cx, cy)}" fill="${skirtFill}" stroke="none" pointer-events="none"/>`;
-    out += `<path d="${hexPath(cx, cy)}" fill="${fill}" stroke="${stroke}"
+    out += `<path class="cell-fill" d="${hexPath(cx, cy)}" fill="${baseFill}" stroke="none" pointer-events="none"/>`;
+    let tile = "";
+    if (!c.passable) tile = "hex-block.png";
+    else if (layer === "mem") {
+      if (!memBand) tile = "hex-unknown.png";
+      else {
+        const e = memBand.mem[String(c.i)];
+        const capn = OverviewLogic.memCaption(e, S.t);
+        tile = capn.kind === "unknown" ? "hex-unknown.png" : "hex-mem.png";
+      }
+    } else {
+      let f = 0;
+      if (layer === "pop") f = (popByCell[c.i] || 0) / maxPop;
+      else if (layer === "store") f = (storeByCell[c.i] || 0) / maxStore;
+      else if (layer === "event") f = eventCells.has(c.i) ? 1 : 0.2;
+      else {
+        const capv2 = cap ? cap[idx] : 0;
+        f = capv2 ? rec.stock[idx] / capv2 : 0;
+      }
+      tile = f < 0.34 ? "hex-res-low.png" : (f < 0.67 ? "hex-res-mid.png" : "hex-res-high.png");
+    }
+    const hexCls = (!c.passable || layer === "mem") ? "hex-art hex-art-plain" : "hex-art";
+    out += `<g class="hex-art-wrap" transform="translate(${cx.toFixed(1)},${cy.toFixed(1)})" clip-path="url(#hexclip)">
+      <image class="${hexCls}" href="/static/assets/sprites/${tile}" x="${(-R).toFixed(1)}" y="${(-R).toFixed(1)}" width="${(2 * R).toFixed(1)}" height="${(2 * R).toFixed(1)}" preserveAspectRatio="xMidYMid meet" pointer-events="none"/>
+    </g>`;
+    out += `<path d="${hexPath(cx, cy)}" fill="transparent" stroke="${stroke}"
         stroke-width="${selected ? 2.8 : hovered ? 2 : hot ? 1.8 : 1.15}" data-cell="${c.i}" class="cell${hovered ? " hover" : ""}"${selected ? ' filter="url(#glow)"' : ""}>
         <title>${esc(title)}</title></path>`;
     if (c.passable) {
-      out += `<path class="cell-lit" d="${hexTopEdge(cx, cy)}" fill="none" stroke="rgba(255,236,200,.22)" stroke-width="1.4" pointer-events="none"/>`;
+      out += `<path class="cell-lit" d="${hexTopEdge(cx, cy)}" fill="none" stroke="rgba(255,236,200,.18)" stroke-width="1.2" pointer-events="none"/>`;
     }
     const lod = S.cam.k;
     const showNum = lod >= 1.45 || selected || S.hoverCell === c.i;
@@ -2587,14 +2628,13 @@ function fxCaption(overlay, x, y, text) {
 }
 function shareGlyphMarkup(x, y) {
   return `<g class="fx-share-mark fx-pulse" data-fx="share" transform="translate(${Number(x).toFixed(1)},${(Number(y) - 18).toFixed(1)})">
-    <circle r="3.2" fill="#6eb8b4" stroke="#e8eadc" stroke-width="0.8"/>
-    <circle cx="-5.2" r="1.5" fill="#8fd4d0"/><circle cx="5.2" r="1.5" fill="#8fd4d0"/>
+    <image href="${UnitArt.spriteHref("emblem-share")}" x="-10" y="-10" width="20" height="20"/>
   </g>`;
 }
 function aidGlyphMarkup(x, y, repay) {
-  const fill = repay ? "#d4b06a" : "#6fb37c";
+  const kind = repay ? "emblem-repay" : "emblem-aid";
   return `<g class="${repay ? "fx-repay-mark" : "fx-aid-mark"} fx-pulse" data-fx="${repay ? "repay" : "aid"}" transform="translate(${Number(x).toFixed(1)},${(Number(y) - 20).toFixed(1)})">
-    <path d="M-4,0 L0,-5 L4,0 L3,5 L-3,5 Z" fill="${fill}" stroke="#f3deaa" stroke-width="0.8"/>
+    <image href="${UnitArt.spriteHref(kind)}" x="-10" y="-10" width="20" height="20"/>
   </g>`;
 }
 function markEventCells(svg, ev, focus) {
@@ -2634,6 +2674,7 @@ function paintMigrateAction(overlay, ev, plan, reduced) {
   walker.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
   walker.innerHTML = UnitArt.markup(band, 0, 0, {
     pose: reduced ? "idle" : "walk", selected: true, hit: false, skin: S.skin, showPop: false,
+    facing: b[0] < a[0] ? "left" : "right",
   });
   overlay.appendChild(walker);
   fxCaption(overlay, (a[0] + b[0]) / 2, Math.min(a[1], b[1]) - 22,
@@ -2672,20 +2713,17 @@ function paintMigrateAction(overlay, ev, plan, reduced) {
 function paintPairAction(overlay, ev, plan, reduced) {
   if (plan.cell == null || !S.map.cells[plan.cell]) return;
   const xy = cellCenter(S.map.cells[plan.cell]);
-  const rec = recNow();
-  const donor = { id: ev.donor || "d", name: rec ? bandName(rec, ev.donor) : "供给方", size: 1, cell: plan.cell };
-  const recv = { id: ev.receiver || "r", name: rec ? bandName(rec, ev.receiver) : "接收方", size: 1, cell: plan.cell };
   const wrap = svgEl("g", { id: "fx-pair", "data-fx": plan.kind, "data-event-cell": String(plan.cell) });
-  wrap.innerHTML = UnitArt.markup(donor, -10, -6, {
-    pose: plan.kind === "share" ? "talk" : "give", hit: false, skin: S.skin, showPop: false,
-  }) + UnitArt.markup(recv, 10, -6, {
-    pose: "idle", hit: false, facing: "left", skin: S.skin, showPop: false,
-  }) + (plan.kind === "share" ? shareGlyphMarkup(0, 0) : aidGlyphMarkup(0, 0, plan.repay));
+  const art = plan.kind === "share" ? "pair-share" : "pair-aid";
+  const emblem = plan.kind === "share" ? "emblem-share" : (plan.repay ? "emblem-repay" : "emblem-aid");
+  wrap.innerHTML = `<image class="fx-pair-art" href="${UnitArt.spriteHref(art)}" x="-30" y="-40" width="60" height="52" preserveAspectRatio="xMidYMax meet"/>`
+    + `<image class="fx-emblem" href="${UnitArt.spriteHref(emblem)}" x="-8" y="-54" width="16" height="16"/>`;
   wrap.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
   overlay.appendChild(wrap);
   fxCaption(overlay, xy[0], xy[1] - 28,
     plan.kind === "share" ? "同格信息传递（事件格，不是年末位置）"
       : (plan.repay ? "同格回助（事件格）" : "同格援助（事件格）"));
+  void ev;
   void reduced;
 }
 function paintYearActions(svg, rec, opts) {
@@ -2807,9 +2845,12 @@ function fillSelSheet() {
   const b = rec && S.selBand && rec.bands.find((x) => String(x.id) === String(S.selBand));
   if (!b) { sheet.hidden = true; return; }
   const act = S.selEvent ? String(S.selEvent) : "待机";
-  main.innerHTML = `<div class="sel-name">${esc(b.name)}</div>
-    <div class="sel-meta">${nf(b.size)}人 · 第 ${b.cell} 格 · ${esc(UnitArt.silhouetteName(UnitArt.variant(b.id)))}</div>
-    <div class="sel-act">${esc(act)}</div>`;
+  main.innerHTML = `<img class="sel-port" src="${UnitArt.portraitHref(b.id)}" width="56" height="56" alt="群体代表头像，展示用，不是个人生平">
+    <div class="sel-copy">
+      <div class="sel-name">${esc(b.name)}</div>
+      <div class="sel-meta">${nf(b.size)}人 · 第 ${b.cell} 格 · ${esc(UnitArt.silhouetteName(UnitArt.variant(b.id)))}</div>
+      <div class="sel-act">${esc(act)}</div>
+    </div>`;
   sheet.hidden = false;
 }
 function closeSheets() {
