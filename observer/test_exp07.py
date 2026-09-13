@@ -286,10 +286,54 @@ check("R7 劳动预算在记录层也对得上：耕作 + 采集 == 人数 × 10
       all(p["farm_effort_m"] + p["forage_effort_m"] == p["population_before"] * 1000
           for p in parts))
 ser = store.read_series(rec_run)
+FLOW_NAMES = ("farm_effort_m", "forage_effort_m", "potential_kcal", "harvested_kcal",
+              "uncollected_kcal", "built_m", "decayed_m")
+
+
+def cum_vs_year(run_id, upto):
+    """**独立重算**：把逐年 year 自己加一遍，和记录里的 cum 逐字段比。
+    不调用生产的累计逻辑，也不只看"非 null"或"等于 0"。"""
+    ys = rows(run_id, upto)
+    running = {k: 0 for k in FLOW_NAMES}
+    bad = []
+    for r in ys:
+        f = r["farm"]
+        for k in FLOW_NAMES:
+            yv, cv = f["year"].get(k), f["cum"].get(k)
+            if not isinstance(yv, int) or isinstance(yv, bool):
+                bad.append((r["t"], k, "year 不是整数", yv))
+                continue
+            if not isinstance(cv, int) or isinstance(cv, bool):
+                bad.append((r["t"], k, "cum 不是整数", cv))
+                continue
+            running[k] += yv
+            if running[k] != cv:
+                bad.append((r["t"], k, running[k], cv))
+    return bad, ys
+
+
 check("R8 series 只放轻量 farm（year/cum/field_total_m），不放参与者与完整 cells",
       "farm" in ser[-1] and set(ser[-1]["farm"]) == {"year", "cum", "field_total_m"}
       and "agg" in ser[-1] and "integrity" in ser[-1],
       str(set(ser[-1]["farm"])))
+bad_cum, ys = cum_vs_year(rec_run, 5)
+check("R8b 七项流量 year/cum 全是严格整数，且 cum == 逐年 year 的独立重算和",
+      not bad_cum, str(bad_cum[:3]))
+check("R8c 第 0 年：七项 year 与 cum 都恰好是 0（不是 null，也不是漏字段）",
+      all(ys[0]["farm"]["year"][k] == 0 and ys[0]["farm"]["cum"][k] == 0
+          for k in FLOW_NAMES), str(ys[0]["farm"]["cum"]))
+ser_ck = store.read_series(rec_run)
+check("R8d 轻量 series 的 year/cum 与逐年记录逐字段一致",
+      all(ser_ck[i]["farm"]["year"] == ys[i]["farm"]["year"]
+          and ser_ck[i]["farm"]["cum"] == ys[i]["farm"]["cum"] for i in range(len(ys))))
+check("R8e 采集劳动是真账：cum.forage_effort_m > 0，且当年两项劳动之和 == 人口折算总量",
+      ys[-1]["farm"]["cum"]["forage_effort_m"] > 0
+      and all(y["farm"]["year"]["farm_effort_m"] + y["farm"]["year"]["forage_effort_m"]
+              == sum(p["population_before"] * 1000
+                     for c in y["farm"]["cells"] for p in c["participants"])
+              for y in ys[1:]),
+      "cum.forage=%d" % ys[-1]["farm"]["cum"]["forage_effort_m"])
+
 evs = [e for y in rows(rec_run, 5) for e in y["events"]
        if e["type"] in ("field_built", "farm_harvest", "field_decay")]
 check("R9 耕作事件进 year.events，带稳定 id、展示 year、格、参与者、数量与来源",
@@ -299,6 +343,29 @@ check("R9 耕作事件进 year.events，带稳定 id、展示 year、格、参�
 check("R10 展示 year 由内部 tick 换算而来，且只对 EXP-07 自己的日志换算",
       all(any(ee["tick"] == e["year"] - 1 for ee in []) or True for e in evs)
       and all(e["year"] >= 1 for e in evs))
+
+print("\nR2 三个 FARM_M 档：cum 严格整数且等于逐年 year 的独立重算和")
+for fm in (0, 250, 1000):
+    rid = fresh(8, farm_m=fm)
+    if worker(rid) != 0:
+        check("R11 FARM_M=%d 跑完" % fm, False, store.get_run(rid)["error"][:70])
+        continue
+    bad, ys = cum_vs_year(rid, 8)
+    last = ys[-1]["farm"]["cum"]
+    check("R11 FARM_M=%-4d 的 cum == 独立重算的 Σyear，七项全是整数" % fm,
+          not bad, str(bad[:2]))
+    check("R11b FARM_M=%-4d 的 cum.forage_effort_m 是真值，不是写死的 0" % fm,
+          (last["forage_effort_m"] == 0) == (fm == 1000)
+          and isinstance(last["forage_effort_m"], int),
+          "forage_cum=%d farm_cum=%d" % (last["forage_effort_m"], last["farm_effort_m"]))
+    if fm == 0:
+        cs = [c for y in ys[1:] for c in y["farm"]["cells"]]
+        check("R11c FARM_M=0 时 cells 仍列出**有采集劳动**的格，参与者来自相位前状态",
+              cs and all(c["participants"] for c in cs)
+              and all(p["farm_effort_m"] == 0 and p["forage_effort_m"] > 0
+                      for c in cs for p in c["participants"]),
+              "%d 个格年，例：cell=%s 参与者 %d" % (len(cs), cs[0]["cell"],
+                                              len(cs[0]["participants"])))
 
 # ---------------------------------------------------------------- S 60+60
 print("\nS EXP-07 续演：60 + 60 与连续 120 逐年一致")
@@ -316,15 +383,24 @@ else:
     check("S1 60+60 与连续 120 年逐年完全一致（含 farm 段与事件 id）",
           rc == 0 and store.get_run(kid)["status"] == "done" and d is None,
           "rc=%s 首处不同=%s" % (rc, d))
+    bad, ys = cum_vs_year(kid, 120)
+    check("S1b 续演之后累计仍然连续：cum == 逐年 year 的独立重算和（含第 60/61 年边界）",
+          not bad, str(bad[:2]))
+    check("S1c 边界不重计：cum[61] − cum[60] 恰好等于 year[61]",
+          all(ys[61]["farm"]["cum"][k] - ys[60]["farm"]["cum"][k]
+              == ys[61]["farm"]["year"][k] for k in FLOW_NAMES),
+          str({k: ys[61]["farm"]["cum"][k] - ys[60]["farm"]["cum"][k]
+               for k in ("farm_effort_m", "forage_effort_m")}))
     ck = checkpoints.load(store.checkpoint_path(kid))
     check("S2 EXP-07 的检查点用 obs-recorder-farm-v1，并带上 farm_m",
           ck["recorder_schema"] == "obs-recorder-farm-v1"
           and ck["params"].get("farm_m") == FARM_PARAMS["farm_m"],
           "%s / farm_m=%s" % (ck["recorder_schema"], ck["params"].get("farm_m")))
     st_kid, rec_state = checkpoints.restore(ck)
-    check("S3 检查点里存了完整耕地、农业日志、账与新游标",
+    check("S3 检查点里存了完整耕地、农业日志、账（含采集劳动累计）与新游标",
           len(st_kid["field_m"]) == 64 and "farm_log" in st_kid
-          and st_kid["farm_harvest_cum"] >= 0 and "_farm_log_len" in rec_state,
+          and st_kid["farm_harvest_cum"] >= 0 and "_farm_log_len" in rec_state
+          and st_kid["forage_effort_cum"] > 0,
           "field 非零格 %d，farm_log %d 条，游标 %s"
           % (sum(1 for v in st_kid["field_m"].values() if v > 0),
              len(st_kid["farm_log"]), rec_state["_farm_log_len"]))
@@ -389,10 +465,12 @@ else:
         ids_b = [e["id"] for y in want for e in y["events"]]
         check("T3 事件 id 逐个相同且全段无重复",
               ids_a == ids_b and len(set(ids_a)) == len(ids_a), "%d 个事件" % len(ids_a))
-        check("T4 第 300 年只出现一次，farm 段的累计流量在边界处连续",
-              [y["t"] for y in got].count(300) == 1
-              and got[301]["farm"]["cum"]["harvested_kcal"]
-              >= got[300]["farm"]["cum"]["harvested_kcal"])
+        bad, _ = cum_vs_year(svc_child, 600)
+        check("T4 第 300 年只出现一次；0..600 年 cum == 独立重算的 Σyear（边界不重计）",
+              [y["t"] for y in got].count(300) == 1 and not bad, str(bad[:2]))
+        check("T4b 跨服务重启后 cum[301] − cum[300] 恰好等于 year[301]",
+              all(got[301]["farm"]["cum"][k] - got[300]["farm"]["cum"][k]
+                  == got[301]["farm"]["year"][k] for k in FLOW_NAMES))
 
 # ---------------------------------------------------------------- O 旧存档
 print("\nO 用**基准代码**真实生成的 EXP-06 旧格式存档，验证更新后仍能续演")

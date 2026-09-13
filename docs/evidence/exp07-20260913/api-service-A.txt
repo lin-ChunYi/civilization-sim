@@ -44,3 +44,50 @@ INFO:     Shutting down
 INFO:     Waiting for application shutdown.
 INFO:     Application shutdown complete.
 INFO:     Finished server process [39338]
+INFO:     Started server process [50165]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8902 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57850 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57851 - "POST /api/runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57852 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57853 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57854 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57855 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57858 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57860 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57861 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57864 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57865 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57866 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57867 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57868 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57869 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57870 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57871 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57872 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57873 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57875 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57876 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57877 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57878 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57884 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57885 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57886 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57887 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57888 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57889 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57890 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57891 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57892 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57893 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57894 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57895 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57896 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57897 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57899 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57900 - "GET /api/runs/16f86b3e3a7e HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [50165]

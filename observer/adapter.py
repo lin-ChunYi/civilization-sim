@@ -173,12 +173,14 @@ RECIP_FIELDS = ("recip_budget", "recip_kcal", "recip_transfers", "recip_changed"
                 "amem_entries_dropped")
 
 # EXP-07 才有的耕作账字段（全是**流量**：耕地规模是存量，不放进累计相加）。
-FARM_FIELDS = ("farm_effort_cum", "farm_effort_used_cum", "farm_potential_cum",
-               "farm_harvest_cum", "farm_uncollected_cum",
+FARM_FIELDS = ("farm_effort_cum", "forage_effort_cum", "farm_effort_used_cum",
+               "farm_potential_cum", "farm_harvest_cum", "farm_uncollected_cum",
                "field_built_cum", "field_decay_cum")
 
-# farm 段对外的字段名（去掉 _cum 后缀，year 与 cum 两边同名）
+# farm 段对外的字段名（去掉 _cum 后缀，year 与 cum 两边**同名**）。
+# 七项**全部是真账**：引擎自己逐年累加，进状态哈希、进检查点、跟着续演走。
 FARM_FLOW_NAMES = (("farm_effort_cum", "farm_effort_m"),
+                   ("forage_effort_cum", "forage_effort_m"),
                    ("farm_potential_cum", "potential_kcal"),
                    ("farm_harvest_cum", "harvested_kcal"),
                    ("farm_uncollected_cum", "uncollected_kcal"),
@@ -448,19 +450,32 @@ class Recorder:
         不拿年末位置倒推。
         """
         cell_ids = sorted(st["stock"])
+        # 七项流量口径完全一致：year 是当年增量，cum 是引擎里那本同名累计账的当前值。
         flows_year = {name: year.get(key, 0) for key, name in FARM_FLOW_NAMES}
         flows_cum = {name: cum.get(key, 0) for key, name in FARM_FLOW_NAMES}
-        # 采集劳动 = 人口折算总量 − 耕作劳动，用的是**相位前**冻结下来的那份人数
         trace = st.get("farm_effort_trace") or {}
-        total_pop_m = sum(n for n, _fe, _foe in trace.values()) * 1000
-        flows_year["forage_effort_m"] = sum(foe for _n, _fe, foe in trace.values())
-        flows_cum["forage_effort_m"] = None      # 采集劳动没有累计账，如实给 null
+        field_pre = st.get("field_pre") or {}
 
+        # 本年**有劳动或有旧耕地**的格都要出现 —— 包括 FARM_M=0 时只有采集劳动的格。
+        # 位置取**相位前**冻结下来的那一份，不拿年末位置倒推。
+        by_cell_bands: Dict[int, set] = {}
+        for bid, (_n, _fe, _foe, cell) in trace.items():
+            by_cell_bands.setdefault(cell, set()).add(bid)
+        interesting = set(by_cell_bands) | {c for c, v in field_pre.items() if v > 0}
         cells = []
+        index = {}
+        for c in sorted(interesting):
+            row = {"cell": c, "field_before_m": field_pre.get(c, 0),
+                   "field_after_m": st["field_m"].get(c, 0), "worked_m": 0,
+                   "built_m": 0, "decayed_m": 0, "weather_m": None,
+                   "potential_kcal": 0, "harvested_kcal": 0, "uncollected_kcal": 0,
+                   "participants": []}
+            cells.append(row)
+            index[c] = row
         for e in st.get("farm_log", []):
             if e["tick"] != t - 1:
                 continue                          # 只取**本年**那一批（记录是 step 之后写的）
-            row = next((c for c in cells if c["cell"] == e["cell"]), None)
+            row = index.get(e["cell"])
             if row is None:
                 row = {"cell": e["cell"], "field_before_m": e["field_before_m"],
                        "field_after_m": e["field_after_m"], "worked_m": 0,
@@ -468,6 +483,8 @@ class Recorder:
                        "potential_kcal": 0, "harvested_kcal": 0, "uncollected_kcal": 0,
                        "participants": []}
                 cells.append(row)
+                index[e["cell"]] = row
+            row["field_before_m"] = e["field_before_m"]
             row["field_after_m"] = e["field_after_m"]
             if e["type"] == "field_built":
                 row["built_m"] = e["amount_m"]
@@ -484,7 +501,6 @@ class Recorder:
             if e["tick"] == t - 1 and e["type"] == "farm_harvest":
                 for bid, v in e["per_band_kcal"].items():
                     crop_by_band[bid] = crop_by_band.get(bid, 0) + v
-        by_cell_bands = {}
         for e in st.get("farm_log", []):
             if e["tick"] != t - 1:
                 continue
@@ -492,7 +508,7 @@ class Recorder:
         for row in cells:
             parts = []
             for bid in sorted(by_cell_bands.get(row["cell"], ())):
-                n, fe, foe = trace.get(bid, (None, 0, 0))
+                n, fe, foe, _c = trace.get(bid, (None, 0, 0, None))
                 parts.append({
                     "id": str(bid),                 # 64 位 id 一律字符串
                     "population_before": n,         # **相位前**的人数

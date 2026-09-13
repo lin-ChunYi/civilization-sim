@@ -1,6 +1,6 @@
 {
  "experiment": "EXP-07",
- "generated_at": 1789302471.948125,
+ "generated_at": 1789303429.8532338,
  "engine": "exp07/verify7.py",
  "params_fingerprint": "faa554ad6916fd4d",
  "constants": {
@@ -130,7 +130,7 @@
   {
    "name": "D4 完整快照恢复：从第 30 年的整份状态续跑 20 年，与一路跑到底逐位相同",
    "state": "PASS",
-   "detail": "3c9719819c665ca8f737"
+   "detail": "1098c4cb107ac95ea646"
   },
   {
    "name": "E1 FARM_M 的 bool / 小数 / 负数 / 越界 / 字符串全部被拒",
@@ -185,7 +185,7 @@
   {
    "name": "F7 float（浮点污染采集）：定向构造下确实会红（自然跑撞不到，见注释）",
    "state": "PASS",
-   "detail": "整数 56128356 vs 浮点 56128355；干净 96064c5027 / 污染 53e38551a4"
+   "detail": "整数 56128356 vs 浮点 56128355；干净 17e5ecd408 / 污染 24d26274a1"
   }
  ],
  "totals": {

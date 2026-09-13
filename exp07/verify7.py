@@ -376,6 +376,7 @@ def make_world(seed: int, poison: str = "", sigma_m: int = 0, move_mort_m: int =
           # 没有土地所有权、地主、税收、灌溉与产权冲突，也没有 settled 标志。
           'field_m': {},
           'farm_effort_cum': 0,       # 投进耕作的折算劳动刻度（含投不下去的部分）
+          'forage_effort_cum': 0,     # 投进野外采集的折算劳动刻度（与上一项互补）
           'farm_effort_used_cum': 0,  # 其中真正用上的（维护 + 开垦）
           'farm_potential_cum': 0,    # 潜在产出（维护过的耕地能长出多少）
           'farm_harvest_cum': 0,      # **实际采收**并进入库存的部分（inflow 的来源分项）
@@ -385,6 +386,7 @@ def make_world(seed: int, poison: str = "", sigma_m: int = 0, move_mort_m: int =
           'farm_log': [],             # 耕作事件：field_built / farm_harvest / field_decay
           'farm_effort_trace': {},    # 只读痕迹：{bid: (人数, 耕作刻度, 采集刻度)}，不进哈希
           'forage_trace': {},         # 只读痕迹：{bid: 本年野外采集实得 kcal}，不进哈希
+          'field_pre': {},            # 只读痕迹：农业相位前各格耕地规模，不进哈希
           # 援助记忆与优先回助的账（EXP-06 新增）
           'recip_budget': 0,        # 走优先阶段的预算合计
           'recip_kcal': 0,          # 优先阶段实际转移的数量
@@ -583,7 +585,7 @@ LEDGER_FIELDS = ('inflow', 'out_eat', 'out_spoil', 'out_move', 'out_lost',
                  'recip_changed', 'repay_kcal', 'repay_transfers',
                  'amem_dropped_kcal', 'amem_entries_dropped',
                  # EXP-07 新增：参数 + 劳动 / 耕地 / 产出账
-                 'farm_m', 'farm_effort_cum', 'farm_effort_used_cum',
+                 'farm_m', 'farm_effort_cum', 'forage_effort_cum', 'farm_effort_used_cum',
                  'farm_potential_cum', 'farm_harvest_cum', 'farm_uncollected_cum',
                  'field_built_cum', 'field_decay_cum')
 
@@ -675,8 +677,12 @@ def step(st, suppress_split_in=None):
         farm_effort[bid] = b['size'] * fm
         forage_effort[bid] = b['size'] * MILLE - farm_effort[bid]
         collection_limit[bid] = need + room
-        # 只读痕迹（每 tick 重写，不进哈希）：供劳动预算恒等式逐年核对
-        st['farm_effort_trace'][bid] = (b['size'], farm_effort[bid], forage_effort[bid])
+        # 采集劳动也是一本**真账**：按相位前冻结下来的人数逐年累加，进哈希、进检查点。
+        # （耕作劳动在农业相位按格累加，两者相加恒等于 Σ 人数 × 1000。）
+        st['forage_effort_cum'] += forage_effort[bid]
+        # 只读痕迹（每 tick 重写，不进哈希）：供劳动预算恒等式逐年核对，
+        # 并让观察层知道"这一格本年有谁、投了多少劳动"——相位前的位置，不是年末的。
+        st['farm_effort_trace'][bid] = (b['size'], farm_effort[bid], forage_effort[bid], c)
         fe = forage_effort[bid]
         s0 = st['stock'][c]
         if 'float' in P:
@@ -727,6 +733,9 @@ def step(st, suppress_split_in=None):
     for bid in order:
         if farm_effort[bid] > 0:
             farm_by_cell.setdefault(st['bands'][bid]['cell'], []).append(bid)
+    # 相位前的耕地快照：观察层要报"本年有劳动或有旧耕地的格"，
+    # 即使那一格今年什么都没发生（FARM_M=0 时就是这样）也要能取到 field_before。
+    st['field_pre'] = dict(st['field_m'])
     farm_cells = sorted(st['stock'])
     if 'cellrev' in P:
         farm_cells = list(reversed(farm_cells))
@@ -1200,7 +1209,7 @@ def farm_labour_error(st) -> int:
     用的是本 tick 冻结下来的痕迹（人口变化之前的 N）。不为 0 就是劳动被凭空多算或漏算。
     """
     bad = 0
-    for _bid, (n, fe, foe) in (st.get('farm_effort_trace') or {}).items():
+    for _bid, (n, fe, foe, _cell) in (st.get('farm_effort_trace') or {}).items():
         bad += (fe + foe) - n * MILLE
     return bad
 

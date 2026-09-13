@@ -44,18 +44,25 @@
   "year": {"farm_effort_m": 30000, "forage_effort_m": 90000,
            "potential_kcal": 54750000, "harvested_kcal": 406042,
            "uncollected_kcal": 54343958, "built_m": 0, "decayed_m": 0},
-  "cum":  {"farm_effort_m": 90000, "potential_kcal": ..., "harvested_kcal": ...,
-           "uncollected_kcal": ..., "built_m": ..., "decayed_m": ...,
-           "forage_effort_m": null},
+  "cum":  {"farm_effort_m": 90000, "forage_effort_m": 270000,
+           "potential_kcal": ..., "harvested_kcal": ..., "uncollected_kcal": ...,
+           "built_m": ..., "decayed_m": ...},
   "cells": [ ... ],
   "note": "..."
 }
 ```
 
 - `field_m` 是**年末存量**，**不要**把它当流量累加；总量另给 `field_total_m`。
-- `year` / `cum` 只放流量，两边**同名**。`cum.forage_effort_m` 是 `null` ——
-  采集劳动没有累计账，如实给空，不填 0 冒充。
-- `cells`：本年**有劳动或有旧耕地**的格，按 `cell` 升序。每项：
+- `year` / `cum` 只放流量，两边**同名**，**七项全部是严格整数**（不会出现 `null`）。
+  `cum` 是引擎里那本同名累计账的当前值 —— 包括 `forage_effort_m`：
+  采集劳动在相位前按冻结的人数逐年累加，**进状态哈希、进检查点、跟着续演走**。
+  第 0 年七项的 `year` 与 `cum` 都恰好是 0。
+- 两项劳动可以互相印证：任何一年
+  `year.farm_effort_m + year.forage_effort_m == Σ participants.population_before × 1000`。
+- `cells`：本年**有劳动或有旧耕地**的格，按 `cell` 升序。
+  "有劳动"包括**只有采集劳动**的情况 —— 所以 `FARM_M=0` 时 `cells` 也不是空的：
+  那些格的 `built_m/decayed_m/potential_kcal` 都是 0、`weather_m` 为 `null`，
+  但 `participants` 会如实列出在那儿采集的群体。每项：
 
   | 字段 | 说明 |
   |---|---|
@@ -138,11 +145,12 @@
 OBSERVER_DATA_DIR=/tmp/chronicle-exp07-20260913/api/testdata \
   python3 -m uvicorn observer.app:app --host 127.0.0.1 --port 8902
 
-# 新建一条 EXP-07 运行
+# 新建一条 EXP-07 运行（**演示用 SIGMA_M=400**，这样天气乘数不是恒定的 1000，
+# 界面能看到 weather_m 真的在变；SIGMA_M=0 只适合做受控对照，不适合当演示）
 curl -s -X POST http://127.0.0.1:8902/api/runs -H 'Content-Type: application/json' -d '{
   "seed":4242,"years":300,"engine":"exp07","arm":"memory",
-  "sigma_m":0,"move_mort_m":50,"share_m":1000,"aid_m":1000,"recip_m":1000,"farm_m":250,
-  "label":"耕作演示"}'
+  "sigma_m":400,"move_mort_m":50,"share_m":1000,"aid_m":1000,"recip_m":1000,"farm_m":250,
+  "label":"耕作演示 sigma400"}'
 
 # 看第 1 年的 farm 段与耕作事件
 curl -s http://127.0.0.1:8902/api/runs/<run_id>/year/1 | python3 -m json.tool
@@ -154,8 +162,24 @@ curl -s -X POST http://127.0.0.1:8902/api/runs/<run_id>/continue \
 ```
 
 真实请求与响应（含两个服务的 PID 与起停）在
-`docs/evidence/exp07-20260913/api-report.json` 的 `http_calls` / `services` 段；
-一条完整的耕作年度记录样例在 `docs/evidence/exp07-20260913/sample-year.json`。
+`docs/evidence/exp07-20260913/api-report.json` 的 `http_calls` / `services` 段。
+
+**给 Grok 的可回放样例**：`docs/evidence/exp07-20260913/sample-year.json`
+—— EXP-07 / seed 4242 / **SIGMA_M=400** / FARM_M=250 / 12 年，含第 0、1、2、12 年的完整
+年度记录、`meta.cell_ids` 与 series 尾项。用 SIGMA_M=400 是有意的：
+那时 `weather_m` 每格每年都在变（这份样例里出现了 20 种取值，最低 651），
+界面能看到真实波动；`SIGMA_M=0` 会让 `weather_m` 恒为 1000，只适合做受控对照。
+
+实测第 12 年（可直接对照）：
+
+```
+year: {"farm_effort_m":32500,"forage_effort_m":97500,"potential_kcal":55597711,
+       "harvested_kcal":2986031,"uncollected_kcal":52611680,"built_m":250,"decayed_m":22}
+cum : {"farm_effort_m":371000,"forage_effort_m":1113000,"potential_kcal":603486871,
+       "harvested_kcal":53582401,"uncollected_kcal":549904470,"built_m":33622,"decayed_m":1038}
+```
+
+七项都是整数，且把逐年 `year` 自己加一遍正好等于 `cum`。
 
 ---
 

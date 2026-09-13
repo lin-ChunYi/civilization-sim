@@ -10,7 +10,7 @@ P 参数端到端真正生效；旧引擎正确拒绝 FARM_M
   P4 exp07 的常量表带上三个耕作常量                                      PASS
   P5 旧引擎把 farm_m 列进 unsupported_params                       PASS
   P6 旧引擎的非零 farm_m、越界、小数、布尔全部被准确拒绝                           PASS
-  P7 farm_m=0 时旧引擎照常放行（零值不等于不支持，也不会传给旧引擎）                    PASS   {'run_id': 'f1275a8e3038', 'status': 'queued'}
+  P7 farm_m=0 时旧引擎照常放行（零值不等于不支持，也不会传给旧引擎）                    PASS   {'run_id': 'c8786e0b623f', 'status': 'queued'}
   P8 旧引擎的年度记录里整个 farm 段缺席（不填 0 冒充支持）                         PASS
   P9 同种子只改 FARM_M，结果就不同（参数真的走到了引擎里）                          PASS   ece38ebbe23bec… vs 05866027cee379…
 
@@ -19,32 +19,48 @@ R 年度记录的 farm 段：口径固定、第 0 年全 0、参与者来自相�
   R2 第 0 年：year 全 0、cells 空、field_m 全 0                      PASS
   R3 year 与 cum 的流量字段齐全且同名                                   PASS   ['built_m', 'decayed_m', 'farm_effort_m', 'forage_effort_m', 'harvested_kcal', 'potential_kcal', 'uncollected_kcal']
   R4 耕地规模是存量：field_total_m 单列，不混进累计流量                        PASS
-  R5 cells 只列本年有劳动或有旧耕地的格，按 cell 升序                          PASS   2 格
-  R6 participants 字段齐全，id 是字符串，人数来自相位前状态                     PASS   {'id': '10929267446675359160', 'population_before': 21, 'farm_effort_m': 5250, 'forage_effort_m': 15750, 'fora
+  R5 cells 只列本年有劳动或有旧耕地的格，按 cell 升序                          PASS   6 格
+  R6 participants 字段齐全，id 是字符串，人数来自相位前状态                     PASS   {'id': '7567856178022945294', 'population_before': 21, 'farm_effort_m': 5250, 'forage_effort_m': 15750, 'forag
   R7 劳动预算在记录层也对得上：耕作 + 采集 == 人数 × 1000                       PASS
-  R8 series 只放轻量 farm（year/cum/field_total_m），不放参与者与完整 cells PASS   {'field_total_m', 'year', 'cum'}
+  R8 series 只放轻量 farm（year/cum/field_total_m），不放参与者与完整 cells PASS   {'field_total_m', 'cum', 'year'}
+  R8b 七项流量 year/cum 全是严格整数，且 cum == 逐年 year 的独立重算和           PASS   []
+  R8c 第 0 年：七项 year 与 cum 都恰好是 0（不是 null，也不是漏字段）             PASS   {'farm_effort_m': 0, 'forage_effort_m': 0, 'potential_kcal': 0, 'harvested_kcal': 0, 'uncollected_kcal': 0, 'built_m': 0, 'decayed_m': 0}
+  R8d 轻量 series 的 year/cum 与逐年记录逐字段一致                        PASS
+  R8e 采集劳动是真账：cum.forage_effort_m > 0，且当年两项劳动之和 == 人口折算总量    PASS   cum.forage=456000
   R9 耕作事件进 year.events，带稳定 id、展示 year、格、参与者、数量与来源            PASS   20 条，例：t1-field_built-0
   R10 展示 year 由内部 tick 换算而来，且只对 EXP-07 自己的日志换算               PASS
 
+R2 三个 FARM_M 档：cum 严格整数且等于逐年 year 的独立重算和
+  R11 FARM_M=0    的 cum == 独立重算的 Σyear，七项全是整数                PASS   []
+  R11b FARM_M=0    的 cum.forage_effort_m 是真值，不是写死的 0         PASS   forage_cum=979000 farm_cum=0
+  R11c FARM_M=0 时 cells 仍列出**有采集劳动**的格，参与者来自相位前状态            PASS   48 个格年，例：cell=0 参与者 1
+  R11 FARM_M=250  的 cum == 独立重算的 Σyear，七项全是整数                PASS   []
+  R11b FARM_M=250  的 cum.forage_effort_m 是真值，不是写死的 0         PASS   forage_cum=734250 farm_cum=244750
+  R11 FARM_M=1000 的 cum == 独立重算的 Σyear，七项全是整数                PASS   []
+  R11b FARM_M=1000 的 cum.forage_effort_m 是真值，不是写死的 0         PASS   forage_cum=0 farm_cum=495000
+
 S EXP-07 续演：60 + 60 与连续 120 逐年一致
   S1 60+60 与连续 120 年逐年完全一致（含 farm 段与事件 id）                   PASS   rc=0 首处不同=None
+  S1b 续演之后累计仍然连续：cum == 逐年 year 的独立重算和（含第 60/61 年边界）         PASS   []
+  S1c 边界不重计：cum[61] − cum[60] 恰好等于 year[61]                  PASS   {'farm_effort_m': 50000, 'forage_effort_m': 150000}
   S2 EXP-07 的检查点用 obs-recorder-farm-v1，并带上 farm_m            PASS   obs-recorder-farm-v1 / farm_m=250
-  S3 检查点里存了完整耕地、农业日志、账与新游标                                   PASS   field 非零格 13，farm_log 978 条，游标 978
+  S3 检查点里存了完整耕地、农业日志、账（含采集劳动累计）与新游标                          PASS   field 非零格 13，farm_log 978 条，游标 978
 
 T seed=4242 / FARM_M=250：300 年 -> 停服务 -> 新服务 -> 再 300，与连续 600 比较
-  T0 测试服务 A 起来了（端口 8902、独立数据目录）                              PASS   pid=39338
+  T0 测试服务 A 起来了（端口 8902、独立数据目录）                              PASS   pid=50165
   T0b 服务 A 上跑满 300 年                                         PASS   done
   T0c 服务 A 真的退出了                                             PASS   退出码=-15
-  T0d 用同一数据目录起了新服务 B，PID 与 A 不同                              PASS   A=39338 B=39443
+  T0d 用同一数据目录起了新服务 B，PID 与 A 不同                              PASS   A=50165 B=50432
   T0e 新服务认得这条 EXP-07 记录可以从第 300 年继续                          PASS   {"supported": true, "eligible": true, "reason_code": "ready", "reason": "可从第 300 年继续", "fr
   T0f 续演在新服务上跑到第 600 年                                       PASS   done / 600 / 本段 300
   T1 跨服务重启的 0..600 年与连续 600 年逐年完全一致                          PASS   比较范围 0..600，首处不同=None
   T2 第 600 年的完整模型状态、耕地与农业日志全部相同                              PASS   field 总量 804844
   T3 事件 id 逐个相同且全段无重复                                        PASS   95269 个事件
-  T4 第 300 年只出现一次，farm 段的累计流量在边界处连续                          PASS
+  T4 第 300 年只出现一次；0..600 年 cum == 独立重算的 Σyear（边界不重计）         PASS   []
+  T4b 跨服务重启后 cum[301] − cum[300] 恰好等于 year[301]              PASS
 
 O 用**基准代码**真实生成的 EXP-06 旧格式存档，验证更新后仍能续演
-  O1 用基准代码真的生成了一份 EXP-06 旧格式存档（不是新代码伪造的样本）                   PASS   run=4d223f593471 rc=0
+  O1 用基准代码真的生成了一份 EXP-06 旧格式存档（不是新代码伪造的样本）                   PASS   run=1050ef72cdee rc=0
   O2 旧存档就是旧格式：recorder_schema=obs-recorder-v1，params 里没有 farm_m PASS   obs-recorder-v1 / params=['aid_m', 'arm', 'move_mort_m', 'recip_m', 'seed', 'share_m', 'sigma_m']
   O3 新代码读旧 EXP-06 存档：仍然可续演（不会被误判成 config_mismatch）           PASS   {"supported": true, "eligible": true, "reason_code": "ready", "reason": "可从第 40 年继续", "from_year": 40, "max_ad
   O4 旧 EXP-06 存档用新代码续演成功，且仍然是 EXP-06（没被升级成农业世界）              PASS   {"status": "done", "years_done": 50, "engine": "exp06", "farm_m": 0, "years": 51}
@@ -63,7 +79,7 @@ Q 名额边界：49 条时续演占掉第 50 条，worker 不能把自己算成�
   Q5 新请求那一侧照样看上限：满额时续演被 quota_exceeded 挡住                    PASS   quota_exceeded
 
 ================================================================================================
-  通过 45 / 失败 0 / 未覆盖 0（共 45 项）
+  通过 59 / 失败 0 / 未覆盖 0（共 59 项）
   注：未覆盖项**不计入通过**。
 ================================================================================================
 报告已写入 /tmp/chronicle-exp07-20260913/api/report-full.json
