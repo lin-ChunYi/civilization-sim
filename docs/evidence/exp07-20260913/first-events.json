@@ -1,0 +1,968 @@
+[
+ {
+  "seed": 0,
+  "sigma_m": 0,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 12345,
+  "sigma_m": 0,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 777,
+  "sigma_m": 0,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 4242,
+  "sigma_m": 0,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 99,
+  "sigma_m": 0,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 31337,
+  "sigma_m": 0,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 2026,
+  "sigma_m": 0,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 0,
+  "sigma_m": 0,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1000,
+   "potential_kcal": 9125000,
+   "kcal": 9125000,
+   "uncollected_kcal": 0,
+   "per_band_kcal": {
+    "7567856178022945294": 9125000
+   }
+  }
+ },
+ {
+  "seed": 12345,
+  "sigma_m": 0,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1000,
+   "potential_kcal": 9125000,
+   "kcal": 9125000,
+   "uncollected_kcal": 0,
+   "per_band_kcal": {
+    "7567856178022945294": 9125000
+   }
+  }
+ },
+ {
+  "seed": 777,
+  "sigma_m": 0,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1000,
+   "potential_kcal": 9125000,
+   "kcal": 9125000,
+   "uncollected_kcal": 0,
+   "per_band_kcal": {
+    "7567856178022945294": 9125000
+   }
+  }
+ },
+ {
+  "seed": 4242,
+  "sigma_m": 0,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1000,
+   "potential_kcal": 9125000,
+   "kcal": 2549342,
+   "uncollected_kcal": 6575658,
+   "per_band_kcal": {
+    "7567856178022945294": 2549342
+   }
+  }
+ },
+ {
+  "seed": 99,
+  "sigma_m": 0,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1000,
+   "potential_kcal": 9125000,
+   "kcal": 9125000,
+   "uncollected_kcal": 0,
+   "per_band_kcal": {
+    "7567856178022945294": 9125000
+   }
+  }
+ },
+ {
+  "seed": 31337,
+  "sigma_m": 0,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 18,
+   "bands": [
+    "10431967184297706310"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1000,
+   "potential_kcal": 9125000,
+   "kcal": 9125000,
+   "uncollected_kcal": 0,
+   "per_band_kcal": {
+    "10431967184297706310": 9125000
+   }
+  }
+ },
+ {
+  "seed": 2026,
+  "sigma_m": 0,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 18,
+   "bands": [
+    "10431967184297706310"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1000,
+   "potential_kcal": 9125000,
+   "kcal": 6636815,
+   "uncollected_kcal": 2488185,
+   "per_band_kcal": {
+    "10431967184297706310": 6636815
+   }
+  }
+ },
+ {
+  "seed": 0,
+  "sigma_m": 0,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 6,
+   "bands": [
+    "10929267446675359160"
+   ],
+   "worked_m": 10000,
+   "weather_m": 1000,
+   "potential_kcal": 18250000,
+   "kcal": 4539688,
+   "uncollected_kcal": 13710312,
+   "per_band_kcal": {
+    "10929267446675359160": 4539688
+   }
+  }
+ },
+ {
+  "seed": 12345,
+  "sigma_m": 0,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 10000,
+   "weather_m": 1000,
+   "potential_kcal": 18250000,
+   "kcal": 16014831,
+   "uncollected_kcal": 2235169,
+   "per_band_kcal": {
+    "7567856178022945294": 16014831
+   }
+  }
+ },
+ {
+  "seed": 777,
+  "sigma_m": 0,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 14,
+   "bands": [
+    "7527436045698980774"
+   ],
+   "worked_m": 8000,
+   "weather_m": 1000,
+   "potential_kcal": 14600000,
+   "kcal": 12584312,
+   "uncollected_kcal": 2015688,
+   "per_band_kcal": {
+    "7527436045698980774": 12584312
+   }
+  }
+ },
+ {
+  "seed": 4242,
+  "sigma_m": 0,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 10000,
+   "weather_m": 1000,
+   "potential_kcal": 18250000,
+   "kcal": 10014231,
+   "uncollected_kcal": 8235769,
+   "per_band_kcal": {
+    "7567856178022945294": 10014231
+   }
+  }
+ },
+ {
+  "seed": 99,
+  "sigma_m": 0,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 6,
+   "bands": [
+    "10929267446675359160"
+   ],
+   "worked_m": 10000,
+   "weather_m": 1000,
+   "potential_kcal": 18250000,
+   "kcal": 17285031,
+   "uncollected_kcal": 964969,
+   "per_band_kcal": {
+    "10929267446675359160": 17285031
+   }
+  }
+ },
+ {
+  "seed": 31337,
+  "sigma_m": 0,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 6,
+   "bands": [
+    "10929267446675359160"
+   ],
+   "worked_m": 8000,
+   "weather_m": 1000,
+   "potential_kcal": 14600000,
+   "kcal": 637525,
+   "uncollected_kcal": 13962475,
+   "per_band_kcal": {
+    "10929267446675359160": 637525
+   }
+  }
+ },
+ {
+  "seed": 2026,
+  "sigma_m": 0,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 10000,
+   "weather_m": 1000,
+   "potential_kcal": 18250000,
+   "kcal": 3663688,
+   "uncollected_kcal": 14586312,
+   "per_band_kcal": {
+    "7567856178022945294": 3663688
+   }
+  }
+ },
+ {
+  "seed": 0,
+  "sigma_m": 400,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 12345,
+  "sigma_m": 400,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 777,
+  "sigma_m": 400,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 4242,
+  "sigma_m": 400,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 99,
+  "sigma_m": 400,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 31337,
+  "sigma_m": 400,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 2026,
+  "sigma_m": 400,
+  "farm_m": 0,
+  "first_field_built": null,
+  "first_farm_harvest": null
+ },
+ {
+  "seed": 0,
+  "sigma_m": 400,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1315,
+   "potential_kcal": 11999375,
+   "kcal": 11999375,
+   "uncollected_kcal": 0,
+   "per_band_kcal": {
+    "7567856178022945294": 11999375
+   }
+  }
+ },
+ {
+  "seed": 12345,
+  "sigma_m": 400,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 5000,
+   "weather_m": 944,
+   "potential_kcal": 8614000,
+   "kcal": 8614000,
+   "uncollected_kcal": 0,
+   "per_band_kcal": {
+    "7567856178022945294": 8614000
+   }
+  }
+ },
+ {
+  "seed": 777,
+  "sigma_m": 400,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1197,
+   "potential_kcal": 10922625,
+   "kcal": 10922625,
+   "uncollected_kcal": 0,
+   "per_band_kcal": {
+    "7567856178022945294": 10922625
+   }
+  }
+ },
+ {
+  "seed": 4242,
+  "sigma_m": 400,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 5000,
+   "weather_m": 949,
+   "potential_kcal": 8659625,
+   "kcal": 3849598,
+   "uncollected_kcal": 4810027,
+   "per_band_kcal": {
+    "7567856178022945294": 3849598
+   }
+  }
+ },
+ {
+  "seed": 99,
+  "sigma_m": 400,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1232,
+   "potential_kcal": 11242000,
+   "kcal": 11242000,
+   "uncollected_kcal": 0,
+   "per_band_kcal": {
+    "7567856178022945294": 11242000
+   }
+  }
+ },
+ {
+  "seed": 31337,
+  "sigma_m": 400,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 18,
+   "bands": [
+    "10431967184297706310"
+   ],
+   "worked_m": 5000,
+   "weather_m": 1291,
+   "potential_kcal": 11780375,
+   "kcal": 11780375,
+   "uncollected_kcal": 0,
+   "per_band_kcal": {
+    "10431967184297706310": 11780375
+   }
+  }
+ },
+ {
+  "seed": 2026,
+  "sigma_m": 400,
+  "farm_m": 250,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 5000,
+   "amount_m": 5000,
+   "field_before_m": 0,
+   "field_after_m": 5000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 18,
+   "bands": [
+    "10431967184297706310"
+   ],
+   "worked_m": 5000,
+   "weather_m": 892,
+   "potential_kcal": 8139500,
+   "kcal": 6791290,
+   "uncollected_kcal": 1348210,
+   "per_band_kcal": {
+    "10431967184297706310": 6791290
+   }
+  }
+ },
+ {
+  "seed": 0,
+  "sigma_m": 400,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 6,
+   "bands": [
+    "10929267446675359160"
+   ],
+   "worked_m": 10000,
+   "weather_m": 1078,
+   "potential_kcal": 19673500,
+   "kcal": 6634915,
+   "uncollected_kcal": 13038585,
+   "per_band_kcal": {
+    "10929267446675359160": 6634915
+   }
+  }
+ },
+ {
+  "seed": 12345,
+  "sigma_m": 400,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 10000,
+   "weather_m": 944,
+   "potential_kcal": 17228000,
+   "kcal": 16122064,
+   "uncollected_kcal": 1105936,
+   "per_band_kcal": {
+    "7567856178022945294": 16122064
+   }
+  }
+ },
+ {
+  "seed": 777,
+  "sigma_m": 400,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 14,
+   "bands": [
+    "7527436045698980774"
+   ],
+   "worked_m": 8000,
+   "weather_m": 1156,
+   "potential_kcal": 16877600,
+   "kcal": 12601511,
+   "uncollected_kcal": 4276089,
+   "per_band_kcal": {
+    "7527436045698980774": 12601511
+   }
+  }
+ },
+ {
+  "seed": 4242,
+  "sigma_m": 400,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 10000,
+   "weather_m": 949,
+   "potential_kcal": 17319250,
+   "kcal": 11032140,
+   "uncollected_kcal": 6287110,
+   "per_band_kcal": {
+    "7567856178022945294": 11032140
+   }
+  }
+ },
+ {
+  "seed": 99,
+  "sigma_m": 400,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 6,
+   "bands": [
+    "10929267446675359160"
+   ],
+   "worked_m": 10000,
+   "weather_m": 969,
+   "potential_kcal": 17684250,
+   "kcal": 17135553,
+   "uncollected_kcal": 548697,
+   "per_band_kcal": {
+    "10929267446675359160": 17135553
+   }
+  }
+ },
+ {
+  "seed": 31337,
+  "sigma_m": 400,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 14,
+   "bands": [
+    "7527436045698980774"
+   ],
+   "worked_m": 10000,
+   "weather_m": 699,
+   "potential_kcal": 12756750,
+   "kcal": 3979242,
+   "uncollected_kcal": 8777508,
+   "per_band_kcal": {
+    "7527436045698980774": 3979242
+   }
+  }
+ },
+ {
+  "seed": 2026,
+  "sigma_m": 400,
+  "farm_m": 500,
+  "first_field_built": {
+   "tick": 0,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "labour_m": 10000,
+   "amount_m": 10000,
+   "field_before_m": 0,
+   "field_after_m": 10000
+  },
+  "first_farm_harvest": {
+   "tick": 1,
+   "cell": 0,
+   "bands": [
+    "7567856178022945294"
+   ],
+   "worked_m": 10000,
+   "weather_m": 818,
+   "potential_kcal": 14928500,
+   "kcal": 4279554,
+   "uncollected_kcal": 10648946,
+   "per_band_kcal": {
+    "7567856178022945294": 4279554
+   }
+  }
+ }
+]
