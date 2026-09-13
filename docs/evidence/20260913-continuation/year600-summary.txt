@@ -1,0 +1,1 @@
+第600年 人口 547 群体 29 | 账本误差 {'conservation_error': 0, 'population_identity_error': 0, 'share_ledger_error': 0, 'aid_ledger_error': 0, 'aid_memory_error': 0}

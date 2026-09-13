@@ -74,6 +74,16 @@ CANCEL_GRACE_SEC = float(os.environ.get("OBSERVER_CANCEL_GRACE", "15"))
 # API 契约版本。新增字段递增小版本；删改字段必须先改契约文档再动代码。
 API_VERSION = "obs-1.8"
 
+# --- 续演（C_CONT_01）---
+# 只有**新建的 EXP-06 运行**才会写检查点；旧运行与预生成案例没有检查点，
+# 也就没有续演资格 —— 不自动补跑，不拿最后一年的画面冒充检查点。
+CONTINUATION_ENGINES = ("exp06",)
+MAX_ADDITIONAL_YEARS = 300          # 一次续演最多新增多少年
+MIN_ADDITIONAL_YEARS = 1
+# 累计世界年上限。**这是上限，不是"已经标定到 3000 年"**：本轮实测到 600 年。
+MAX_WORLD_YEAR = int(os.environ.get("OBSERVER_MAX_WORLD_YEAR", "3000"))
+CHECKPOINT_NAME = "checkpoint.json"
+
 # --- 访问保护 ---
 # 设了 OBSERVER_TOKEN：所有 /api 请求都要带令牌（服务端校验，前端不硬编码）。
 # 没设：只读接口开放，写接口仅允许来自本机 —— 本地单用户模式。

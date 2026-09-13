@@ -98,6 +98,10 @@ observer/
 `/api/runs/{id}` `/api/runs/{id}/series` `/api/runs/{id}/year/{t}`
 `/api/runs/{id}/band/{band_id}[?at_year=N]` `/api/runs/{id}/relations[?at_year=N]`
 写：`POST /api/runs`（新建并启动）`POST /api/runs/{id}/cancel` `DELETE /api/runs/{id}`
+`POST /api/runs/{id}/continue`（从检查点续演，只接受 `additional_years` 与 `request_id`）
+
+只读还有 `GET /api/runs/{id}/continuation`（这条记录此刻能不能续演；`supported` 是引擎能力、
+`eligible` 是这条记录此刻的状态，两者不混用）。
 
 取消是**有界**的：正常工作进程在当前这一年算完后自己停下；卡住的在协作窗口
 （`OBSERVER_CANCEL_GRACE`，默认 15 秒）用完后被停止；进程身份查不到时**一个信号都不发**。
@@ -261,7 +265,13 @@ exp03/exp04 的记录完全不变，前端必须容忍缺席。字段见
 
 ## 已知限制（不要当成已解决）
 
-1. **不做跨进程续跑。** 服务重启时，先**停掉**可能还活着的旧工作进程（SIGTERM，必要时 SIGKILL），
+1. **一次运行被打断之后，本身不会自动接着跑。** 但 EXP-06 的新建运行会在每个完整年度边界
+   写检查点，可以显式**续演**：`POST /api/runs/{id}/continue` 会新建一条子运行，
+   先原样复制父运行的历史前缀，再从检查点接着算。口径、原因码与限制见
+   [`../docs/OBS-CONTINUATION-CONTRACT.md`](../docs/OBS-CONTINUATION-CONTRACT.md)。
+   只有 EXP-06 写检查点；旧运行与预生成案例没有检查点，因此没有续演资格，也不自动补跑。
+   累计世界年上限 3000，**实测到 600 年**。
+1b. **服务重启不做跨进程续跑。** 服务重启时，先**停掉**可能还活着的旧工作进程（SIGTERM，必要时 SIGKILL），
    **核实它确实不在了**，再把这条任务标为**“中断”**；工作进程那边所有数据库写入都带围栏，
    所以标成中断之后谁也改不回 `done`。已完整保存的年份仍可回放，继续推进请新建运行。
    停不下来、或者停没停下来查不到时，记录**保持活动状态、任务槽继续占着**，

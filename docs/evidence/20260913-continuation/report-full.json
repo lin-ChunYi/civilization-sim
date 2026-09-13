@@ -1,0 +1,411 @@
+{
+ "task": "C_CONT_01",
+ "generated_at": 1789272207.295448,
+ "repo": "/Users/ecool/civilization-sim-obs-continuation",
+ "data_dir": "/tmp/chronicle-cont-20260913/testdata",
+ "params": {
+  "seed": 4242,
+  "sigma_m": 400,
+  "move_mort_m": 50,
+  "share_m": 1000,
+  "aid_m": 1000,
+  "recip_m": 1000,
+  "arm": "memory",
+  "engine_name": "exp06"
+ },
+ "seeds": [
+  0,
+  777,
+  4242
+ ],
+ "quick": false,
+ "engine": {
+  "engine": "exp06",
+  "engine_label": "EXP-06 援助记忆与优先回助",
+  "engine_params": [
+   "sigma_m",
+   "move_mort_m",
+   "share_m",
+   "aid_m",
+   "recip_m"
+  ],
+  "params": [
+   {
+    "label": "随机种子",
+    "unit": "整数",
+    "min": 0,
+    "max": 2147483647,
+    "default": 0,
+    "note": "同种子同参数逐位可复现。",
+    "name": "seed"
+   },
+   {
+    "label": "模拟年数",
+    "unit": "年",
+    "min": 1,
+    "max": 3000,
+    "default": 120,
+    "note": "服务端上限见 limits.max_years。",
+    "name": "years"
+   },
+   {
+    "label": "资源再生年际波动",
+    "unit": "‰（千分之一）",
+    "min": 0,
+    "max": 1000,
+    "default": 0,
+    "note": "0 = 无波动（退化为 EXP-01）。不是气候模型，是受控的资源扰动源。",
+    "name": "sigma_m"
+   },
+   {
+    "label": "迁移死亡强度",
+    "unit": "‰（千分之一）",
+    "min": 0,
+    "max": 1000,
+    "default": 0,
+    "note": "代价作用于人口而不是储存，适用于所有迁移，不是只罚误判。",
+    "name": "move_mort_m"
+   },
+   {
+    "label": "同格信息交换的参与概率",
+    "unit": "‰（千分之一）",
+    "min": 0,
+    "max": 1000,
+    "default": 0,
+    "note": "每个群体每年抽一次签；0 = 不交换。",
+    "name": "share_m"
+   },
+   {
+    "label": "供给方愿意拿出的可援助余粮比例",
+    "unit": "‰（千分之一）",
+    "min": 0,
+    "max": 1000,
+    "default": 0,
+    "note": "**不是参与概率**。先保留自己当年的需求，超出部分按这个比例作为预算。",
+    "name": "aid_m"
+   },
+   {
+    "label": "优先回助的预算比例",
+    "unit": "‰（千分之一）",
+    "min": 0,
+    "max": 1000,
+    "default": 0,
+    "note": "预算中优先分给'以前帮过我、现在同格且缺粮'的群体的比例；没用掉的回到普通援助。0 = 不做优先回助。",
+    "name": "recip_m"
+   }
+  ],
+  "engine_path": "exp06/verify6.py",
+  "engine_sha256": "43c9338551a23d6d7065f657394a25d5be041e63724ab12a23350bde53e5d186",
+  "baseline_commit": "本轮实现（待审）",
+  "params_fingerprint": "61110bc34d58a829",
+  "unsupported_params": [],
+  "metrics": {
+   "population_identity": true,
+   "conservation": true,
+   "sigma": true,
+   "move_mort": true,
+   "share": true,
+   "aid": true,
+   "recip": true
+  },
+  "recorded_note": "year/cum 与 band 只含冻结引擎状态里实际存在的键；省略的指标未测量，界面须显示未记录，禁止填 0 冒充。",
+  "constants": {
+   "NEED_PC": 730000,
+   "MILLE": 1000,
+   "SPLIT_SIZE": 40,
+   "SPOIL_M": 250,
+   "MOVE_LOSS_M": 150,
+   "MIG_E_M": 1000,
+   "MIG_GAIN_M": 1250,
+   "SHOCK_P_M": 20,
+   "K_HALF": 30,
+   "SIGMA_M_MAX": 1000,
+   "MOVE_MORT_M_MAX": 1000,
+   "SHARE_M_MAX": 1000,
+   "AID_M_MAX": 1000,
+   "RECIP_M_MAX": 1000
+  }
+ },
+ "commands": [
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "894f7b92130f",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -c import sys; sys.path.insert(0, '/Users/ecool/civilization-sim-obs-continuation')\nfrom observer import adapter, worker\ndef _boom(*a, **k):\n    raise AssertionError('续演不应调用 make_world')\nadapter.make_world = _boom\nsys.exit(worker.execute('163aab617cc6'))\n <stub>",
+   "run_id": "163aab617cc6",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "9e36f8dce411",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "ee66250b3aca",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -c import sys; sys.path.insert(0, '/Users/ecool/civilization-sim-obs-continuation')\nfrom observer import adapter, worker\ndef _boom(*a, **k):\n    raise AssertionError('续演不应调用 make_world')\nadapter.make_world = _boom\nsys.exit(worker.execute('f11b592b18b6'))\n <stub>",
+   "run_id": "f11b592b18b6",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "04b3128b4d8b",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "09f61de1241a",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -c import sys; sys.path.insert(0, '/Users/ecool/civilization-sim-obs-continuation')\nfrom observer import adapter, worker\ndef _boom(*a, **k):\n    raise AssertionError('续演不应调用 make_world')\nadapter.make_world = _boom\nsys.exit(worker.execute('93a2886fb883'))\n <stub>",
+   "run_id": "93a2886fb883",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "5276ad379744",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "88503e62882c",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -c import sys; sys.path.insert(0, '/Users/ecool/civilization-sim-obs-continuation')\nfrom observer import adapter, worker\ndef _boom(*a, **k):\n    raise AssertionError('续演不应调用 make_world')\nadapter.make_world = _boom\nsys.exit(worker.execute('f545d9b7130b'))\n <stub>",
+   "run_id": "f545d9b7130b",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "23b50dea7617",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "f76d3a14bdf4",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "0761bbd91a59",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -c import sys; sys.path.insert(0, '/Users/ecool/civilization-sim-obs-continuation')\nfrom observer import adapter, worker\ndef _boom(*a, **k):\n    raise AssertionError('续演不应调用 make_world')\nadapter.make_world = _boom\nsys.exit(worker.execute('88f6518c5d02'))\n <stub>",
+   "run_id": "88f6518c5d02",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -c import sys; sys.path.insert(0, '/Users/ecool/civilization-sim-obs-continuation')\nfrom observer import adapter, worker\ndef _boom(*a, **k):\n    raise AssertionError('续演不应调用 make_world')\nadapter.make_world = _boom\nsys.exit(worker.execute('f320a43059ad'))\n <stub>",
+   "run_id": "f320a43059ad",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -c import sys; sys.path.insert(0, '/Users/ecool/civilization-sim-obs-continuation')\nfrom observer import adapter, worker\ndef _boom(*a, **k):\n    raise AssertionError('续演不应调用 make_world')\nadapter.make_world = _boom\nsys.exit(worker.execute('bfe497a51341'))\n <stub>",
+   "run_id": "bfe497a51341",
+   "exit_code": 0,
+   "stderr_tail": ""
+  },
+  {
+   "cmd": "/Users/ecool/miniforge3/bin/python3 -m observer.worker",
+   "run_id": "295102c819da",
+   "exit_code": 0,
+   "stderr_tail": ""
+  }
+ ],
+ "results": [
+  {
+   "name": "K1 seed=0 60+60 与连续 120 逐年完全一致（且未调用 make_world）",
+   "state": "PASS",
+   "detail": "rc=0 首处不同=None"
+  },
+  {
+   "name": "K1b seed=0 full_digest 与连续计算相同",
+   "state": "PASS",
+   "detail": "e4fe0f9137cd5a9a34efddad7626c5e1"
+  },
+  {
+   "name": "K1c seed=0 **完整模型状态与全部日志**逐字段相同（不只看末人口）",
+   "state": "PASS",
+   "detail": "log/aid_log/share_log 长度 (4, 0, 0) vs (4, 0, 0)"
+  },
+  {
+   "name": "K1d seed=0 稳定事件 id 逐个相同，且全局无重复",
+   "state": "PASS",
+   "detail": "25 个事件"
+  },
+  {
+   "name": "K1 seed=777 60+60 与连续 120 逐年完全一致（且未调用 make_world）",
+   "state": "PASS",
+   "detail": "rc=0 首处不同=None"
+  },
+  {
+   "name": "K1b seed=777 full_digest 与连续计算相同",
+   "state": "PASS",
+   "detail": "8609b013080f68f2f3de330a457e8e42"
+  },
+  {
+   "name": "K1c seed=777 **完整模型状态与全部日志**逐字段相同（不只看末人口）",
+   "state": "PASS",
+   "detail": "log/aid_log/share_log 长度 (0, 2, 99) vs (0, 2, 99)"
+  },
+  {
+   "name": "K1d seed=777 稳定事件 id 逐个相同，且全局无重复",
+   "state": "PASS",
+   "detail": "145 个事件"
+  },
+  {
+   "name": "K1 seed=4242 60+60 与连续 120 逐年完全一致（且未调用 make_world）",
+   "state": "PASS",
+   "detail": "rc=0 首处不同=None"
+  },
+  {
+   "name": "K1b seed=4242 full_digest 与连续计算相同",
+   "state": "PASS",
+   "detail": "df1a9f4798463f545288f85ac096169b"
+  },
+  {
+   "name": "K1c seed=4242 **完整模型状态与全部日志**逐字段相同（不只看末人口）",
+   "state": "PASS",
+   "detail": "log/aid_log/share_log 长度 (2, 7, 202) vs (2, 7, 202)"
+  },
+  {
+   "name": "K1d seed=4242 稳定事件 id 逐个相同，且全局无重复",
+   "state": "PASS",
+   "detail": "246 个事件"
+  },
+  {
+   "name": "K2 300+300 与连续 600 逐年完全一致（续演进程被禁止调用 make_world）",
+   "state": "PASS",
+   "detail": "rc=0 首处不同=None"
+  },
+  {
+   "name": "K2b 第 600 年的完整模型状态与日志相同",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "K2c 全局进度与本段进度分开：years_done=600，本段只算了 300 步",
+   "state": "PASS",
+   "detail": "600 / 300"
+  },
+  {
+   "name": "K3a 第 300 年只出现一次，年号连续无重复",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "K3b 第 301 年的年度账 == 301 与 300 的累计账之差（记录器前值接上了）",
+   "state": "PASS",
+   "detail": "对不上的字段：[]"
+  },
+  {
+   "name": "K3c 全段事件 id 无重复",
+   "state": "PASS",
+   "detail": "5818 个"
+  },
+  {
+   "name": "K3d 第 300 年之后的回助仍能引用继承历史中的原始援助 id（且能跳回去）",
+   "state": "PASS",
+   "detail": "第 314 年的回助依据 t128-aid-2"
+  },
+  {
+   "name": "K4a 资源 / 人口 / 信息 / 援助 / 援助记忆五本账全段恒等",
+   "state": "PASS",
+   "detail": "[]"
+  },
+  {
+   "name": "K5a 八类坏档 / 不合格来源各自给出确定且正确的原因码",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "K5b 尾部半条只被排除在有效前缀外，原文件不改写、仍可续演",
+   "state": "PASS",
+   "detail": "半条仍在文件里"
+  },
+  {
+   "name": "K5c 检查点落后时：历史照常可回放，但明确拒绝续演，不删历史也不伪造新检查点",
+   "state": "PASS",
+   "detail": "完整历史已经到第 20 年，检查点停在第 19 年。历史仍可回放，但本版不从对不齐的地方续演；不会删历史，也不会伪造较新"
+  },
+  {
+   "name": "K5d 同一 request_id 重试返回同一条子运行，不重复启动",
+   "state": "PASS",
+   "detail": "{'run_id': '5f51d9c1cd3f', 'reused': True}"
+  },
+  {
+   "name": "K5e 同一 request_id 配不同请求 -> 冲突，不当成新任务",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "K5f 槽被占时不建第二条子运行（复制历史也占这个槽）",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "K5g 删掉子运行后，同一 request_id 也不能重放成新任务",
+   "state": "PASS",
+   "detail": "{'run_id': '5f51d9c1cd3f', 'reused': True}"
+  },
+  {
+   "name": "K4b 父运行的历史文件与检查点在续演之后逐字节不变",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "K6a 三次续演接出来的 50 年与连续 50 年逐年一致",
+   "state": "PASS",
+   "detail": "首处不同=None"
+  },
+  {
+   "name": "K6b 边界年不重复、事件 id 不重复",
+   "state": "PASS",
+   "detail": "25 个事件"
+  },
+  {
+   "name": "K6c 每一代的血缘都指回最初那条运行",
+   "state": "PASS",
+   "detail": "[20, 30, 40]"
+  },
+  {
+   "name": "K6d 来源还活着 / 状态未知时一律不放行",
+   "state": "PASS",
+   "detail": "source_active"
+  }
+ ],
+ "totals": {
+  "pass": 32,
+  "fail": 0,
+  "uncovered": 0,
+  "total": 32
+ },
+ "parent_files_unchanged": {
+  "history_sha256": "bf7969b20e606b203a59ea64799c70931c84f3f0105bda66ed0695142b324cd8",
+  "checkpoint_sha256": "1759f2024bf71a630d7d1c732bea3cd8a2fc69c74c960f7500eb55677b5f3257"
+ }
+}

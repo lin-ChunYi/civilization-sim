@@ -2224,6 +2224,19 @@ with TestClient(app) as c18:
           preset["version"]["recorded"]["engine_sha256"]
           and preset["version"]["recorded"]["engine_path"] == "exp06/verify6.py")
 
+# ---------------------------------------------------------------- 续演
+print("\nO35 续演（C_CONT_01）：保存后继续计算的定向验收随主套件一起跑")
+_cont = subprocess.run([sys.executable, str(REPO / "observer" / "test_continuation.py"),
+                        "--quick"], cwd=REPO, capture_output=True, text=True,
+                       env={**os.environ, "CONT_TEST_DATA": str(TEST_DATA / "cont")})
+_line = next((ln for ln in reversed((_cont.stdout or "").splitlines())
+              if "通过" in ln and "失败" in ln), "")
+check("O35a 续演定向验收（observer/test_continuation.py --quick）",
+      _cont.returncode == 0 and "失败 0" in _line, _line.strip()[:70]
+      or (_cont.stderr or "")[-70:])
+print("      注：--quick 跳过 300+300 的长跑；完整版（含 600 年）单独执行，"
+      "证据见 docs/evidence/20260913-continuation/")
+
 # ---------------------------------------------------------------- 冻结目录
 print("\nO12 冻结基线未被改动")
 for rev, d in (("20da486", "exp01"), ("c5a1f18", "exp02"), ("6b6af4f", "exp03")):

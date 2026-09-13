@@ -1,0 +1,1 @@
+{"supported":false,"eligible":false,"reason_code":"unsupported_engine","reason":"引擎 exp03 本批不写检查点，无法续演（目前只有 exp06 支持）","from_year":null,"max_additional_years":0,"max_world_year":3000,"checkpoint_schema":"obs-checkpoint-v1"}

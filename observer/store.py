@@ -46,6 +46,13 @@ CREATE TABLE IF NOT EXISTS runs (
   baseline_commit TEXT NOT NULL DEFAULT '',
   repo_commit   TEXT NOT NULL DEFAULT '',
   api_version   TEXT NOT NULL DEFAULT '',             -- 产出这条记录时服务的契约版本
+  -- 续演血缘（C_CONT_01）。普通运行 root=自己、parent 为空、from_year=0。
+  root_run_id   TEXT NOT NULL DEFAULT '',
+  parent_run_id TEXT NOT NULL DEFAULT '',
+  from_year     INTEGER NOT NULL DEFAULT 0,            -- 这一段从第几年开始算
+  additional_years INTEGER NOT NULL DEFAULT 0,         -- 这一段要新增几年
+  completed_steps  INTEGER NOT NULL DEFAULT 0,         -- **这一段**实际算完几步
+  history_ready INTEGER NOT NULL DEFAULT 0,            -- 完整历史前缀是否已发布
   model_run_id  TEXT NOT NULL DEFAULT '',
   full_digest   TEXT NOT NULL DEFAULT '',
   error         TEXT NOT NULL DEFAULT '',
@@ -88,13 +95,32 @@ MIGRATIONS = (("share_m", "INTEGER NOT NULL DEFAULT 0"),
               ("cancel_note", "TEXT NOT NULL DEFAULT ''"),
               ("cancel_last_attempt_at", "REAL"),
               ("recovery_note", "TEXT NOT NULL DEFAULT ''"),
-              ("api_version", "TEXT NOT NULL DEFAULT ''"))
+              ("api_version", "TEXT NOT NULL DEFAULT ''"),
+              ("root_run_id", "TEXT NOT NULL DEFAULT ''"),
+              ("parent_run_id", "TEXT NOT NULL DEFAULT ''"),
+              ("from_year", "INTEGER NOT NULL DEFAULT 0"),
+              ("additional_years", "INTEGER NOT NULL DEFAULT 0"),
+              ("completed_steps", "INTEGER NOT NULL DEFAULT 0"),
+              ("history_ready", "INTEGER NOT NULL DEFAULT 0"))
+
+# 续演请求的幂等映射。**删掉子运行也不能让同一个 request_id 重放成新任务**，
+# 所以这张表独立于 runs，不跟着级联删除。
+CONTINUATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS continuations (
+  request_id    TEXT PRIMARY KEY,
+  parent_run_id TEXT NOT NULL,
+  additional_years INTEGER NOT NULL,
+  child_run_id  TEXT NOT NULL,
+  created_at    REAL NOT NULL
+);
+"""
 
 
 def init_db() -> None:
     config.RUNS_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        conn.executescript(CONTINUATION_SCHEMA)
         have = {r["name"] for r in conn.execute("PRAGMA table_info(runs)").fetchall()}
         for col, decl in MIGRATIONS:
             if col not in have:
@@ -103,6 +129,11 @@ def init_db() -> None:
 
 def run_dir(run_id: str) -> Path:
     return config.RUNS_DIR / run_id
+
+
+def checkpoint_path(run_id: str) -> Path:
+    """检查点只放在服务自己的数据目录里，**不接受任意路径**。"""
+    return run_dir(run_id) / config.CHECKPOINT_NAME
 
 
 def years_path(run_id: str) -> Path:
@@ -139,12 +170,13 @@ def claim_slot(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: st
         conn.execute(
             "INSERT INTO runs (run_id,label,kind,status,created_at,seed,years,sigma_m,"
             "move_mort_m,share_m,aid_m,recip_m,engine,arm,engine_sha256,engine_path,"
-            "baseline_commit,repo_commit,api_version) "
-            "VALUES (?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "baseline_commit,repo_commit,api_version,"
+            "root_run_id,parent_run_id,from_year,additional_years) "
+            "VALUES (?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'',0,?)",
             (run_id, label, kind, time.time(), seed, years, sigma_m, move_mort_m,
              share_m, aid_m, recip_m, engine_name or config.DEFAULT_ENGINE, arm,
              engine["engine_sha256"], engine["engine_path"], engine["baseline_commit"],
-             repo_commit, api_version))
+             repo_commit, api_version, run_id, years))
         conn.execute("COMMIT")
     except Exception:
         try:
@@ -158,6 +190,93 @@ def claim_slot(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: st
     return run_id
 
 
+def claim_continuation(parent: Dict[str, Any], *, request_id: str, additional_years: int,
+                       target_years: int, from_year: int, repo_commit: str = "",
+                       api_version: str = "", label: str = "") -> Dict[str, Any]:
+    """**占槽 + 建子运行 + 登记 request_id，同一个事务里做完。**
+
+    返回 `{"run_id", "reused"}`；`reused=True` 表示这是同一个 request_id 的重试，
+    直接把原来那条子运行还回去，绝不重复启动。
+
+    同一个 request_id 配了不同的父运行或不同的新增年数 -> 抛 `IdempotencyConflict`。
+    槽被占 -> 返回 None（调用方按 409 处理）。
+    """
+    init_db()
+    now = time.time()
+    child_id = uuid.uuid4().hex[:12]
+    conn = sqlite3.connect(config.DB_PATH, timeout=20.0, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("BEGIN IMMEDIATE")
+        prior = conn.execute(
+            "SELECT * FROM continuations WHERE request_id=?", (request_id,)).fetchone()
+        if prior is not None:
+            conn.execute("ROLLBACK")
+            if prior["parent_run_id"] != parent["run_id"] or \
+                    int(prior["additional_years"]) != int(additional_years):
+                raise IdempotencyConflict(
+                    "同一个 request_id 之前用的是父运行 %s / 新增 %d 年，这次不一样"
+                    % (prior["parent_run_id"], prior["additional_years"]))
+            return {"run_id": prior["child_run_id"], "reused": True}
+        busy = conn.execute("SELECT run_id FROM runs WHERE status IN (?,?) LIMIT 1",
+                            _STATUS_ACTIVE).fetchone()
+        if busy:
+            conn.execute("ROLLBACK")
+            return None
+        conn.execute(
+            "INSERT INTO runs (run_id,label,kind,status,created_at,seed,years,sigma_m,"
+            "move_mort_m,share_m,aid_m,recip_m,engine,arm,engine_sha256,engine_path,"
+            "baseline_commit,repo_commit,api_version,"
+            "root_run_id,parent_run_id,from_year,additional_years,history_ready) "
+            "VALUES (?,?,'user','queued',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)",
+            (child_id, label or ("续演自 %s（第 %d 年起）" % (parent["run_id"], from_year)),
+             now, parent["seed"], target_years, parent["sigma_m"], parent["move_mort_m"],
+             parent["share_m"], parent["aid_m"], parent["recip_m"], parent["engine"],
+             parent["arm"], parent["engine_sha256"], parent["engine_path"],
+             parent["baseline_commit"], repo_commit, api_version,
+             parent["root_run_id"] or parent["run_id"], parent["run_id"],
+             from_year, additional_years))
+        conn.execute("INSERT INTO continuations (request_id,parent_run_id,additional_years,"
+                     "child_run_id,created_at) VALUES (?,?,?,?,?)",
+                     (request_id, parent["run_id"], int(additional_years), child_id, now))
+        conn.execute("COMMIT")
+    except IdempotencyConflict:
+        raise
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:                                            # noqa: BLE001
+            pass
+        raise
+    finally:
+        conn.close()
+    run_dir(child_id).mkdir(parents=True, exist_ok=True)
+    return {"run_id": child_id, "reused": False}
+
+
+def dependents(parent_run_id: str) -> List[Dict[str, Any]]:
+    """还在排队 / 正在跑、并且依赖这个父运行的子运行。"""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT run_id,status FROM runs WHERE parent_run_id=? AND status IN (?,?)",
+            (parent_run_id, *_STATUS_ACTIVE)).fetchall()]
+
+
+def mark_history_ready(run_id: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE runs SET history_ready=1 WHERE run_id=?", (run_id,))
+
+
+def set_segment_progress(run_id: str, pid: int, completed_steps: int) -> bool:
+    """**这一段**算完了几步。与 years_done（全局进度）分开记，父历史不冒充本段进度。"""
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE runs SET completed_steps=? WHERE run_id=? AND status='running' AND pid=?",
+            (int(completed_steps), run_id, pid))
+        return cur.rowcount == 1
+
+
 def set_pid(run_id: str, pid: int) -> None:
     """只写 pid，**不碰 status** —— 否则会把工作进程已经推进到的 running/done 打回 queued。"""
     with connect() as conn:
@@ -168,6 +287,10 @@ def drop_run_row(run_id: str) -> None:
     """占槽后启动失败时把槽还回去。"""
     with connect() as conn:
         conn.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
+
+
+class IdempotencyConflict(Exception):
+    """同一个 request_id 配了不同的请求内容。**不能悄悄当成新任务。**"""
 
 
 _UNSET = object()

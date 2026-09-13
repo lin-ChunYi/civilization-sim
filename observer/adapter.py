@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import sys
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
@@ -33,16 +34,26 @@ def _param_spec(name: str, engine_mod) -> Dict[str, Any]:
 
 @lru_cache(maxsize=8)
 def load_engine(name: str = None):
-    """只读加载指定引擎，返回 (module, sha256)。"""
+    """只读加载指定引擎，返回 (module, sha256)。
+
+    **算哈希的那份字节，就是真正被执行的那份字节。** 原来是读一次算 sha、
+    再让 `exec_module` 自己去磁盘读第二次 —— 两次读之间文件可以变，
+    于是"校验过的源码"和"实际跑的源码"可能不是同一份。现在只读一次，
+    对同一段字节做哈希并 `compile` 执行。
+
+    引擎名必须在 `config.ENGINES` 这张白名单里：**不接受由请求指定的代码路径**。
+    """
     name = name or config.DEFAULT_ENGINE
     if name not in config.ENGINES:
         raise ValueError(f"未登记的引擎：{name}")
     path = config.ENGINES[name]["path"]
-    src = path.read_bytes()
+    src = path.read_bytes()                      # 只读这一次
     sha = hashlib.sha256(src).hexdigest()
     spec = importlib.util.spec_from_file_location(f"{name}_engine_readonly", str(path))
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod.__dict__["__file__"] = str(path)
+    sys.modules.setdefault(spec.name, mod)
+    exec(compile(src, str(path), "exec"), mod.__dict__)   # 执行的就是刚哈希过的那段
     return mod, sha
 
 
@@ -183,6 +194,52 @@ class Recorder:
         self._aid_len = 0
         self._names: Dict[str, str] = {}
         self._birth_year: Dict[str, int] = {}
+
+    # -- 续演用的内部状态导出 / 恢复 ------------------------------------
+    # 记录器不是无状态的：它记着上一年的账本、事件游标、显示名、出生年、
+    # 以及"谁以前援助过谁"的事件索引。续演时必须把这些原样接上 ——
+    # 拿一个空记录器从第 C+1 年开始，会把整段历史的事件游标清零、
+    # 把显示名重新分配、把回助的依据链断掉。
+    STATE_FIELDS = ("_prev_cum", "_prev_cells", "_log_len", "_share_len", "_aid_len",
+                    "_aid_by_pair", "_names", "_birth_year")
+
+    def export_state(self) -> Dict[str, Any]:
+        """导出记录器内部状态。`_aid_by_pair` 的键是 (供给方, 接收方) 整数二元组，
+        编码层保留 tuple 与 int，不会被压成字符串。"""
+        return {
+            "schema": "obs-recorder-v1",
+            "engine": self.engine,
+            "_prev_cum": None if self._prev_cum is None else dict(self._prev_cum),
+            "_prev_cells": dict(self._prev_cells),
+            "_log_len": int(self._log_len),
+            "_share_len": int(self._share_len),
+            "_aid_len": int(self._aid_len),
+            "_aid_by_pair": {k: list(v) for k, v in self._aid_by_pair.items()},
+            "_names": dict(self._names),
+            "_birth_year": dict(self._birth_year),
+        }
+
+    @classmethod
+    def from_state(cls, state: Dict[str, Any]) -> "Recorder":
+        """按导出的状态重建记录器。字段缺一不可 —— 宁可拒绝，也不拿默认值凑。"""
+        if not isinstance(state, dict) or state.get("schema") != "obs-recorder-v1":
+            raise ValueError("记录器状态格式不认识：%r" % (state or {}).get("schema"))
+        engine = state.get("engine")
+        if not isinstance(engine, str) or not engine:
+            raise ValueError("记录器状态里没有引擎名")
+        missing = [k for k in cls.STATE_FIELDS if k not in state]
+        if missing:
+            raise ValueError("记录器状态缺字段：%s" % ", ".join(missing))
+        rec = cls(engine)
+        rec._prev_cum = None if state["_prev_cum"] is None else dict(state["_prev_cum"])
+        rec._prev_cells = dict(state["_prev_cells"])
+        rec._log_len = int(state["_log_len"])
+        rec._share_len = int(state["_share_len"])
+        rec._aid_len = int(state["_aid_len"])
+        rec._aid_by_pair = {k: list(v) for k, v in state["_aid_by_pair"].items()}
+        rec._names = dict(state["_names"])
+        rec._birth_year = dict(state["_birth_year"])
+        return rec
 
     # -- 只读抽取 ------------------------------------------------------
     def _display_year(self, donor, receiver) -> Dict[str, Any]:

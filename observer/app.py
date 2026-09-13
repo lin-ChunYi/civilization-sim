@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -19,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StrictInt, StrictStr
 
-from . import adapter, config, milestones, presets, store
+from . import adapter, checkpoints, config, continuation, milestones, presets, store
 
 app = FastAPI(title="文明观察台 OBS-01", docs_url=None, redoc_url=None)
 # observer/web/ 归 UI 分支（Grok）所有；后台只读它，不往里写任何文件。
@@ -141,6 +142,13 @@ def health():
 def get_config():
     return {
         "api_version": config.API_VERSION,       # 见 docs/OBS-01-API-CONTRACT.md
+        "continuation": {
+            "engines": list(config.CONTINUATION_ENGINES),
+            "max_additional_years": config.MAX_ADDITIONAL_YEARS,
+            "max_world_year": config.MAX_WORLD_YEAR,
+            "checkpoint_schema": checkpoints.CHECKPOINT_SCHEMA,
+            "note": "max_world_year 是上限，不代表已经标定到这个年数",
+        },
         "token_required": bool(config.TOKEN),
         "limits": {"min_years": config.MIN_YEARS, "max_years": config.MAX_YEARS,
                    "max_runs": config.MAX_RUNS, "max_data_mb": config.MAX_DATA_MB,
@@ -217,6 +225,7 @@ def get_runs():
     for r in runs:
         r["years_recorded"] = max(store.year_count(r["run_id"]) - 1, 0)
         r["cancel"] = store.cancel_stage(r)
+        r.update(_lineage_segment(r))
     return {"runs": runs, "active": store.active_run()}
 
 
@@ -228,6 +237,7 @@ def get_run(run_id: str):
     run["years_recorded"] = max(store.year_count(run_id) - 1, 0)
     run["cancel"] = store.cancel_stage(run)
     run["version"] = _run_version(run)
+    run.update(_lineage_segment(run))
     run["meta"] = store.read_meta(run_id)
     # obs-1.5：这次运行**实际用的**引擎、参数（带标签与单位）、代码版本与状态，
     # 一次给全，前端不用再去拼 /api/config。
@@ -331,6 +341,32 @@ def _run_version(run):
             "matches_running_service": matches,
             "engine_source_unchanged": same_engine,
             "note": "；".join(notes) or "与当前服务是同一版本身份"}
+
+
+def _lineage_segment(run):
+    """血缘与"这一段"的进度。
+
+    `run.years` / `years_done` / `years_recorded` 仍然是**全局**口径（总目标年、全局进度），
+    `segment.completed_steps` 才是**这一次新增**算完了几步 —— 继承来的父历史不冒充本段进度。
+    """
+    parent = run.get("parent_run_id") or None
+    from_year = int(run.get("from_year") or 0)
+    additional = int(run.get("additional_years") or 0) or int(run.get("years") or 0)
+    return {
+        "lineage": {"kind": "continuation" if parent else "origin",
+                    "root_run_id": run.get("root_run_id") or run.get("run_id"),
+                    "parent_run_id": parent,
+                    "from_year": from_year},
+        "segment": {"from_year": from_year,
+                    "additional_years": additional,
+                    "completed_steps": int(run.get("completed_steps") or 0),
+                    "history_ready": bool(run.get("history_ready"))},
+    }
+
+
+def _detail(code, message, status=409):
+    """新接口专用的错误结构。**既有接口的错误格式一个字都不改。**"""
+    return HTTPException(status, {"code": code, "message": message})
 
 
 def _engine_supports(engine_name):
@@ -676,6 +712,93 @@ def cancel_run(run_id: str):
             "cancel": dict(stage, note=note), "note": note}
 
 
+class ContinueRun(BaseModel):
+    """续演请求**只接受这两项**：多算几年 + 客户端生成的幂等键。
+
+    不接受任何模型参数（那些必须与父运行一致），也不接受任何路径字段
+    （检查点只从服务自己的数据目录读）。
+    """
+    additional_years: StrictInt = Field(..., description="这一次新增多少年")
+    request_id: StrictStr = Field(..., description="客户端生成的 UUID，用于幂等重试")
+
+    model_config = {"extra": "forbid"}
+
+
+@app.get("/api/runs/{run_id}/continuation", dependencies=[Depends(require_read)])
+def get_continuation(run_id: str):
+    """这条记录此刻能不能续演。
+
+    `supported` 说的是**引擎**支不支持，`eligible` 说的是**这条记录此刻**行不行，
+    两者不混用。没有检查点时 `from_year` 是 `null` —— 不拿最后一帧画面的年份冒充。
+    """
+    run = store.get_run(run_id)
+    if not run:
+        raise HTTPException(404, "没有这次运行")
+    settle_slot()                       # 先收尾取消 / 回收死记录，判定才是真实状态
+    run = store.get_run(run_id) or run
+    return continuation.eligibility(run)
+
+
+@app.post("/api/runs/{run_id}/continue", dependencies=[Depends(require_write)])
+def post_continue(run_id: str, body: ContinueRun):
+    """从检查点继续算。父运行的状态、文件、日志一概不改。"""
+    parent = store.get_run(run_id)
+    if not parent:
+        raise HTTPException(404, "没有这次运行")
+    if not (config.MIN_ADDITIONAL_YEARS <= body.additional_years
+            <= config.MAX_ADDITIONAL_YEARS):
+        raise HTTPException(400, "additional_years 越界，合法范围 [%d, %d]"
+                            % (config.MIN_ADDITIONAL_YEARS, config.MAX_ADDITIONAL_YEARS))
+    if not re.fullmatch(r"[0-9a-fA-F-]{8,64}", body.request_id or ""):
+        raise HTTPException(400, "request_id 必须是客户端生成的 UUID")
+
+    settle_slot()
+    parent = store.get_run(run_id) or parent
+    verdict = continuation.eligibility(parent)     # POST 时**重新**校验，不吃缓存
+    if not verdict["eligible"]:
+        raise _detail(verdict["reason_code"], verdict["reason"])
+    from_year = int(verdict["from_year"])
+    if body.additional_years > verdict["max_additional_years"]:
+        raise _detail("world_limit",
+                      "这一次最多还能新增 %d 年（累计世界年上限 %d）"
+                      % (verdict["max_additional_years"], config.MAX_WORLD_YEAR))
+
+    try:
+        claim = store.claim_continuation(
+            parent, request_id=body.request_id, additional_years=body.additional_years,
+            target_years=from_year + body.additional_years, from_year=from_year,
+            repo_commit=repo_commit(), api_version=config.API_VERSION)
+    except store.IdempotencyConflict as exc:
+        raise _detail("idempotency_conflict", str(exc))
+    if claim is None:
+        act = store.active_run()
+        raise _detail("source_active",
+                      "已有任务在跑" + (f"（{act['run_id']}）" if act else "")
+                      + "。本版同时只执行一个任务，续演的历史复制也占这个槽。")
+
+    child = claim["run_id"]
+    if claim["reused"]:
+        row = store.get_run(child) or {}
+        return {"run_id": child, "parent_run_id": run_id,
+                "root_run_id": row.get("root_run_id") or parent.get("root_run_id") or run_id,
+                "from_year": int(row.get("from_year") or from_year),
+                "target_year": int(row.get("years") or (from_year + body.additional_years)),
+                "status": row.get("status", "queued"),      # 幂等重试给**真实**状态
+                "reused": True}
+    try:
+        proc = subprocess.Popen([sys.executable, "-m", "observer.worker", child],
+                                cwd=str(config.REPO_ROOT), start_new_session=True)
+    except Exception as exc:                                    # noqa: BLE001
+        store.drop_run_row(child)
+        raise HTTPException(500, f"工作进程启动失败：{type(exc).__name__}: {exc}")
+    store.set_pid(child, proc.pid)
+    return {"run_id": child, "parent_run_id": run_id,
+            "root_run_id": parent.get("root_run_id") or run_id,
+            "from_year": from_year,
+            "target_year": from_year + body.additional_years,
+            "status": "queued", "reused": False}
+
+
 @app.delete("/api/runs/{run_id}", dependencies=[Depends(require_write)])
 def delete_run(run_id: str):
     run = store.get_run(run_id)
@@ -685,6 +808,12 @@ def delete_run(run_id: str):
         raise HTTPException(409, "任务还在跑，先取消再删除")
     if run["kind"] == "preset":
         raise HTTPException(409, "预生成案例不可删除")
+    # 子运行排队 / 正在跑期间，禁止删掉它依赖的父运行。
+    # 这一检查与删除在同一个请求里做完，中间不放开任务槽。
+    kids = store.dependents(run_id)
+    if kids:
+        raise HTTPException(409, "还有续演任务依赖这条运行（%s），先让它结束或取消再删"
+                            % "、".join(k["run_id"] for k in kids))
     import shutil
     shutil.rmtree(store.run_dir(run_id), ignore_errors=True)
     with store.connect() as conn:

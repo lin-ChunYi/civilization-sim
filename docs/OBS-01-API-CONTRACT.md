@@ -40,6 +40,7 @@
 | `GET /api/runs/{id}/series` | `{run_id, series[]}`，元素 = `{t, agg, year, cum, integrity, events}`（`events` 是**当年事件条数**，不是列表） |
 | `GET /api/runs/{id}/year/{t}` | 某一年的完整记录，见下 |
 | `GET /api/runs/{id}/band/{band_id}` | 某个群体的历史卷宗；**obs-1.6 起支持 `?at_year=N`**，只用第 0..N 年的记录 |
+| `GET /api/runs/{id}/continuation` | 这条记录此刻能不能续演；`supported`=引擎能力、`eligible`=此刻状态，见 [`OBS-CONTINUATION-CONTRACT.md`](OBS-CONTINUATION-CONTRACT.md) |
 | `GET /api/runs/{id}/relations` | **obs-1.6 新增**：这次运行里真实发生过的援助往来汇总；同样支持 `?at_year=N` |
 
 写接口（令牌 + 每 IP 每分钟 `write_rate_per_min` 次）：
@@ -47,6 +48,7 @@
 | 端点 | 说明 |
 |---|---|
 | `POST /api/runs` | body `{seed, years, sigma_m, move_mort_m, arm, label, engine, share_m, aid_m, recip_m}`，数值全部**严格整数**（`1.5`/`true` 会被 422 拒绝）；成功 `{run_id, status:"queued"}` |
+| `POST /api/runs/{id}/continue` | 从检查点续演，新建一条子运行。只接受 `additional_years` 与 `request_id`；口径见 [`OBS-CONTINUATION-CONTRACT.md`](OBS-CONTINUATION-CONTRACT.md) |
 | `POST /api/runs/{id}/cancel` | 请求取消。有界收尾：正常进程在年边界自己停，卡住的在协作窗口用完后被停止，身份不明的**绝不发信号**。见 §6 |
 | `DELETE /api/runs/{id}` | 删除非预生成、非进行中的运行 |
 
