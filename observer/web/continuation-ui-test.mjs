@@ -259,25 +259,26 @@ try {
     draft && draft.ok && draft.body && draft.body.engine === "exp06" && draft.body.years === 300,
     JSON.stringify(draft && draft.body));
 
+  const tCreate = Date.now() / 1000;
+  await ev("window.__obs.S.lastCreatedRun=null");
   await clickSel("#b-start");
   await sleep(200);
   const started = await clickSel("#b-confirm");
-  ok("C3 clicked confirm to create parent through UI", !!started);
-
-  const parentId = await ev(`(async function(){
+  const created = await ev(`(async function(){
     var O=window.__obs;
     var t0=Date.now();
-    while(Date.now()-t0<15000){
-      await O.refresh();
-      var matches=(O.S.runs||[]).filter(function(x){return x.label==='G_CONT_UI_01 parent';});
-      matches.sort(function(a,b){return (b.created_at||0)-(a.created_at||0);});
-      if(matches[0]) return matches[0].run_id;
-      await new Promise(function(res){setTimeout(res,400);});
+    while(Date.now()-t0<20000){
+      if(O.S.lastCreatedRun && O.S.lastCreatedRun.run_id) return O.S.lastCreatedRun;
+      await new Promise(function(res){setTimeout(res,200);});
     }
-    return O.S.run && O.S.run.label==='G_CONT_UI_01 parent' ? O.S.run.run_id : null;
+    return O.S.lastCreatedRun || null;
   })()`);
-  ok("C4 parent run id from UI", !!parentId, String(parentId));
-  if (!parentId) throw new Error("no parent run");
+  ok("C3 clicked confirm to create parent through UI",
+    !!started && created && created.run_id && created.years === 300,
+    JSON.stringify(created));
+  const parentId = created && created.run_id;
+  ok("C4 parent run id from this UI create response, not by label", !!parentId, String(parentId));
+  if (!parentId) throw new Error("no parent run from create response");
 
   const parentDone = await waitRun(parentId, (r) => r.status === "done" && r.years_recorded >= 300, 2400000, "parent-300");
   ok("C5 parent 300y done", parentDone.status === "done" && parentDone.years_recorded >= 300,
@@ -322,6 +323,29 @@ try {
     JSON.stringify(firstPost));
   const childId = firstPost && firstPost.a.run_id;
   if (!childId) throw new Error("no child");
+  const parentBeforeRestart = parentDone.run_id;
+  const continueParent = firstPost.a.parent_run_id;
+  const childRow = await http("/api/runs/" + childId);
+  const childParent = childRow.body && childRow.body.lineage && childRow.body.lineage.parent_run_id;
+  const idTrace = {
+    created: parentId,
+    beforeRestart: parentBeforeRestart,
+    continueParent: continueParent,
+    childParent: childParent,
+    created_at: parentDone.created_at,
+    tCreate: tCreate,
+    childKind: childRow.body && childRow.body.lineage && childRow.body.lineage.kind,
+    childYears: childRow.body && childRow.body.years,
+  };
+  ok("C4id create/restart/continue/child.parent are the same origin run",
+    parentId === parentBeforeRestart
+    && parentId === continueParent
+    && parentId === childParent
+    && idTrace.childKind === "continuation"
+    && idTrace.childYears === 600
+    && parentDone.created_at >= tCreate - 5
+    && parentDone.created_at <= tCreate + 180,
+    JSON.stringify(idTrace));
 
   await ev(`(function(){
     var O=window.__obs;
@@ -489,7 +513,13 @@ try {
   await shot("desktop-restore-child.png");
 
   writeFileSync(join(ART, "ids.json"), JSON.stringify({
-    parent_run_id: parentId, child_run_id: childId,
+    created_run_id: parentId,
+    before_restart_parent_run_id: parentBeforeRestart,
+    continue_parent_run_id: continueParent,
+    child_parent_run_id: childParent,
+    child_run_id: childId,
+    created_at: parentDone.created_at,
+    tCreate: tCreate,
     play_url: BASE + "/static/index.html#tab=world&run=" + childId + "&t=300",
     parent_url: BASE + "/static/index.html#tab=world&run=" + parentId + "&t=300",
     request_id: reqId, port: portOf(BASE),

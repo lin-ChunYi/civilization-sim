@@ -4213,6 +4213,7 @@ async function confirmStartRun() {
   $("b-confirm").disabled = true;
   try {
     const r = await api("/api/runs", { method: "POST", body: JSON.stringify(body) });
+    S.lastCreatedRun = { run_id: r.run_id, label: body.label || "", at: Date.now() / 1000, years: body.years };
     flash("已提交，运行号 " + r.run_id + "。计算在后台独立进程里进行，可以直接看进度。");
     S._runDraft = null;
     if ($("forge-confirm")) $("forge-confirm").hidden = true;
