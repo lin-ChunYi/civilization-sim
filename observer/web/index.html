@@ -130,7 +130,19 @@
           </label>
           <span class="yearbox">第 <b id="scrub-year">0</b> 年</span>
           <button type="button" class="btn small" id="b-open-rail">卷宗</button>
+          <button type="button" class="btn" id="b-continue">继续演化</button>
         </div>
+        <div id="cont-seg" class="cont-seg muted"></div>
+      </div>
+      <div id="continue-prep" class="continue-prep" hidden></div>
+      <div id="continue-dialog" class="continue-dialog" hidden>
+        <div class="dir-title">继续演化</div>
+        <p id="continue-reason" class="muted"></p>
+        <div id="continue-summary"></div>
+        <label>再计算年数 <input id="f-extra-years" type="text" inputmode="numeric" value="300" autocomplete="off"></label>
+        <p id="continue-params" class="muted"></p>
+        <button type="button" class="btn primary" id="b-confirm-continue">确认继续</button>
+        <button type="button" class="btn" id="b-continue-cancel">取消</button>
       </div>
       <div class="mapfoot">
         <div class="legend" id="legend"></div>

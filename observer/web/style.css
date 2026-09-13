@@ -473,3 +473,23 @@ html.reduce-motion .fx-pulse{opacity:1;transform:none}
 @media (max-width:900px){
   .motion-groups{max-height:22%;top:32px;left:6px;right:6px}
 }
+.cont-seg{font-size:12px;padding:2px 8px;color:var(--muted);max-width:100%}
+.continue-prep{
+  position:absolute;left:8px;right:8px;top:8px;z-index:6;
+  background:rgba(10,14,12,.92);border:1px solid var(--gold);border-radius:8px;
+  padding:8px 10px;color:var(--gold2);font-size:13px;
+}
+.continue-dialog{
+  position:fixed;left:8px;right:8px;
+  bottom:calc(var(--play-dock-h, 84px) + 8px);
+  z-index:31;
+  background:rgba(10,14,12,.96);border:1px solid var(--gold);border-radius:10px;
+  padding:10px 12px;max-height:42vh;overflow:auto;
+}
+.continue-dialog label{display:block;margin:8px 0}
+.continue-dialog input{width:8em;margin-left:6px}
+#b-continue{flex-shrink:0}
+@media (max-width:900px){
+  #b-continue{min-height:36px}
+  .continue-dialog{max-height:36vh}
+}

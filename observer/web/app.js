@@ -44,6 +44,12 @@ const S = {
   cmp: { a: "", b: "", t: null },
   cmpReqGen: 0,
   reduceMotion: false,
+  continueDraft: null,
+  continueReq: null,
+  continueWatch: null,
+  continueBusy: false,
+  yearFetch: null,
+  prefetchLock: null,
 };
 const PLAY_PENDING_MS = 700;
 function navResult(kind, extra) {
@@ -933,15 +939,68 @@ function shouldRetryMissingYear(run, t) {
   return false;
 }
 
+/* ---------------- 续演展示（契约 F；资格只问 continuation 接口） ---------------- */
+const ContinuationLogic = {
+  parseExtraYears(raw, max) {
+    return OverviewLogic.parseStrictInt(raw, {
+      name: "再计算年数", min: 1, max: max != null ? max : 300,
+    });
+  },
+  newRequestId() {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      return (c === "x" ? r : ((r & 0x3) | 0x8)).toString(16);
+    });
+  },
+  segmentCaption(run, playT) {
+    if (!run) return "";
+    const lin = run.lineage || {};
+    const seg = run.segment || {};
+    const from = seg.from_year != null ? seg.from_year : (lin.from_year || 0);
+    const add = seg.additional_years != null ? seg.additional_years : (run.years || 0);
+    const steps = seg.completed_steps != null ? seg.completed_steps : 0;
+    const world = run.years_recorded != null ? run.years_recorded : (from + steps);
+    const play = playT != null ? playT : 0;
+    if (lin.kind === "continuation") {
+      return "继承0–" + from + "年；本段新算" + steps + "/" + add + "年；世界到" + world + "年；正在回放" + play + "年";
+    }
+    return "本段新算" + steps + "/" + add + "年；世界到" + world + "年；正在回放" + play + "年";
+  },
+  versionLabel(run) {
+    const v = run && run.version;
+    const rec = v && v.recorded;
+    if (!rec || (!rec.repo_commit && !rec.api_version && !rec.engine_sha256)) {
+      return "版本身份未记录";
+    }
+    if (v.matches_running_service === false) return v.note || "与当前服务不是同一版本身份";
+    return v.note || "与当前服务是同一版本身份";
+  },
+  parseApiError(body, status) {
+    if (body && body.detail && typeof body.detail === "object" && body.detail.message) {
+      return { code: body.detail.code || "", message: String(body.detail.message), status: status };
+    }
+    if (typeof body === "string") return { code: "", message: body, status: status };
+    if (body && typeof body.detail === "string") return { code: "", message: body.detail, status: status };
+    return { code: "", message: "HTTP " + status, status: status };
+  },
+};
+window.ContinuationLogic = ContinuationLogic;
+
 /* ---------------- API ---------------- */
 async function api(path, opts) {
   const h = Object.assign({ "Content-Type": "application/json" }, (opts && opts.headers) || {});
   if (S.token) h["X-Observer-Token"] = S.token;
   const r = await fetch(path, Object.assign({}, opts || {}, { headers: h }));
   if (!r.ok) {
-    let detail = "HTTP " + r.status;
-    try { detail = (await r.json()).detail || detail; } catch (e) { /* 忽略 */ }
-    const err = new Error(detail); err.status = r.status; throw err;
+    let body = null;
+    try { body = await r.json(); } catch (e) { /* 忽略 */ }
+    const parsed = ContinuationLogic.parseApiError(body, r.status);
+    const err = new Error(parsed.message);
+    err.status = r.status;
+    err.code = parsed.code;
+    err.body = body;
+    throw err;
   }
   return r.json();
 }
@@ -956,6 +1015,8 @@ function renderStatus() {
       (S.run.kind === "preset" ? ` <span class="badge s-off">预生成案例</span>` : ""));
     parts.push(`<b>回放</b> ${esc(OverviewLogic.yearViewLabel(S.t))}`);
     parts.push(`<b>已计算</b> ${S.run.years_recorded ?? S.run.years_done}/${S.run.years} 年`);
+    const cap = ContinuationLogic.segmentCaption(S.run, S.t);
+    if (cap) parts.push(`<b>段落</b> ${esc(cap)}`);
     const einfo = runEngineInfo(S.run);
     parts.push(`<b>模型</b> ${esc(S.run.engine_path || einfo.engine_path || runEngineName(S.run))}`);
   } else {
@@ -1119,6 +1180,12 @@ function renderTech() {
     ["信息条件", arm ? arm.label : S.run.arm],
     ["model_run_id", S.run.model_run_id || "（尚未写入）"],
     ["full_digest", S.run.full_digest || "（尚未写入）"],
+    ["版本身份", ContinuationLogic.versionLabel(S.run)],
+    ["血缘", (S.run.lineage && S.run.lineage.kind === "continuation")
+      ? ("续演 · 根 " + (S.run.lineage.root_run_id || "未记录") + " · 父 " + (S.run.lineage.parent_run_id || "未记录")
+        + " · 从第 " + (S.run.lineage.from_year != null ? S.run.lineage.from_year : "未记录") + " 年")
+      : "起源运行"],
+    ["段落", ContinuationLogic.segmentCaption(S.run, S.t) || "—"],
   ];
   if (rec) {
     rows.push(["状态哈希", rec.integrity.state_hash]);
@@ -2068,6 +2135,7 @@ function syncYearWidgets(t) {
   if (S.run) {
     $("tl-calc").textContent = "已计算到：第 " + maxT() + " 年 / 目标 " + S.run.years + " 年";
   }
+  if ($("cont-seg")) $("cont-seg").textContent = S.run ? ContinuationLogic.segmentCaption(S.run, t) : "";
 }
 function setYearLoadOverlay(t, on) {
   if (on) beginYearLoad(t, S.opGen, S.run ? S.run.run_id : "");
@@ -2288,23 +2356,41 @@ function setPlaying(v) {
   if (v) tick();
 }
 
+function fetchYearOnce(runId, t) {
+  const k = ykey(runId, t);
+  if (S.years.has(k)) return Promise.resolve(S.years.get(k));
+  if (!S.yearFetch) S.yearFetch = new Map();
+  if (S.yearFetch.has(k)) return S.yearFetch.get(k);
+  const p = api(`/api/runs/${runId}/year/${t}`).then((rec) => {
+    S.years.set(k, rec);
+    delete S.yearMiss[yearMissKey(runId, t)];
+    return rec;
+  }).finally(() => { if (S.yearFetch) S.yearFetch.delete(k); });
+  S.yearFetch.set(k, p);
+  return p;
+}
 async function prefetchYears(runId, tEnd) {
+  if (S.prefetchLock && S.prefetchLock.runId === runId && S.prefetchLock.tEnd >= tEnd) {
+    return S.prefetchLock.p;
+  }
   const missing = [];
   for (let t = 0; t <= tEnd; t++) {
     if (!S.years.has(ykey(runId, t))) missing.push(t);
   }
-  const BATCH = 10;
-  for (let i = 0; i < missing.length; i += BATCH) {
-    if (!S.run || S.run.run_id !== runId) return;
-    const slice = missing.slice(i, i + BATCH);
-    await Promise.all(slice.map(async (t) => {
-      if (S.years.has(ykey(runId, t))) return;
-      try {
-        const rec = await api(`/api/runs/${runId}/year/${t}`);
-        S.years.set(ykey(runId, t), rec);
-        delete S.yearMiss[yearMissKey(runId, t)];
-      } catch (e) { /* 保留缺口；refresh 会在记录可用后补当前年 */ }
-    }));
+  const p = (async () => {
+    let i = 0;
+    const CONCUR = 4;
+    const worker = async () => {
+      while (i < missing.length) {
+        if (!S.run || S.run.run_id !== runId) return;
+        const t = missing[i++];
+        try { await fetchYearOnce(runId, t); } catch (e) { /* 保留缺口 */ }
+      }
+    };
+    const n = Math.min(CONCUR, missing.length);
+    const jobs = [];
+    for (let w = 0; w < n; w++) jobs.push(worker());
+    await Promise.all(jobs);
     if (S.run && S.run.run_id === runId) {
       renderOverview(); renderEvents();
       if (S.years.has(ykey(runId, S.t))) {
@@ -2312,7 +2398,12 @@ async function prefetchYears(runId, tEnd) {
         renderMap(); renderSide(); renderTech(); renderStatus();
       }
     }
-  }
+  })();
+  S.prefetchLock = { runId: runId, tEnd: tEnd, p: p };
+  p.finally(() => {
+    if (S.prefetchLock && S.prefetchLock.p === p) S.prefetchLock = null;
+  });
+  return p;
 }
 
 /* ---------------- 曲线 ---------------- */
@@ -3382,13 +3473,16 @@ function renderRuns() {
     <td>${engineHasParam(r.engine || "exp03", "recip_m") ? (r.recip_m ?? 0) + "‰" : "—"}</td>
     <td>${S.cfg.arms[r.arm] ? esc(S.cfg.arms[r.arm].label) : esc(r.arm)}</td>
     <td>${r.years_recorded}/${r.years}</td><td>${tsfmt(r.created_at)}</td>
-    <td><small>${esc(r.engine_path || "")} · ${esc((r.engine_sha256 || "").slice(0, 8))}</small></td>
+    <td><small>${esc(ContinuationLogic.versionLabel(r))}</small></td>
     <td>${["queued", "running"].includes(r.status)
       ? `<span class="link" data-cancel="${esc(r.run_id)}">取消</span>`
       : (r.kind === "preset" ? "" : `<span class="link" data-del="${esc(r.run_id)}">删除</span>`)}
+      <span class="link" data-continue="${esc(r.run_id)}">继续演化</span>
       ${r.error ? `<div class="err"><small>${esc(r.error)}</small></div>` : ""}</td></tr>`).join("");
   $("runtable").querySelectorAll("[data-open]").forEach((n) =>
     n.addEventListener("click", () => openRun(n.dataset.open)));
+  $("runtable").querySelectorAll("[data-continue]").forEach((n) =>
+    n.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openContinueDialog(n.dataset.continue); }));
   $("runtable").querySelectorAll("[data-cancel]").forEach((n) =>
     n.addEventListener("click", async () => {
       try { await api(`/api/runs/${n.dataset.cancel}/cancel`, { method: "POST" }); flash("已请求取消"); }
@@ -3409,7 +3503,12 @@ function renderRuns() {
   fillCompareSelects();
 }
 
-async function openRun(id) {
+async function openRun(id, opts) {
+  opts = opts || {};
+  const initialYear = Number.isFinite(+opts.initialYear) ? Math.max(0, +opts.initialYear) : 0;
+  if (S.continueWatch && S.continueWatch.childId !== id && S.continueWatch.parentId !== id) {
+    S.continueWatch.stay = false;
+  }
   setPlaying(false);
   bumpOp();
   const myOp = S.opGen;
@@ -3428,36 +3527,147 @@ async function openRun(id) {
   try {
     run = await api(`/api/runs/${id}`);
     if (S.epoch !== myEpoch || !opAlive(myOp)) return { ok: false, reason: "stale" };
+    if (run.segment && run.segment.history_ready === false
+        && S.run && run.lineage && S.run.run_id === run.lineage.parent_run_id) {
+      S.continueWatch = S.continueWatch || {
+        parentId: S.run.run_id, childId: id,
+        fromYear: run.lineage.from_year, stay: true,
+      };
+      fillContinuePrep(run);
+      return { ok: false, reason: "history-pending", keptParent: true };
+    }
     ser = await api(`/api/runs/${id}/series`);
     if (S.epoch !== myEpoch || !opAlive(myOp)) return { ok: false, reason: "stale" };
   } catch (e) {
     if (S.epoch === myEpoch) flash("打开运行失败：" + e.message, true);
-    return;
+    return { ok: false, reason: e.message };
   }
   S.run = run;
   S.meta = run.meta || null;
   S.years.clear(); S.selBand = null; S.selCell = null; S.band = null;
   S.cam = { x: 0, y: 0, k: 1 }; S.layer = "resource"; S.view = "truth";
-  S.yearWait = { runId: id, t: 0, pending: true };
+  const startT = Math.min(initialYear, Math.max(0, run.years_recorded ?? 0));
+  S.yearWait = { runId: id, t: startT, pending: true };
   S.series = ser.series;
   S.view = "truth";
   if ($("v-truth")) $("v-truth").classList.add("on");
   if ($("v-mem")) $("v-mem").classList.remove("on");
   $("scrub").max = maxT();
-  S.t = 0;
-  syncYearWidgets(0);
+  S.t = startT;
+  syncYearWidgets(startT);
   setHash({
-    run: id, b: "", view: "", t: "0", event: "",
+    run: id, b: "", view: "", t: String(startT), event: "",
     mode: S.playMode === "events" ? "events" : "",
     archive: S.bandScope === "full" ? "full" : "",
   });
+  fillContinuePrep(null);
   renderOverview(); renderMap(); renderSide(); renderEvents(); renderStatus();
   renderDirectorCard(); renderDirectorChrome();
-  const gy = await gotoYear(0, { opGen: myOp });
+  const gy = await gotoYear(startT, { opGen: myOp });
   if (!opAlive(myOp) || !gy || !gy.ok) return { ok: false, reason: "stale" };
   renderRuns(); renderCharts(); renderStatus(); renderOverview();
   renderLibrary();
   prefetchYears(id, maxT());
+  return { ok: true, t: S.t, run: id };
+}
+
+function fillContinuePrep(child) {
+  const el = $("continue-prep");
+  if (!el) return;
+  if (!child) { el.hidden = true; el.textContent = ""; return; }
+  el.hidden = false;
+  el.textContent = "续演准备中（子运行 " + (child.run_id || "") + " 的历史前缀尚未发布，仍显示父运行画面）";
+}
+async function openContinueDialog(runId) {
+  const id = runId || (S.run && S.run.run_id);
+  const dlg = $("continue-dialog");
+  if (!id || !dlg) { flash("请先打开一次运行。", true); return; }
+  let elig;
+  try { elig = await api("/api/runs/" + id + "/continuation"); }
+  catch (e) { flash(e.message, true); return; }
+  const keepKey = S.continueReq && S.continueReq.parentId === id && !S.continueReq.settled;
+  const requestId = keepKey ? S.continueReq.requestId : ContinuationLogic.newRequestId();
+  S.continueReq = { parentId: id, requestId: requestId, settled: false };
+  S.continueDraft = { parentId: id, elig: elig, requestId: requestId };
+  const run = (S.runs || []).find((r) => r.run_id === id) || (S.run && S.run.run_id === id ? S.run : null);
+  const fromY = elig.from_year;
+  const maxK = elig.max_additional_years || 0;
+  if ($("continue-reason")) {
+    $("continue-reason").textContent = elig.eligible
+      ? (elig.reason || "")
+      : ((elig.reason_code || "") + " · " + (elig.reason || "此刻不能续演"));
+  }
+  if ($("f-extra-years")) {
+    $("f-extra-years").value = String(Math.min(300, Math.max(1, maxK || 1)));
+    $("f-extra-years").disabled = !elig.eligible;
+  }
+  const k = elig.eligible ? ($("f-extra-years") && +$("f-extra-years").value) : 0;
+  const target = (fromY != null && elig.eligible) ? (fromY + k) : "—";
+  if ($("continue-summary")) {
+    $("continue-summary").innerHTML =
+      "<div>原运行 " + esc(id) + "</div>" +
+      "<div>从第 " + (fromY == null ? "无检查点（不拿画面年份冒充）" : fromY) + " 年继续</div>" +
+      "<div>再计算 " + (elig.eligible ? k : "—") + " 年 · 目标第 " + target + " 年</div>" +
+      "<div>引擎 " + esc((run && run.engine) || "") + " · seed " + esc(run && run.seed) + "（只读，不提交新参数）</div>";
+  }
+  if ($("continue-params") && run) {
+    $("continue-params").textContent = ContinuationLogic.versionLabel(run) +
+      " · 续演资格以 /continuation 为准，不以页面版本标签推断。";
+  }
+  if ($("b-confirm-continue")) $("b-confirm-continue").disabled = !elig.eligible || S.continueBusy;
+  dlg.hidden = false;
+  layoutPlayDock();
+}
+function hideContinueDialog() {
+  if ($("continue-dialog")) $("continue-dialog").hidden = true;
+}
+async function confirmContinue() {
+  if (S.continueBusy) return;
+  const d = S.continueDraft;
+  if (!d || !d.elig || !d.elig.eligible) return;
+  const maxK = d.elig.max_additional_years || 300;
+  const parsed = ContinuationLogic.parseExtraYears($("f-extra-years") && $("f-extra-years").value, maxK);
+  if (!parsed.ok) { flash(parsed.error, true); return; }
+  if (!S.continueReq || S.continueReq.parentId !== d.parentId) {
+    S.continueReq = { parentId: d.parentId, requestId: d.requestId, settled: false };
+  }
+  S.continueBusy = true;
+  if ($("b-confirm-continue")) $("b-confirm-continue").disabled = true;
+  try {
+    const r = await api("/api/runs/" + d.parentId + "/continue", {
+      method: "POST",
+      body: JSON.stringify({ additional_years: parsed.value, request_id: S.continueReq.requestId }),
+    });
+    S.continueReq.settled = true;
+    S.continueReq.childId = r.run_id;
+    S.continueWatch = {
+      parentId: d.parentId, childId: r.run_id, fromYear: r.from_year, stay: true,
+    };
+    hideContinueDialog();
+    fillContinuePrep({ run_id: r.run_id });
+    flash(r.reused ? ("沿用已有子运行 " + r.run_id + "（" + r.status + "）") : ("已排队续演 " + r.run_id));
+    await refresh();
+    await maybeOpenContinuedRun();
+  } catch (e) {
+    flash("续演失败：" + e.message, true);
+    if ($("b-confirm-continue")) $("b-confirm-continue").disabled = false;
+  } finally {
+    S.continueBusy = false;
+  }
+}
+async function maybeOpenContinuedRun() {
+  const w = S.continueWatch;
+  if (!w) return;
+  let child;
+  try { child = await api("/api/runs/" + w.childId); }
+  catch (e) { return; }
+  const ready = !!(child.segment && child.segment.history_ready);
+  if (!ready) { fillContinuePrep(child); return; }
+  const stay = S.run && S.run.run_id === w.parentId;
+  S.continueWatch = null;
+  fillContinuePrep(null);
+  if (stay) await openRun(w.childId, { initialYear: w.fromYear });
+  else flash("任务已创建");
 }
 
 /* ---------------- 里程碑 ---------------- */
@@ -3522,6 +3732,7 @@ async function refresh() {
         Object.assign(S.run, cur);
         $("scrub").max = maxT();
         $("tl-calc").textContent = `已计算到：第 ${maxT()} 年 / 目标 ${S.run.years} 年`;
+        if ($("cont-seg")) $("cont-seg").textContent = ContinuationLogic.segmentCaption(S.run, S.t);
         if (grew) {
           const d2 = await api(`/api/runs/${myRun}/series`);
           if (stale(myEpoch, myRun)) return;
@@ -3553,6 +3764,7 @@ async function refresh() {
       }
     }
     renderRuns(); renderStatus(); renderOverview();
+    if (S.continueWatch) maybeOpenContinuedRun();
     if (S.run && S.years.has(ykey(S.run.run_id, S.t))) {
       renderMap(); renderSide(); renderEvents(); renderTech();
     } else if (S.run) {
@@ -3631,6 +3843,20 @@ async function boot() {
     cancelFx();
     S.selEvent = null;
     gotoYear(0, { opGen: S.opGen });
+  });
+  if ($("b-continue")) $("b-continue").addEventListener("click", () => openContinueDialog());
+  if ($("b-confirm-continue")) $("b-confirm-continue").addEventListener("click", () => confirmContinue());
+  if ($("b-continue-cancel")) $("b-continue-cancel").addEventListener("click", () => hideContinueDialog());
+  if ($("f-extra-years")) $("f-extra-years").addEventListener("input", () => {
+    const d = S.continueDraft;
+    if (!d || !d.elig || !d.elig.eligible || !$("continue-summary")) return;
+    const parsed = ContinuationLogic.parseExtraYears($("f-extra-years").value, d.elig.max_additional_years);
+    if (!parsed.ok) return;
+    const fromY = d.elig.from_year;
+    $("continue-summary").innerHTML =
+      "<div>原运行 " + esc(d.parentId) + "</div>" +
+      "<div>从第 " + fromY + " 年继续</div>" +
+      "<div>再计算 " + parsed.value + " 年 · 目标第 " + (fromY + parsed.value) + " 年</div>";
   });
   if ($("b-prev-ev")) $("b-prev-ev").addEventListener("click", () => stepEventYear(-1));
   if ($("b-next-ev")) $("b-next-ev").addEventListener("click", () => stepEventYear(1));
@@ -3753,12 +3979,10 @@ async function boot() {
   if (hp.mode === "events") S.playMode = "events";
   if (hp.archive === "full") S.bandScope = "full";
   if (first) {
-    await openRun(first.run_id);
+    const parsedT = hp.t ? OverviewLogic.parseStrictInt(hp.t, { name: "年份", min: 0 }) : { ok: false };
+    await openRun(first.run_id, { initialYear: parsedT.ok ? parsedT.value : 0 });
     if (hp.mode === "events") setPlayMode("events", { silent: true, force: true });
-    if (hp.t) {
-      const parsed = OverviewLogic.parseStrictInt(hp.t, { name: "年份", min: 0 });
-      if (parsed.ok) await gotoYear(parsed.value);
-    }
+    if (parsedT.ok && S.t !== parsedT.value) await gotoYear(parsedT.value);
     if (hp.event) {
       const ev = findEventByKey(hp.event, S.t);
       if (ev) await focusEvent(ev, { fromHash: true });
@@ -4010,7 +4234,8 @@ window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, rend
   pinCurrentYear, pinCurrentEvent, exportCurrentRecord, jumpToRecordedEvent,
   clearRelEdgeCard, fillRelEdgeCard, UnitArt, paintDirectorFx, OverviewLogic, DirectorLogic,
   syncEngineForm, engineHasParam, layoutPlayDock, compactPlay, Motion: typeof Motion !== "undefined" ? Motion : null,
-  motionCtx, sameMotionCtx, applyMotionTick, startFxLoop, fillMotionGroups };
+  motionCtx, sameMotionCtx, applyMotionTick, startFxLoop, fillMotionGroups,
+  ContinuationLogic, openContinueDialog, hideContinueDialog, confirmContinue, maybeOpenContinuedRun };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {
