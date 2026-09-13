@@ -88,6 +88,12 @@ async function restartIsolatedService() {
     throw new Error("need --service-json to restart isolated service");
   }
   const info = JSON.parse(readFileSync(SERVICE_JSON, "utf8"));
+  const idleT0 = Date.now();
+  while (Date.now() - idleT0 < 2400000) {
+    const cur = await http("/api/runs");
+    if (!(cur.body && cur.body.active)) break;
+    await sleep(2000);
+  }
   const runs = await http("/api/runs");
   if (runs.body && runs.body.active) throw new Error("active simulation, refuse restart");
   const pid = info.pid;
@@ -174,18 +180,64 @@ try {
   const ready = await ev("!!(window.__obs && window.__obs.ContinuationLogic && document.getElementById('b-continue'))");
   ok("C0 continue hooks present", !!ready, JSON.stringify(ready));
 
-  const disabled = await ev(`(async function(){
+  const unsupported = await ev(`(async function(){
     var O=window.__obs;
-    var exp1=(O.S.runs||[]).find(function(r){return r.engine==='exp01';});
-    if(!exp1) return {ok:false, reason:'no-exp01'};
-    await O.openContinueDialog(exp1.run_id);
+    await O.refresh();
+    var r=(O.S.runs||[]).find(function(x){return x.engine && x.engine!=='exp06';});
+    var id=r ? r.run_id : 'preset-s4242-sig400-mort50';
+    await O.openContinueDialog(id);
     var btn=document.getElementById('b-confirm-continue');
     var reason=(document.getElementById('continue-reason')||{}).textContent||'';
-    return {ok:true, disabled: !!(btn && btn.disabled), reason:reason, hidden: document.getElementById('continue-dialog').hidden};
+    return {ok:true, id:id, engine:r&&r.engine, disabled:!!(btn&&btn.disabled), reason:reason,
+      hidden: document.getElementById('continue-dialog').hidden};
   })()`);
-  ok("C1 unsupported/missing checkpoint disables confirm",
-    disabled && disabled.ok && disabled.disabled && /unsupported_engine|missing_checkpoint/.test(disabled.reason),
-    JSON.stringify(disabled));
+  ok("C1 unsupported_engine disables confirm",
+    unsupported && unsupported.ok && unsupported.disabled && /unsupported_engine/.test(unsupported.reason),
+    JSON.stringify(unsupported));
+  await ev("window.__obs.hideContinueDialog()");
+
+  const missingCp = await ev(`(async function(){
+    var O=window.__obs;
+    var r=(O.S.runs||[]).find(function(x){return x.engine==='exp06' && x.kind==='preset';});
+    var id=r ? r.run_id : 'preset-exp06-recip1000';
+    await O.openContinueDialog(id);
+    var btn=document.getElementById('b-confirm-continue');
+    var reason=(document.getElementById('continue-reason')||{}).textContent||'';
+    return {ok:true, id:id, disabled:!!(btn&&btn.disabled), reason:reason};
+  })()`);
+  ok("C1b EXP06 missing_checkpoint disables confirm",
+    missingCp && missingCp.ok && missingCp.disabled && /missing_checkpoint/.test(missingCp.reason),
+    JSON.stringify(missingCp));
+  await ev("window.__obs.hideContinueDialog()");
+
+  const mismatch = await ev(`(async function(){
+    var O=window.__obs;
+    var prev=O.S.apiOverride;
+    try {
+      async function fixtureApi(path, opts) {
+        if (typeof path === 'string' && /\\/continuation$/.test(path)
+            && (!opts || !opts.method || opts.method === 'GET')) {
+          return {supported:true, eligible:false, reason_code:'engine_mismatch',
+            reason:'【夹具·非真实存档损坏】检查点记的引擎源码与现在这份不是同一版',
+            from_year:null, max_additional_years:0, max_world_year:3000,
+            checkpoint_schema:'obs-checkpoint-v1'};
+        }
+        O.S.apiOverride = null;
+        try { return await O.api(path, opts); }
+        finally { O.S.apiOverride = fixtureApi; }
+      }
+      O.S.apiOverride = fixtureApi;
+      var id=(O.S.runs && O.S.runs[0] && O.S.runs[0].run_id) || 'fixture-engine-mismatch';
+      await O.openContinueDialog(id);
+      var btn=document.getElementById('b-confirm-continue');
+      var reason=(document.getElementById('continue-reason')||{}).textContent||'';
+      return {ok:true, fixture:true, disabled:!!(btn&&btn.disabled), reason:reason};
+    } finally { O.S.apiOverride = prev || null; }
+  })()`);
+  ok("C1c engine_mismatch fixture disables confirm (marked fixture, not a real corrupt archive)",
+    mismatch && mismatch.fixture && mismatch.disabled
+    && /engine_mismatch/.test(mismatch.reason) && /夹具/.test(mismatch.reason),
+    JSON.stringify(mismatch));
   await ev("window.__obs.hideContinueDialog()");
 
   const draft = await ev(`(function(){
@@ -217,8 +269,9 @@ try {
     var t0=Date.now();
     while(Date.now()-t0<15000){
       await O.refresh();
-      var r=(O.S.runs||[]).find(function(x){return x.label==='G_CONT_UI_01 parent';});
-      if(r) return r.run_id;
+      var matches=(O.S.runs||[]).filter(function(x){return x.label==='G_CONT_UI_01 parent';});
+      matches.sort(function(a,b){return (b.created_at||0)-(a.created_at||0);});
+      if(matches[0]) return matches[0].run_id;
       await new Promise(function(res){setTimeout(res,400);});
     }
     return O.S.run && O.S.run.label==='G_CONT_UI_01 parent' ? O.S.run.run_id : null;
@@ -301,19 +354,72 @@ try {
   ok("C13 open child lands on from_year not t=0", at300 === 300, "t=" + at300);
   await shot("desktop-child-t300.png");
 
+  const seriesWrap = await http("/api/runs/" + childId + "/series");
+  const series = (seriesWrap.body && seriesWrap.body.series) || [];
+  const apiCum = (t) => {
+    const byT = {};
+    series.forEach((r) => { if (r && typeof r.t === "number") byT[r.t] = r; });
+    let n = 0;
+    for (let i = 0; i <= t; i++) {
+      if (byT[i] && typeof byT[i].events === "number") n += byT[i].events;
+    }
+    return n;
+  };
+  const parseCount = (s) => {
+    const m = String(s || "").replace(/,/g, "").replace(/，/g, "").match(/-?\d+/);
+    return m ? Number(m[0]) : null;
+  };
   const years = {};
   for (const y of [299, 300, 301, 600]) {
     const apiY = await http("/api/runs/" + childId + "/year/" + y);
+    const rec = apiY.body || {};
     const uiY = await ev(`(async function(){
       var O=window.__obs; await O.gotoYear(${y});
+      await new Promise(function(r){setTimeout(r,80);});
       var rec=O.S.years.get(O.S.run.run_id+'|'+${y});
-      return rec ? {t:rec.t, pop: rec.agg && rec.agg.pop, ev:(rec.events||[]).length, ids:(rec.events||[]).map(function(e){return e.id;})} : null;
+      function txt(id){ var n=document.getElementById(id); return n?n.textContent:''; }
+      var chips={};
+      document.querySelectorAll('#year-metrics .metric-chip').forEach(function(n){
+        var k=n.querySelector('b'); var key=k?k.textContent.trim():'';
+        var num=Number(String(n.textContent||'').replace(key,'').replace(/[^0-9-]/g,''));
+        if(key) chips[key]=num;
+      });
+      return rec ? {
+        t: rec.t, pop: rec.agg && rec.agg.pop, ev: (rec.events||[]).length,
+        ids: (rec.events||[]).map(function(e){return e.id;}),
+        uiPop: txt('ov-pop-value'), uiNow: txt('ov-ev-now-value'), uiCum: txt('ov-ev-cum-value'),
+        summary: txt('year-summary'), chips: chips
+      } : null;
     })()`);
-    years[y] = { api: apiY.body, ui: uiY };
+    years[y] = { api: rec, ui: uiY };
+    const apiPop = rec.agg && rec.agg.pop;
+    const apiEv = (rec.events || []).length;
+    const apiYearBirths = rec.year ? rec.year.births_cum : null;
+    const apiAidEv = rec.aid ? rec.aid.events : null;
+    const apiAidXfer = rec.aid ? rec.aid.transfers : null;
+    const apiRepay = rec.recip ? rec.recip.repay_transfers : null;
+    const apiCumN = apiCum(y);
+    const uiPopN = uiY ? parseCount(uiY.uiPop) : null;
+    const uiNowN = uiY ? parseCount(uiY.uiNow) : null;
+    const uiCumN = uiY ? parseCount(uiY.uiCum) : null;
+    const birthOk = apiYearBirths == null || (uiY && uiY.summary && uiY.summary.indexOf(String(apiYearBirths)) >= 0);
+    const aidOk = apiAidEv == null || (uiY && uiY.chips && uiY.chips["活动"] === apiAidEv);
+    const xferOk = apiAidXfer == null || (uiY && uiY.chips && uiY.chips["转移"] === apiAidXfer);
+    const repayOk = apiRepay == null || (uiY && uiY.chips && uiY.chips["回助"] === apiRepay);
     ok("C14 year " + y + " UI matches API",
-      uiY && apiY.status === 200 && uiY.pop === (apiY.body.agg && apiY.body.agg.pop)
-      && uiY.ev === ((apiY.body.events || []).length),
-      JSON.stringify({ pop: uiY && uiY.pop, ev: uiY && uiY.ev }));
+      uiY && apiY.status === 200
+      && uiY.pop === apiPop && uiY.ev === apiEv
+      && uiPopN === apiPop && uiNowN === apiEv && uiCumN === apiCumN
+      && birthOk && aidOk && xferOk && repayOk,
+      JSON.stringify({
+        pop: { ui: uiPopN, api: apiPop },
+        yearEvents: { ui: uiNowN, api: apiEv },
+        cumEvents: { ui: uiCumN, api: apiCumN },
+        yearBirths: { summaryHas: birthOk, api: apiYearBirths },
+        aidActivity: { ui: uiY && uiY.chips && uiY.chips["活动"], api: apiAidEv },
+        aidTransfers: { ui: uiY && uiY.chips && uiY.chips["转移"], api: apiAidXfer },
+        repay: { ui: uiY && uiY.chips && uiY.chips["回助"], api: apiRepay },
+      }));
   }
   const p300 = await http("/api/runs/" + parentId + "/year/300");
   const c300 = years[300];

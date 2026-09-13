@@ -989,6 +989,7 @@ window.ContinuationLogic = ContinuationLogic;
 
 /* ---------------- API ---------------- */
 async function api(path, opts) {
+  if (S && typeof S.apiOverride === "function") return S.apiOverride(path, opts);
   const h = Object.assign({ "Content-Type": "application/json" }, (opts && opts.headers) || {});
   if (S.token) h["X-Observer-Token"] = S.token;
   const r = await fetch(path, Object.assign({}, opts || {}, { headers: h }));
