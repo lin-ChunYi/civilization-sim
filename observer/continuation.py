@@ -29,7 +29,18 @@ REASONS = (
     "checkpoint_invalid", "checkpoint_not_at_tip", "engine_mismatch", "config_mismatch",
     "world_limit", "quota_exceeded",
 )
+# 所有引擎都有的那几项。**FARM_M 不能无条件加进来**：
+# 旧的 EXP-06 检查点里根本没有这个键，而新数据库的 farm_m 默认是 0，
+# 于是 None != 0 会把一份完全正常的旧存档判成 config_mismatch。
+# 只对**声明支持它的引擎**才把 farm_m 纳入比对。
 PARAM_KEYS = ("seed", "sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m", "arm")
+ENGINE_EXTRA_PARAM_KEYS = ("farm_m",)
+
+
+def param_keys_for(engine_name):
+    """这台引擎要比对哪些参数。旧引擎的键集合**保持原样**，新键只加给支持它的引擎。"""
+    params = config.ENGINES.get(engine_name, {}).get("params", [])
+    return PARAM_KEYS + tuple(k for k in ENGINE_EXTRA_PARAM_KEYS if k in params)
 
 
 def _no(code: str, why: str, *, supported: bool = True,
@@ -40,13 +51,23 @@ def _no(code: str, why: str, *, supported: bool = True,
             "checkpoint_schema": checkpoints.CHECKPOINT_SCHEMA}
 
 
-def run_params(run: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: run.get(k) for k in PARAM_KEYS}
+def run_params(run: Dict[str, Any], engine_name: str = None) -> Dict[str, Any]:
+    name = engine_name or run.get("engine") or config.DEFAULT_ENGINE
+    return {k: run.get(k) for k in param_keys_for(name)}
 
 
-def eligibility(run: Dict[str, Any]) -> Dict[str, Any]:
+def eligibility(run: Dict[str, Any], *, for_new_run: bool = True) -> Dict[str, Any]:
     """这条记录此刻能不能续演。**每次 POST 与每次 worker 启动都要重跑这一遍**，
-    不拿缓存当许可证。"""
+    不拿缓存当许可证。
+
+    `for_new_run` 把两件事分开：
+
+      * `True`（POST 受理新请求时）：要做**资源准入** —— 运行条数与数据目录的上限。
+      * `False`（worker 启动时对**已经占好槽**的任务复核存档）：只复核存档、历史与引擎身份，
+        **不再做资源准入**。否则第 49 条续演占掉第 50 个名额之后，worker 一开机就会把
+        "自己刚占的那一条"算成新的超限，把一个合法任务判死。
+        上限本身没有放松：第 51 条仍然进不来，因为 POST 那一侧照样查。
+    """
     engine = run.get("engine") or config.DEFAULT_ENGINE
     if engine not in config.CONTINUATION_ENGINES:
         return _no("unsupported_engine",
@@ -83,10 +104,17 @@ def eligibility(run: Dict[str, Any]) -> Dict[str, Any]:
         return _no("engine_mismatch",
                    "检查点记的引擎源码与现在这份不是同一版（%s… vs %s…）"
                    % (payload["engine_sha256"][:12], live["engine_sha256"][:12]))
+    # 引擎对上了，再看记录器格式与这台引擎配不配。
+    # 顺序不能反：引擎本身就不同的时候，engine_mismatch 才是准确的原因。
+    want_rec = adapter.Recorder.schema_for(engine)
+    if payload.get("recorder_schema") != want_rec:
+        return _no("checkpoint_invalid",
+                   "记录器格式 %s 与引擎 %s 对不上（应为 %s）；旧存档不会被无声升级"
+                   % (payload.get("recorder_schema"), engine, want_rec))
 
-    want = run_params(run)
+    want = run_params(run, engine)
     got = payload.get("params") or {}
-    diff = [k for k in PARAM_KEYS if got.get(k) != want.get(k)]
+    diff = [k for k in param_keys_for(engine) if got.get(k) != want.get(k)]
     if diff or payload.get("params_fingerprint") != live["params_fingerprint"]:
         return _no("config_mismatch",
                    "检查点的配置与这条运行对不上：%s" % (", ".join(diff) or "参数指纹不同"))
@@ -122,7 +150,8 @@ def eligibility(run: Dict[str, Any]) -> Dict[str, Any]:
         return _no("world_limit",
                    "已经到第 %d 年，累计世界年上限是 %d 年，没有可新增的年数"
                    % (from_year, config.MAX_WORLD_YEAR), from_year=from_year)
-    if store.run_count() >= config.MAX_RUNS or store.data_size_mb() >= config.MAX_DATA_MB:
+    if for_new_run and (store.run_count() >= config.MAX_RUNS
+                        or store.data_size_mb() >= config.MAX_DATA_MB):
         return _no("quota_exceeded",
                    "运行条数或数据目录已达上限（续演要复制一份完整历史，同样占配额）",
                    from_year=from_year)

@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS runs (
   share_m       INTEGER NOT NULL DEFAULT 0,
   aid_m         INTEGER NOT NULL DEFAULT 0,
   recip_m       INTEGER NOT NULL DEFAULT 0,
+  farm_m        INTEGER NOT NULL DEFAULT 0,   -- EXP-07：投到耕作的折算劳动比例
   engine        TEXT    NOT NULL DEFAULT 'exp03',
   arm           TEXT NOT NULL,
   years_done    INTEGER NOT NULL DEFAULT 0,
@@ -91,6 +92,7 @@ MIGRATIONS = (("share_m", "INTEGER NOT NULL DEFAULT 0"),
               ("engine", "TEXT NOT NULL DEFAULT 'exp03'"),
               ("aid_m", "INTEGER NOT NULL DEFAULT 0"),
               ("recip_m", "INTEGER NOT NULL DEFAULT 0"),
+              ("farm_m", "INTEGER NOT NULL DEFAULT 0"),
               ("cancel_requested_at", "REAL"),
               ("cancel_note", "TEXT NOT NULL DEFAULT ''"),
               ("cancel_last_attempt_at", "REAL"),
@@ -149,6 +151,7 @@ def meta_path(run_id: str) -> Path:
 def claim_slot(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: str,
                label: str = "", kind: str = "user", engine: Dict[str, Any],
                repo_commit: str = "", api_version: str = "", share_m: int = 0, aid_m: int = 0,
+               farm_m: int = 0,
                recip_m: int = 0, engine_name: str = None) -> Optional[str]:
     """**原子**地占用唯一的任务槽并建记录。
 
@@ -169,12 +172,12 @@ def claim_slot(*, seed: int, years: int, sigma_m: int, move_mort_m: int, arm: st
             return None
         conn.execute(
             "INSERT INTO runs (run_id,label,kind,status,created_at,seed,years,sigma_m,"
-            "move_mort_m,share_m,aid_m,recip_m,engine,arm,engine_sha256,engine_path,"
+            "move_mort_m,share_m,aid_m,recip_m,farm_m,engine,arm,engine_sha256,engine_path,"
             "baseline_commit,repo_commit,api_version,"
             "root_run_id,parent_run_id,from_year,additional_years) "
-            "VALUES (?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'',0,?)",
+            "VALUES (?,?,?,'queued',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'',0,?)",
             (run_id, label, kind, time.time(), seed, years, sigma_m, move_mort_m,
-             share_m, aid_m, recip_m, engine_name or config.DEFAULT_ENGINE, arm,
+             share_m, aid_m, recip_m, farm_m, engine_name or config.DEFAULT_ENGINE, arm,
              engine["engine_sha256"], engine["engine_path"], engine["baseline_commit"],
              repo_commit, api_version, run_id, years))
         conn.execute("COMMIT")
@@ -226,13 +229,14 @@ def claim_continuation(parent: Dict[str, Any], *, request_id: str, additional_ye
             return None
         conn.execute(
             "INSERT INTO runs (run_id,label,kind,status,created_at,seed,years,sigma_m,"
-            "move_mort_m,share_m,aid_m,recip_m,engine,arm,engine_sha256,engine_path,"
+            "move_mort_m,share_m,aid_m,recip_m,farm_m,engine,arm,engine_sha256,engine_path,"
             "baseline_commit,repo_commit,api_version,"
             "root_run_id,parent_run_id,from_year,additional_years,history_ready) "
-            "VALUES (?,?,'user','queued',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)",
+            "VALUES (?,?,'user','queued',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)",
             (child_id, label or ("续演自 %s（第 %d 年起）" % (parent["run_id"], from_year)),
              now, parent["seed"], target_years, parent["sigma_m"], parent["move_mort_m"],
-             parent["share_m"], parent["aid_m"], parent["recip_m"], parent["engine"],
+             parent["share_m"], parent["aid_m"], parent["recip_m"],
+             parent["farm_m"] if "farm_m" in parent.keys() else 0, parent["engine"],
              parent["arm"], parent["engine_sha256"], parent["engine_path"],
              parent["baseline_commit"], repo_commit, api_version,
              parent["root_run_id"] or parent["run_id"], parent["run_id"],
@@ -559,9 +563,13 @@ def read_series(run_id: str) -> List[Dict[str, Any]]:
     out = []
     for ln in _lines(run_id):
         r = json.loads(ln)
-        out.append({"t": r["t"], "agg": r["agg"], "year": r["year"],
-                    "cum": r["cum"], "integrity": r["integrity"],
-                    "events": len(r["events"])})
+        row = {"t": r["t"], "agg": r["agg"], "year": r["year"],
+               "cum": r["cum"], "integrity": r["integrity"],
+               "events": len(r["events"])}
+        if "farm" in r:          # EXP-07：只放**轻量**的流量与总规模，不放参与者与完整 cells
+            row["farm"] = {"year": r["farm"]["year"], "cum": r["farm"]["cum"],
+                           "field_total_m": r["farm"]["field_total_m"]}
+        out.append(row)
     return out
 
 

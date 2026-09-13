@@ -67,9 +67,10 @@ print("=" * 72)
 check("C08-01 default engine remains exp03", config.DEFAULT_ENGINE == "exp03",
       config.DEFAULT_ENGINE)
 check("C08-02 engines registered",
-      list(config.ENGINES) == ["exp01", "exp02", "exp03", "exp04", "exp05", "exp06"],
+      list(config.ENGINES) == ["exp01", "exp02", "exp03", "exp04", "exp05", "exp06",
+                               "exp07"],
       str(list(config.ENGINES)))
-check("C08-03 api_version obs-1.9", config.API_VERSION == "obs-1.9", config.API_VERSION)
+check("C08-03 api_version obs-1.10", config.API_VERSION == "obs-1.10", config.API_VERSION)
 check("C08-04 exp01 params empty", config.ENGINES["exp01"]["params"] == [])
 check("C08-05 exp02 params sigma only", config.ENGINES["exp02"]["params"] == ["sigma_m"])
 

@@ -716,7 +716,7 @@ with TestClient(app) as c9:
           <= set(spec) and spec["recip_m"]["max"] == 1000
           and spec["recip_m"]["unit"] and spec["recip_m"]["min"] == 0,
           str(spec.get("recip_m"))[:80])
-    check("O27b 契约版本升到 obs-1.9", cfg["api_version"] == "obs-1.9", cfg["api_version"])
+    check("O27b 契约版本升到 obs-1.10", cfg["api_version"] == "obs-1.10", cfg["api_version"])
 
     runs = {r["run_id"]: r for r in c9.get("/api/runs").json()["runs"]}
     pair = ["preset-exp06-recip0", "preset-exp06-recip1000"]
@@ -1964,8 +1964,9 @@ with store.connect() as _c:
 engine_runs = {}
 with TestClient(app) as c17:
     cfg = c17.get("/api/config").json()
-    check("O33a 六台引擎全部登记（含冻结的 EXP-01/02）",
-          set(cfg["engines"]) == {"exp01", "exp02", "exp03", "exp04", "exp05", "exp06"},
+    check("O33a 七台引擎全部登记（含冻结的 EXP-01/02 与新增的 EXP-07）",
+          set(cfg["engines"]) == {"exp01", "exp02", "exp03", "exp04", "exp05", "exp06",
+                                  "exp07"},
           str(sorted(cfg["engines"])))
     check("O33a2 默认引擎没有被改动", cfg["default_engine"] == "exp03", cfg["default_engine"])
     e01, e02, e03 = (cfg["engines"][k] for k in ("exp01", "exp02", "exp03"))
@@ -1975,9 +1976,11 @@ with TestClient(app) as c17:
           f'{e01["engine_params"]} / {e02["engine_params"]}')
     check("O33b2 不支持的参数被点名，前端据此不给控件",
           set(e01["unsupported_params"]) == {"sigma_m", "move_mort_m", "share_m",
-                                             "aid_m", "recip_m"}
-          and e02["unsupported_params"] == ["move_mort_m", "share_m", "aid_m", "recip_m"]
-          and cfg["engines"]["exp06"]["unsupported_params"] == [],
+                                             "aid_m", "recip_m", "farm_m"}
+          and e02["unsupported_params"] == ["move_mort_m", "share_m", "aid_m", "recip_m",
+                                            "farm_m"]
+          and cfg["engines"]["exp06"]["unsupported_params"] == ["farm_m"]
+          and cfg["engines"]["exp07"]["unsupported_params"] == [],
           str(e02["unsupported_params"]))
     check("O33b3 能力表如实标出有没有人口分项账",
           e01["metrics"]["population_identity"] is False

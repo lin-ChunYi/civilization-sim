@@ -61,6 +61,8 @@ _CONST_NAMES = (
     "NEED_PC", "MILLE", "SPLIT_SIZE", "SPOIL_M", "MOVE_LOSS_M",
     "MIG_E_M", "MIG_GAIN_M", "SHOCK_P_M", "K_HALF",
     "SIGMA_M_MAX", "MOVE_MORT_M_MAX", "SHARE_M_MAX", "AID_M_MAX", "RECIP_M_MAX",
+    # EXP-07：耕作的三个固定实验常量（D 级假设，不冒充史料校准）
+    "FARM_M_MAX", "FIELD_CAP_M", "FIELD_DECAY_M", "FARM_YIELD_M",
 )
 
 
@@ -84,7 +86,8 @@ def engine_info(name: str = None) -> Dict[str, Any]:
         "engine_sha256": sha,
         "baseline_commit": cfg["baseline_commit"],
         "params_fingerprint": _params_fingerprint(v3, param_names),
-        "unsupported_params": [p for p in ("sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m")
+        "unsupported_params": [p for p in ("sigma_m", "move_mort_m", "share_m", "aid_m",
+                                          "recip_m", "farm_m")
                                if p not in param_names],
         "metrics": {
             "population_identity": hasattr(v3, "population_identity_error"),
@@ -94,6 +97,7 @@ def engine_info(name: str = None) -> Dict[str, Any]:
             "share": "share_m" in param_names,
             "aid": "aid_m" in param_names,
             "recip": "recip_m" in param_names,
+            "farm": "farm_m" in param_names,
         },
         "recorded_note": ("year/cum 与 band 只含冻结引擎状态里实际存在的键；"
                           "省略的指标未测量，界面须显示未记录，禁止填 0 冒充。"),
@@ -125,7 +129,7 @@ def map_geometry(engine: str = None) -> Dict[str, Any]:
 
 def make_world(seed: int, sigma_m: int, move_mort_m: int, arm: str,
                engine: str = None, share_m: int = 0, aid_m: int = 0,
-               recip_m: int = 0):
+               recip_m: int = 0, farm_m: int = 0):
     """建世界。只把该引擎声明支持的参数传进去；不支持的非零值由 API 层拒绝。"""
     name = engine or config.DEFAULT_ENGINE
     v3, _ = load_engine(name)
@@ -142,6 +146,8 @@ def make_world(seed: int, sigma_m: int, move_mort_m: int, arm: str,
         extra.append(aid_m)
     if "recip_m" in params:
         extra.append(recip_m)
+    if "farm_m" in params:
+        extra.append(farm_m)
     return v3.make_world(seed, poison, *extra)
 
 
@@ -165,6 +171,19 @@ AID_FIELDS = ("aid_events", "aid_transfers", "aid_kcal", "aid_donors",
 RECIP_FIELDS = ("recip_budget", "recip_kcal", "recip_transfers", "recip_changed",
                 "repay_kcal", "repay_transfers", "amem_dropped_kcal",
                 "amem_entries_dropped")
+
+# EXP-07 才有的耕作账字段（全是**流量**：耕地规模是存量，不放进累计相加）。
+FARM_FIELDS = ("farm_effort_cum", "farm_effort_used_cum", "farm_potential_cum",
+               "farm_harvest_cum", "farm_uncollected_cum",
+               "field_built_cum", "field_decay_cum")
+
+# farm 段对外的字段名（去掉 _cum 后缀，year 与 cum 两边同名）
+FARM_FLOW_NAMES = (("farm_effort_cum", "farm_effort_m"),
+                   ("farm_potential_cum", "potential_kcal"),
+                   ("farm_harvest_cum", "harvested_kcal"),
+                   ("farm_uncollected_cum", "uncollected_kcal"),
+                   ("field_built_cum", "built_m"),
+                   ("field_decay_cum", "decayed_m"))
 
 CUM_FIELDS = (
     "births_cum", "deaths_demo_cum", "mig_deaths_cum", "mig_total", "mig_regret",
@@ -192,6 +211,7 @@ class Recorder:
         self._log_len = 0
         self._share_len = 0
         self._aid_len = 0
+        self._farm_log_len = 0       # EXP-07 的耕作日志游标
         self._names: Dict[str, str] = {}
         self._birth_year: Dict[str, int] = {}
 
@@ -202,12 +222,23 @@ class Recorder:
     # 把显示名重新分配、把回助的依据链断掉。
     STATE_FIELDS = ("_prev_cum", "_prev_cells", "_log_len", "_share_len", "_aid_len",
                     "_aid_by_pair", "_names", "_birth_year")
+    # EXP-07 多一个耕作日志游标，所以它有自己的记录器格式版本。
+    # EXP-01～06 仍然是 obs-recorder-v1 —— **旧存档不会被无声升级成农业世界**。
+    SCHEMA_PLAIN = "obs-recorder-v1"
+    SCHEMA_FARM = "obs-recorder-farm-v1"
+    FARM_FIELDS = ("_farm_log_len",)
+
+    @staticmethod
+    def schema_for(engine: str) -> str:
+        return (Recorder.SCHEMA_FARM
+                if "farm_m" in config.ENGINES.get(engine, {}).get("params", [])
+                else Recorder.SCHEMA_PLAIN)
 
     def export_state(self) -> Dict[str, Any]:
         """导出记录器内部状态。`_aid_by_pair` 的键是 (供给方, 接收方) 整数二元组，
         编码层保留 tuple 与 int，不会被压成字符串。"""
         return {
-            "schema": "obs-recorder-v1",
+            "schema": Recorder.schema_for(self.engine),
             "engine": self.engine,
             "_prev_cum": None if self._prev_cum is None else dict(self._prev_cum),
             "_prev_cells": dict(self._prev_cells),
@@ -217,17 +248,26 @@ class Recorder:
             "_aid_by_pair": {k: list(v) for k, v in self._aid_by_pair.items()},
             "_names": dict(self._names),
             "_birth_year": dict(self._birth_year),
+            **({"_farm_log_len": int(self._farm_log_len)}
+               if Recorder.schema_for(self.engine) == Recorder.SCHEMA_FARM else {}),
         }
 
     @classmethod
     def from_state(cls, state: Dict[str, Any]) -> "Recorder":
         """按导出的状态重建记录器。字段缺一不可 —— 宁可拒绝，也不拿默认值凑。"""
-        if not isinstance(state, dict) or state.get("schema") != "obs-recorder-v1":
-            raise ValueError("记录器状态格式不认识：%r" % (state or {}).get("schema"))
+        schema = (state or {}).get("schema") if isinstance(state, dict) else None
+        if schema not in (cls.SCHEMA_PLAIN, cls.SCHEMA_FARM):
+            raise ValueError("记录器状态格式不认识：%r" % (schema,))
         engine = state.get("engine")
         if not isinstance(engine, str) or not engine:
             raise ValueError("记录器状态里没有引擎名")
-        missing = [k for k in cls.STATE_FIELDS if k not in state]
+        # schema 必须与引擎对得上：EXP-07 的存档要有耕作游标，旧引擎的不能冒充成农业格式。
+        want = cls.schema_for(engine)
+        if schema != want:
+            raise ValueError("记录器格式 %s 与引擎 %s 不匹配（应为 %s）"
+                             % (schema, engine, want))
+        need = cls.STATE_FIELDS + (cls.FARM_FIELDS if schema == cls.SCHEMA_FARM else ())
+        missing = [k for k in need if k not in state]
         if missing:
             raise ValueError("记录器状态缺字段：%s" % ", ".join(missing))
         rec = cls(engine)
@@ -239,6 +279,8 @@ class Recorder:
         rec._aid_by_pair = {k: list(v) for k, v in state["_aid_by_pair"].items()}
         rec._names = dict(state["_names"])
         rec._birth_year = dict(state["_birth_year"])
+        if schema == cls.SCHEMA_FARM:
+            rec._farm_log_len = int(state["_farm_log_len"])
         return rec
 
     # -- 只读抽取 ------------------------------------------------------
@@ -311,7 +353,8 @@ class Recorder:
         fields = (tuple(k for k in CUM_FIELDS if k in st)
                   + tuple(f for f in SHARE_FIELDS if f in st)
                   + tuple(f for f in AID_FIELDS if f in st)
-                  + tuple(f for f in RECIP_FIELDS if f in st))
+                  + tuple(f for f in RECIP_FIELDS if f in st)
+                  + tuple(f for f in FARM_FIELDS if f in st))
         cum = {k: st[k] for k in fields}
         prev = self._prev_cum or {k: 0 for k in fields}
         year = {k: cum[k] - prev.get(k, 0) for k in fields}
@@ -389,9 +432,84 @@ class Recorder:
                                        for d, r, a in c.get("without_totals", [])],
                 } for c in st.get("recip_compare", [])],
             }
+        if "field_m" in st:                        # EXP-07：耕作与弃耕
+            rec["farm"] = self._farm_section(st, t, cum, year)
         self._prev_cum = cum
         self._prev_cells = cells_now
         return rec
+
+    # -- EXP-07 的 farm 段：口径固定，旧引擎整段缺席（不填 0 冒充支持）--------
+    def _farm_section(self, st, t: int, cum, year) -> Dict[str, Any]:
+        """年度记录里的 farm 段（`schema="farm-1"`）。
+
+        `field_m` 是**年末存量**，按 `meta.cell_ids` 的顺序给 64 个整数；
+        `year` / `cum` 只放**流量**（耕地规模是存量，不作累计流量相加）。
+        `cells` 只列本年有劳动或有旧耕地的格；`participants` 的主体来自**相位前状态**，
+        不拿年末位置倒推。
+        """
+        cell_ids = sorted(st["stock"])
+        flows_year = {name: year.get(key, 0) for key, name in FARM_FLOW_NAMES}
+        flows_cum = {name: cum.get(key, 0) for key, name in FARM_FLOW_NAMES}
+        # 采集劳动 = 人口折算总量 − 耕作劳动，用的是**相位前**冻结下来的那份人数
+        trace = st.get("farm_effort_trace") or {}
+        total_pop_m = sum(n for n, _fe, _foe in trace.values()) * 1000
+        flows_year["forage_effort_m"] = sum(foe for _n, _fe, foe in trace.values())
+        flows_cum["forage_effort_m"] = None      # 采集劳动没有累计账，如实给 null
+
+        cells = []
+        for e in st.get("farm_log", []):
+            if e["tick"] != t - 1:
+                continue                          # 只取**本年**那一批（记录是 step 之后写的）
+            row = next((c for c in cells if c["cell"] == e["cell"]), None)
+            if row is None:
+                row = {"cell": e["cell"], "field_before_m": e["field_before_m"],
+                       "field_after_m": e["field_after_m"], "worked_m": 0,
+                       "built_m": 0, "decayed_m": 0, "weather_m": None,
+                       "potential_kcal": 0, "harvested_kcal": 0, "uncollected_kcal": 0,
+                       "participants": []}
+                cells.append(row)
+            row["field_after_m"] = e["field_after_m"]
+            if e["type"] == "field_built":
+                row["built_m"] = e["amount_m"]
+            elif e["type"] == "field_decay":
+                row["decayed_m"] = e["amount_m"]
+            elif e["type"] == "farm_harvest":
+                row["worked_m"] = e["worked_m"]
+                row["weather_m"] = e["weather_m"]
+                row["potential_kcal"] = e["potential_kcal"]
+                row["harvested_kcal"] = e["kcal"]
+                row["uncollected_kcal"] = e["uncollected_kcal"]
+        crop_by_band = {}
+        for e in st.get("farm_log", []):
+            if e["tick"] == t - 1 and e["type"] == "farm_harvest":
+                for bid, v in e["per_band_kcal"].items():
+                    crop_by_band[bid] = crop_by_band.get(bid, 0) + v
+        by_cell_bands = {}
+        for e in st.get("farm_log", []):
+            if e["tick"] != t - 1:
+                continue
+            by_cell_bands.setdefault(e["cell"], set()).update(e["bands"])
+        for row in cells:
+            parts = []
+            for bid in sorted(by_cell_bands.get(row["cell"], ())):
+                n, fe, foe = trace.get(bid, (None, 0, 0))
+                parts.append({
+                    "id": str(bid),                 # 64 位 id 一律字符串
+                    "population_before": n,         # **相位前**的人数
+                    "farm_effort_m": fe, "forage_effort_m": foe,
+                    "forage_kcal": (st.get("forage_trace") or {}).get(bid),
+                    "crop_kcal": crop_by_band.get(bid, 0),
+                })
+            row["participants"] = parts
+        cells.sort(key=lambda c: c["cell"])
+        return {
+            "schema": "farm-1",
+            "field_m": [st["field_m"][i] for i in cell_ids],
+            "field_total_m": sum(st["field_m"].values()),
+            "year": flows_year, "cum": flows_cum, "cells": cells,
+            "note": ("field_m 是**年末存量**，按 meta.cell_ids 的顺序；year/cum 只放流量。"
+                     "1000 个刻度 = 1 个耕作规模单位，不是亩、公顷或人数。"),
+        }
 
     # -- 事件：只有两个来源，都标注出来 --------------------------------
     def _events(self, st, t: int, cells_now: Dict[str, int]) -> List[Dict[str, Any]]:
@@ -479,6 +597,45 @@ class Recorder:
                             "text": f"{self._names.get(sid, sid)} 由 {old} 号格迁至 {cell} 号格",
                             "unrecorded": "本次迁移的死亡人数未记录：当年账本只记全局分项，"
                                           "群体层的出生/原死亡/迁移死亡无法从年末快照拆开"})
+
+        farm_log = st.get("farm_log")            # 来源五：耕作日志（EXP-07）
+        if farm_log is not None:
+            need_pc = load_engine(self.engine)[0].NEED_PC
+            for e in farm_log[self._farm_log_len:]:
+                # 内部 tick -> 展示 year：记录是 step 之后写的，所以展示年份是 tick+1。
+                # **只对 EXP-07 自己这份日志做这个换算**，旧记录与旧事件 id 一个都不动。
+                who = [str(x) for x in e["bands"]]
+                names = "、".join(self._names.get(x, x) for x in who) or "无人"
+                base = {"source": e["source"], "cell": e["cell"],
+                        "participants": who,
+                        "labour_m": e["labour_m"],
+                        "field_before_m": e["field_before_m"],
+                        "field_after_m": e["field_after_m"],
+                        "unrecorded": "作物品种、耕作方式与土地权属未记录：模型里没有这些量。"}
+                if e["type"] == "field_built":
+                    out.append(dict(base, type="field_built", amount_m=e["amount_m"],
+                                    labour_used_m=e["labour_used_m"],
+                                    text=f"{names} 在第 {e['cell']} 号格开垦了 "
+                                         f"{e['amount_m'] / 1000:.1f} 个耕作规模单位"))
+                elif e["type"] == "farm_harvest":
+                    out.append(dict(base, type="farm_harvest", kcal=e["kcal"],
+                                    worked_m=e["worked_m"], weather_m=e["weather_m"],
+                                    potential_kcal=e["potential_kcal"],
+                                    uncollected_kcal=e["uncollected_kcal"],
+                                    person_years=e["kcal"] / need_pc,
+                                    per_band_kcal={str(k): v
+                                                   for k, v in e["per_band_kcal"].items()},
+                                    text=f"{names} 在第 {e['cell']} 号格收了 {e['kcal']} kcal"
+                                         f"（{e['kcal'] / need_pc:.2f} 人年口粮）；"
+                                         f"潜在 {e['potential_kcal']} kcal，"
+                                         f"没人收的 {e['uncollected_kcal']} kcal 就地作废"))
+                elif e["type"] == "field_decay":
+                    out.append(dict(base, type="field_decay", amount_m=e["amount_m"],
+                                    unworked_m=e["unworked_m"],
+                                    text=f"第 {e['cell']} 号格有 "
+                                         f"{e['amount_m'] / 1000:.1f} 个耕作规模单位"
+                                         f"没人维护，退化了"))
+            self._farm_log_len = len(farm_log)
 
         # 稳定标识：同一次运行里唯一且可复现（年份 + 类型 + 当年序号），供时间轴定位与详情面板用
         for i, e in enumerate(out):

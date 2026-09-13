@@ -384,6 +384,7 @@ def make_world(seed: int, poison: str = "", sigma_m: int = 0, move_mort_m: int =
           'field_decay_cum': 0,       # 累计退化掉的刻度
           'farm_log': [],             # 耕作事件：field_built / farm_harvest / field_decay
           'farm_effort_trace': {},    # 只读痕迹：{bid: (人数, 耕作刻度, 采集刻度)}，不进哈希
+          'forage_trace': {},         # 只读痕迹：{bid: 本年野外采集实得 kcal}，不进哈希
           # 援助记忆与优先回助的账（EXP-06 新增）
           'recip_budget': 0,        # 走优先阶段的预算合计
           'recip_kcal': 0,          # 优先阶段实际转移的数量
@@ -538,7 +539,9 @@ def run_id(st) -> str:
     h.update(f"start_stock={st['start_stock']};start_store={st['start_store']};".encode())
     h.update(f"pop_start={st['pop_start']};".encode())   # 初始人口也是运行身份的一部分
     h.update(("semantic=" + ",".join(sorted(sem)) + ";").encode())
-    h.update(f"params={params_fingerprint(st['sigma_m'], st['move_mort_m'], st['share_m'], st['aid_m'], st['recip_m'])};".encode())
+    # FARM_M 必须进运行身份：只改 FARM_M 就是**另一个世界**，
+    # 漏了它两次运行会拿到同一个 model_run_id。
+    h.update(f"params={params_fingerprint(st['sigma_m'], st['move_mort_m'], st['share_m'], st['aid_m'], st['recip_m'], st['farm_m'])};".encode())
     return h.hexdigest()
 
 def full_digest(st) -> str:
@@ -716,6 +719,9 @@ def step(st, suppress_split_in=None):
     #   已有地先占用维护劳动 -> 剩下的劳动去开垦 -> 没维护到的那部分退化。
     #   本年产出只用**相位前的旧 F**：不能先开垦再立刻收获。
     #   新开垦的地只影响下一年。
+    # 只读痕迹（每 tick 重写，不进哈希）：本年**野外采集**的实得量，
+    # 记在把农业采收并进 harvest 之前 —— 观察层要把两者分开显示。
+    st['forage_trace'] = dict(harvest)
     farm_cell_crop = {bid: 0 for bid in st['bands']}
     farm_by_cell = {}
     for bid in order:

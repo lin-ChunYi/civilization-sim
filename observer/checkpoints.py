@@ -24,6 +24,9 @@ from typing import Any, Dict, Tuple
 
 CHECKPOINT_SCHEMA = "obs-checkpoint-v1"
 RECORDER_SCHEMA = "obs-recorder-v1"
+# 记录器格式随引擎而分：EXP-01～06 用 v1；EXP-07 多一个耕作日志游标，用 farm-v1。
+# **只认这两种**，别的一律拒绝，不补默认值。
+RECORDER_SCHEMAS = ("obs-recorder-v1", "obs-recorder-farm-v1")
 
 MAX_DEPTH = 64                      # 编码/解码的最大嵌套深度
 MAX_BYTES = 64 * 1024 * 1024        # 单个检查点文件的上限
@@ -135,11 +138,12 @@ def _canon(obj: Any) -> bytes:
 def build(*, engine: str, engine_sha256: str, engine_path: str, params: Dict[str, Any],
           params_fingerprint: str, model_run_id: str, tick: int, full_digest: str,
           state_hash: str, model_state: Any, recorder_state: Any,
-          history_bytes: int, history_records: int, history_sha256: str) -> Dict[str, Any]:
+          history_bytes: int, history_records: int, history_sha256: str,
+          recorder_schema: str = RECORDER_SCHEMA) -> Dict[str, Any]:
     """组装一个检查点负载，并算出整份负载的完整性摘要。"""
     payload = {
         "checkpoint_schema": CHECKPOINT_SCHEMA,
-        "recorder_schema": RECORDER_SCHEMA,
+        "recorder_schema": recorder_schema,
         "engine": engine,
         "engine_sha256": engine_sha256,
         "engine_path": engine_path,
@@ -176,8 +180,12 @@ def save(path: Path, doc: Dict[str, Any]) -> None:
         pass
 
 
-def load(path: Path) -> Dict[str, Any]:
-    """读并**完整校验**一个检查点。任何一处对不上都抛 CheckpointError。"""
+def load(path: Path, *, expect_recorder_schema: str = None) -> Dict[str, Any]:
+    """读并**完整校验**一个检查点。任何一处对不上都抛 CheckpointError。
+
+    `expect_recorder_schema`：调用方按**引擎**算出来的记录器格式。给了就逐字比对 ——
+    旧引擎的存档不能冒充成农业格式，EXP-07 的存档也不能被当成旧格式读。
+    """
     try:
         size = path.stat().st_size
     except OSError as exc:
@@ -203,8 +211,12 @@ def load(path: Path) -> Dict[str, Any]:
         raise CheckpointError("检查点完整性摘要对不上（文件已损坏或被改过）")
     if payload.get("checkpoint_schema") != CHECKPOINT_SCHEMA:
         raise CheckpointError("检查点格式版本不认识：%r" % payload.get("checkpoint_schema"))
-    if payload.get("recorder_schema") != RECORDER_SCHEMA:
-        raise CheckpointError("记录器格式版本不认识：%r" % payload.get("recorder_schema"))
+    got_rec = payload.get("recorder_schema")
+    if got_rec not in RECORDER_SCHEMAS:
+        raise CheckpointError("记录器格式版本不认识：%r" % (got_rec,))
+    if expect_recorder_schema is not None and got_rec != expect_recorder_schema:
+        raise CheckpointError("记录器格式 %s 与这台引擎对不上（应为 %s）"
+                              % (got_rec, expect_recorder_schema))
     for key in ("engine", "engine_sha256", "engine_path", "params_fingerprint",
                 "model_run_id", "full_digest", "state_hash"):
         if not isinstance(payload.get(key), str) or not payload[key]:

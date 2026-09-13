@@ -47,6 +47,11 @@ ENGINES = {
               "baseline_commit": "本轮实现（待审）",
               "label": "EXP-06 援助记忆与优先回助",
               "params": ["sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m"]},
+    "exp07": {"path": REPO_ROOT / "exp07" / "verify7.py",
+              "baseline_commit": "本轮实现（待审）",
+              "label": "EXP-07 原始耕作与弃耕",
+              "params": ["sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m",
+                         "farm_m"]},
 }
 DEFAULT_ENGINE = "exp03"
 
@@ -74,12 +79,16 @@ CANCEL_GRACE_SEC = float(os.environ.get("OBSERVER_CANCEL_GRACE", "15"))
 # API 契约版本。新增字段递增小版本；删改字段必须先改契约文档再动代码。
 # 本批（C_CONT_01）新增续演接口，属于**新增字段/新增端点**，小版本递增到 obs-1.9。
 # 旧记录里存着的 api_version 保留它自己的历史身份，不回头改写。
-API_VERSION = "obs-1.9"
+# 本批（EXP-07）新增 farm 段与 farm_m 参数，属于新增，小版本递增到 obs-1.10。
+# 旧记录里存着的 api_version 保留它自己的历史身份，不回头改写。
+API_VERSION = "obs-1.10"
 
 # --- 续演（C_CONT_01）---
 # 只有**新建的 EXP-06 运行**才会写检查点；旧运行与预生成案例没有检查点，
 # 也就没有续演资格 —— 不自动补跑，不拿最后一年的画面冒充检查点。
-CONTINUATION_ENGINES = ("exp06",)
+# EXP-06 与 EXP-07 各自**同版本**续演：EXP-06 的存档只能续成 EXP-06，
+# 不会被无声升级成农业世界（引擎身份与记录器 schema 两道都拦着）。
+CONTINUATION_ENGINES = ("exp06", "exp07")
 MAX_ADDITIONAL_YEARS = 300          # 一次续演最多新增多少年
 MIN_ADDITIONAL_YEARS = 1
 # 累计世界年上限。**这是上限，不是"已经标定到 3000 年"**：本轮实测到 600 年。
@@ -118,6 +127,10 @@ PARAM_SPECS = {
                 "min": 0, "max": 1000, "default": 0,
                 "note": "预算中优先分给'以前帮过我、现在同格且缺粮'的群体的比例；"
                         "没用掉的回到普通援助。0 = 不做优先回助。"},
+    "farm_m": {"label": "投到耕作上的折算劳动比例", "unit": "‰（千分之一）",
+               "min": 0, "max": 1000, "default": 0,
+               "note": "人口 N 对应 N×1000 个折算劳动刻度，这一比例投到耕作、其余去采集。"
+                       "**这是人口折算预算，不是说每个婴儿都在劳动**；0 = 不耕作。"},
     "seed": {"label": "随机种子", "unit": "整数", "min": 0, "max": MAX_SEED, "default": 0,
              "note": "同种子同参数逐位可复现。"},
     "years": {"label": "模拟年数", "unit": "年", "min": 1, "max": MAX_YEARS, "default": 120,

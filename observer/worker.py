@@ -41,8 +41,9 @@ def _write_checkpoint(run_id, eng, st, rec, fh, years_file):
             "seed": st["seed"], "sigma_m": st.get("sigma_m"),
             "move_mort_m": st.get("move_mort_m"), "share_m": st.get("share_m"),
             "aid_m": st.get("aid_m"), "recip_m": st.get("recip_m"),
+            "farm_m": st.get("farm_m"),
             "arm": ARM_OF_POISON.get(st.get("poison", ""), st.get("poison", "")),
-        }),
+        }, eng),
         params_fingerprint=adapter.engine_info(eng)["params_fingerprint"],
         model_run_id=adapter.run_identity(st, eng)["model_run_id"],
         tick=st["tick"],
@@ -52,7 +53,8 @@ def _write_checkpoint(run_id, eng, st, rec, fh, years_file):
         recorder_state=rec.export_state(),
         history_bytes=size,
         history_records=store.year_count(run_id),
-        history_sha256=checkpoints.prefix_sha256(years_file, size))
+        history_sha256=checkpoints.prefix_sha256(years_file, size),
+        recorder_schema=adapter.Recorder.schema_for(eng))
     checkpoints.save(store.checkpoint_path(run_id), doc)
     return doc
 
@@ -82,7 +84,8 @@ def execute(run_id: str) -> int:
                                 engine=eng,
                                 share_m=run["share_m"] if "share_m" in keys else 0,
                                 aid_m=run["aid_m"] if "aid_m" in keys else 0,
-                                recip_m=run["recip_m"] if "recip_m" in keys else 0)
+                                recip_m=run["recip_m"] if "recip_m" in keys else 0,
+                                farm_m=run["farm_m"] if "farm_m" in keys else 0)
         ident = adapter.run_identity(st, eng)
         meta = adapter.static_run_meta(st)
         meta["engine"] = adapter.engine_info(eng)
@@ -148,14 +151,17 @@ def _resume(run_id, pid, run, eng, parent_id):
     parent = store.get_run(parent_id)
     if parent is None:
         raise RuntimeError("父运行 %s 已经不在了" % parent_id)
-    verdict = continuation.eligibility(parent)          # 启动时**重新**校验一遍
+    # 启动时**重新**校验一遍存档 —— 但这条任务的槽已经占好了，
+    # 资源准入（条数/容量上限）不该在这里再算一次，否则会把自己算成新的超限。
+    verdict = continuation.eligibility(parent, for_new_run=False)
     if not verdict["eligible"]:
         note = "续演前复核不通过：%s（%s）" % (verdict["reason"], verdict["reason_code"])
         store.worker_finish(run_id, pid, "failed", finished_at=time.time(), error=note)
         print(note, file=sys.stderr)
         return 1
 
-    payload = checkpoints.load(store.checkpoint_path(parent_id))
+    payload = checkpoints.load(store.checkpoint_path(parent_id),
+                               expect_recorder_schema=adapter.Recorder.schema_for(eng))
     live = adapter.engine_info(eng)
     # 引擎身份再核一次，**全量 sha256 逐字比对**，不用短前缀，也不看展示用的版本块。
     if payload["engine"] != eng or payload["engine_sha256"] != live["engine_sha256"]:

@@ -1,0 +1,46 @@
+INFO:     Started server process [39338]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8902 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57007 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57008 - "POST /api/runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57009 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57010 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57011 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57012 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57013 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57014 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57017 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57019 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57021 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57022 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57023 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57024 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57025 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57026 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57027 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57030 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57031 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57032 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57033 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57034 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57035 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57036 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57037 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57038 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57039 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57040 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57041 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57042 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57045 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57046 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57048 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57049 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57050 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57051 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57052 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/runs/f06a96703f48 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [39338]
