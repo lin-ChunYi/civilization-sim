@@ -1,0 +1,20 @@
+{
+  "mark": "G_MOTION_01-dense-fixture",
+  "note": "Constructed dense year. Not a natural run. Conservation only.",
+  "runId": "fixture-dense-year",
+  "year": 7,
+  "events": [
+    {"id":"t7-share-0","year":7,"type":"share","donor":"A","receiver":"B","cell":0,"kcal":0},
+    {"id":"t7-share-1","year":7,"type":"share","donor":"A","receiver":"C","cell":0,"kcal":0},
+    {"id":"t7-share-2","year":7,"type":"share","donor":"B","receiver":"C","cell":0,"kcal":0},
+    {"id":"t7-aid-0","year":7,"type":"aid","donor":"A","receiver":"B","cell":1,"kcal":100,"phase":"normal","repay":false},
+    {"id":"t7-aid-1","year":7,"type":"aid","donor":"A","receiver":"C","cell":1,"kcal":50,"phase":"normal","repay":false},
+    {"id":"t7-aid-2","year":7,"type":"aid","donor":"B","receiver":"A","cell":1,"kcal":25,"phase":"recip","repay":false},
+    {"id":"t7-aid-3","year":7,"type":"aid","donor":"C","receiver":"A","cell":1,"kcal":10,"phase":"normal","repay":true},
+    {"id":"t7-migrate-0","year":7,"type":"migrate","band":"A","from":2,"to":5},
+    {"id":"t7-migrate-1","year":7,"type":"migrate","band":"B","from":3,"to":8},
+    {"id":"t7-split-0","year":7,"type":"split","parent":"A","band":"D"},
+    {"id":"t7-share-3","year":7,"type":"share","donor":"C","receiver":"D","cell":4,"kcal":0},
+    {"id":"t7-aid-4","year":7,"type":"aid","donor":"D","receiver":"B","cell":4,"kcal":40,"phase":"normal","repay":false}
+  ]
+}
