@@ -3,7 +3,7 @@
 **这份文件是两边的唯一约定来源。** 后台（Python）与 UI 分支（`observer/web/`）分头改，
 靠它对齐；不各自实现一套数据格式。
 
-契约版本 **`obs-1.8`**，由 `GET /api/config` 的 `api_version` 字段给出。
+契约版本 **`obs-1.9`**，由 `GET /api/config` 的 `api_version` 字段给出。
 **新增字段 → 小版本 +1；删除或改变已有字段的含义 → 必须先改这份文件并知会对方，再动代码。**
 
 ---
@@ -194,6 +194,24 @@ integrity{conservation_error,population_identity_error,state_hash}, events[]
 4. 冲突时以这份文件为准；没写进来的字段一律视为**不保证**，不要依赖。
 
 ---
+
+## 5b. obs-1.9 的变化（续演）
+
+新增两个端点与两组字段，不删除、不改已有字段含义：
+
+| 变化 | 兼容性 |
+|---|---|
+| `GET /api/runs/{id}/continuation` | **新增**；这条记录此刻能不能续演 |
+| `POST /api/runs/{id}/continue` | **新增**；从检查点续演，新建一条子运行 |
+| 每条运行新增 `lineage` / `segment` | **新增**；普通运行 `kind="origin"`、`from_year=0` |
+| `GET /api/config.continuation` | **新增**；可续演的引擎与上限 |
+| run 行新增 `root_run_id` / `parent_run_id` / `from_year` / `additional_years` / `completed_steps` / `history_ready` | **新增**；旧记录按默认值迁移（`root_run_id` 为空时按自己算） |
+
+完整口径见 [`OBS-CONTINUATION-CONTRACT.md`](OBS-CONTINUATION-CONTRACT.md)。
+新接口的 409 用结构化 `detail`，**既有接口的错误格式一个字都不改**。
+
+`version.recorded.api_version` 存的是**产出那条记录时**的版本 —— obs-1.8 及更早的记录
+仍然写着它们当时的值，不会被改成 obs-1.9。
 
 ## 6. obs-1.8 的变化（EXP-01/02 与服务身份）
 

@@ -179,6 +179,24 @@
 - 引擎加载器只从 `config.ENGINES` 白名单取路径，**不接受请求指定的代码路径**；
   并且**算哈希的那份字节就是被 `compile` 执行的那份字节**（只读一次磁盘）。
 
+## 7b. 怎么复现"重启服务之后接着算"
+
+```bash
+# 本批自己的端口与数据目录；不碰 8765 / 8772 / 8788
+CONT_TEST_PORT=8792 CONT_TEST_DATA=/tmp/chronicle-cont-20260913/testdata \
+  python3 observer/test_continuation.py --report /tmp/chronicle-cont-20260913/report.json
+```
+
+K2S 组会真的做这几步，并把两个服务的 PID、启动命令、退出码写进报告的 `services` 段：
+
+1. `python3 -m uvicorn observer.app:app --host 127.0.0.1 --port 8792` 起服务 A；
+2. `POST /api/runs`（EXP-06，300 年），等它 `done`；
+3. **停掉服务 A**（SIGTERM），并核实端口上确实没人应答；
+4. 用**同一个数据目录**起服务 B（PID 与 A 不同）；
+5. `GET /api/runs/{id}/continuation` → `eligible=true, from_year=300`；
+6. `POST /api/runs/{id}/continue {"additional_years":300, "request_id":…}`；
+7. 跑到第 600 年，与"连续 600 年"的对照运行逐年比较，首处差异必须是 `None`。
+
 ## 8. 本版做不到的
 
 - 累计世界年只实测到 **600 年**，`MAX_WORLD_YEAR=3000` 只是上限。

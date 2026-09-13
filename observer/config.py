@@ -72,7 +72,9 @@ QUEUE_GRACE_SEC = float(os.environ.get("OBSERVER_QUEUE_GRACE", "20"))
 CANCEL_GRACE_SEC = float(os.environ.get("OBSERVER_CANCEL_GRACE", "15"))
 
 # API 契约版本。新增字段递增小版本；删改字段必须先改契约文档再动代码。
-API_VERSION = "obs-1.8"
+# 本批（C_CONT_01）新增续演接口，属于**新增字段/新增端点**，小版本递增到 obs-1.9。
+# 旧记录里存着的 api_version 保留它自己的历史身份，不回头改写。
+API_VERSION = "obs-1.9"
 
 # --- 续演（C_CONT_01）---
 # 只有**新建的 EXP-06 运行**才会写检查点；旧运行与预生成案例没有检查点，

@@ -716,7 +716,7 @@ with TestClient(app) as c9:
           <= set(spec) and spec["recip_m"]["max"] == 1000
           and spec["recip_m"]["unit"] and spec["recip_m"]["min"] == 0,
           str(spec.get("recip_m"))[:80])
-    check("O27b 契约版本升到 obs-1.8", cfg["api_version"] == "obs-1.8", cfg["api_version"])
+    check("O27b 契约版本升到 obs-1.9", cfg["api_version"] == "obs-1.9", cfg["api_version"])
 
     runs = {r["run_id"]: r for r in c9.get("/api/runs").json()["runs"]}
     pair = ["preset-exp06-recip0", "preset-exp06-recip1000"]
@@ -2234,8 +2234,8 @@ _line = next((ln for ln in reversed((_cont.stdout or "").splitlines())
 check("O35a 续演定向验收（observer/test_continuation.py --quick）",
       _cont.returncode == 0 and "失败 0" in _line, _line.strip()[:70]
       or (_cont.stderr or "")[-70:])
-print("      注：--quick 跳过 300+300 的长跑；完整版（含 600 年）单独执行，"
-      "证据见 docs/evidence/20260913-continuation/")
+print("      注：--quick 跳过 K2（300+300 长跑）、K2S（真·重启服务）与依赖它们的 K3，"
+      "这三组在**完整模式**里单独跑；证据见 docs/evidence/20260913-continuation/")
 
 # ---------------------------------------------------------------- 冻结目录
 print("\nO12 冻结基线未被改动")

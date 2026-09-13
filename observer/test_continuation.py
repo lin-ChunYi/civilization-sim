@@ -32,6 +32,11 @@ from observer import adapter, checkpoints, config, continuation, store   # noqa:
 RESULTS = []
 PARAMS = dict(seed=4242, sigma_m=400, move_mort_m=50, share_m=1000, aid_m=1000,
               recip_m=1000, arm="memory", engine_name="exp06")
+# 本批自己的测试端口。**不碰用户那几个旧服务（8765 / 8772 / 8788）。**
+TEST_PORT = int(os.environ.get("CONT_TEST_PORT", "8792"))
+SERVICES = []          # 记下每个测试服务的 PID、起停时刻与退出码
+K2S_FIRST_DIFF = "未执行"
+HTTP_CALLS = []        # 记下每一次真实 HTTP 请求
 
 
 def record(name, state, detail=""):
@@ -50,6 +55,91 @@ def uncov(name, why):
 
 # ---------------------------------------------------------------- 基础设施
 COMMANDS = []
+
+
+def _http(method, path, body=None, timeout=30):
+    """对本批测试服务发一次真实 HTTP 请求，并记进报告。"""
+    import urllib.error
+    import urllib.request
+    url = "http://127.0.0.1:%d%s" % (TEST_PORT, path)
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            code, raw = resp.status, resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        code, raw = exc.code, exc.read().decode("utf-8")
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        payload = raw
+    HTTP_CALLS.append({"method": method, "url": url, "request": body,
+                       "status": code, "response": payload})
+    return code, payload
+
+
+def start_service(tag):
+    """起一个**独立的测试服务进程**（自己的端口、自己的数据目录）。返回 Popen。"""
+    log = Path(DATA).parent / ("service-%s.log" % tag)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    fh = log.open("ab")
+    cmd = [sys.executable, "-m", "uvicorn", "observer.app:app",
+           "--host", "127.0.0.1", "--port", str(TEST_PORT)]
+    proc = subprocess.Popen(cmd, cwd=str(REPO), stdout=fh, stderr=fh,
+                            start_new_session=True, env={**os.environ})
+    ok = False
+    for _ in range(120):
+        try:
+            if _http("GET", "/api/health", timeout=2)[0] == 200:
+                ok = True
+                break
+        except Exception:                                            # noqa: BLE001
+            pass
+        time.sleep(0.5)
+    SERVICES.append({"tag": tag, "pid": proc.pid, "cmd": " ".join(cmd),
+                     "data_dir": str(DATA), "port": TEST_PORT,
+                     "started_at": time.time(), "healthy": ok,
+                     "log": str(log), "exit_code": None, "stopped_at": None})
+    COMMANDS.append({"cmd": " ".join(cmd), "role": "service:" + tag,
+                     "pid": proc.pid, "exit_code": None})
+    return proc
+
+
+def stop_service(proc, tag):
+    """停掉本批自己启动的测试服务，并**核实它真的退出了**。"""
+    proc.terminate()
+    try:
+        rc = proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        rc = proc.wait(timeout=15)
+    alive = True
+    try:
+        os.kill(proc.pid, 0)
+    except ProcessLookupError:
+        alive = False
+    except OSError:
+        alive = True
+    for row in SERVICES:
+        if row["pid"] == proc.pid and row["exit_code"] is None:
+            row["exit_code"] = rc
+            row["stopped_at"] = time.time()
+            row["still_alive_after_stop"] = alive
+    for row in COMMANDS:
+        if row.get("pid") == proc.pid and row.get("role") == "service:" + tag:
+            row["exit_code"] = rc
+    return rc, alive
+
+
+def wait_status(run_id, want=("done", "failed", "canceled", "interrupted"), limit=1800):
+    """通过**服务的 HTTP 接口**轮询状态，不直接读库。"""
+    for _ in range(limit):
+        code, row = _http("GET", "/api/runs/%s" % run_id)
+        if code == 200 and row.get("status") in want:
+            return row
+        time.sleep(0.5)
+    return _http("GET", "/api/runs/%s" % run_id)[1]
 
 
 def worker(run_id, stub_make_world=False):
@@ -166,6 +256,7 @@ for seed in (0, 777, 4242):
 
 # ------------------------------------------------------- 2. 300+300 vs 600
 print("\nK2 seed=4242：300 -> 存档并换进程 -> 再 300，与连续 600 步逐年比较")
+long_kid = long_ctrl = None        # K2 半途失败时，后面的组按"前提缺失"处理
 if args.quick:
     uncov("K2 300+300 与连续 600 一致", "--quick 模式跳过长跑，本次未执行")
     long_kid = long_ctrl = None
@@ -193,6 +284,91 @@ else:
               and store.get_run(long_kid)["completed_steps"] == 300,
               "%s / %s" % (store.get_run(long_kid)["years_done"],
                            store.get_run(long_kid)["completed_steps"]))
+
+# --------------------------------- 2S. 真·重启服务：300 -> 停服务 -> 新服务 -> 再 300
+print("\nK2S 起一个独立测试服务跑 300 年 -> **停掉这个服务** -> 用同一数据目录起新服务 -> 再续 300")
+if args.quick:
+    uncov("K2S 重启服务后续演", "--quick 模式跳过，本次未执行")
+else:
+    svc_a = start_service("A")
+    row_a = SERVICES[-1]
+    check("K2S-a 测试服务 A 起来了（独立端口 %d、独立数据目录）" % TEST_PORT,
+          row_a["healthy"], "pid=%s" % row_a["pid"])
+    ver = _http("GET", "/api/config")[1]
+    check("K2S-b 本批服务的契约版本是 obs-1.9",
+          ver.get("api_version") == config.API_VERSION == "obs-1.9",
+          str(ver.get("api_version")))
+    body = {"seed": PARAMS["seed"], "years": 300, "engine": "exp06", "arm": "memory",
+            "sigma_m": PARAMS["sigma_m"], "move_mort_m": PARAMS["move_mort_m"],
+            "share_m": PARAMS["share_m"], "aid_m": PARAMS["aid_m"],
+            "recip_m": PARAMS["recip_m"], "label": "K2S 父运行"}
+    code, created = _http("POST", "/api/runs", body)
+    svc_parent = created.get("run_id") if code == 200 else None
+    if svc_parent:
+        done_a = wait_status(svc_parent)
+        check("K2S-c 服务 A 上跑满 300 年",
+              done_a.get("status") == "done" and done_a.get("years_done") == 300,
+              "%s / %s" % (done_a.get("status"), done_a.get("years_done")))
+    else:
+        check("K2S-c 服务 A 上跑满 300 年", False, str(created)[:80])
+
+    rc_a, alive_a = stop_service(svc_a, "A")
+    check("K2S-d 服务 A 已经**真的退出**（不是还在后台跑）",
+          not alive_a, "退出码=%s pid=%s" % (rc_a, row_a["pid"]))
+    down = True
+    try:
+        down = _http("GET", "/api/health", timeout=2)[0] != 200
+    except Exception:                                                # noqa: BLE001
+        down = True
+    check("K2S-e 服务 A 停掉后端口上确实没人应答", down)
+
+    svc_b = start_service("B")
+    row_b = SERVICES[-1]
+    check("K2S-f 用**同一个数据目录**起了一个新服务 B，PID 与 A 不同",
+          row_b["healthy"] and row_b["pid"] != row_a["pid"],
+          "A=%s B=%s" % (row_a["pid"], row_b["pid"]))
+    svc_child = None
+    if svc_parent:
+        code, el = _http("GET", "/api/runs/%s/continuation" % svc_parent)
+        check("K2S-g 新服务认得这条记录可以从第 300 年继续",
+              code == 200 and el.get("eligible") is True and el.get("from_year") == 300,
+              json.dumps(el, ensure_ascii=False)[:90])
+        req_id = str(uuid.uuid4())
+        code, started = _http("POST", "/api/runs/%s/continue" % svc_parent,
+                              {"additional_years": 300, "request_id": req_id})
+        svc_child = started.get("run_id") if code == 200 else None
+        check("K2S-h 在新服务上发起续演 +300 年",
+              code == 200 and started.get("from_year") == 300
+              and started.get("target_year") == 600,
+              json.dumps(started, ensure_ascii=False)[:90])
+    if svc_child:
+        done_b = wait_status(svc_child)
+        check("K2S-i 续演在新服务上跑完到第 600 年",
+              done_b.get("status") == "done" and done_b.get("years_done") == 600
+              and done_b.get("segment", {}).get("completed_steps") == 300,
+              "%s / years_done=%s / 本段=%s" % (
+                  done_b.get("status"), done_b.get("years_done"),
+                  done_b.get("segment", {}).get("completed_steps")))
+    rc_b, alive_b = stop_service(svc_b, "B")
+    check("K2S-j 服务 B 也已真的退出", not alive_b, "退出码=%s" % rc_b)
+
+    if svc_child and long_ctrl:
+        got = year_rows(svc_child, 600)
+        want = year_rows(long_ctrl, 600)
+        d = first_diff(got, want)
+        K2S_FIRST_DIFF = d
+        check("K2S-k 跨服务重启续演出来的 0..600 年，与连续 600 年逐年完全一致",
+              d is None and [r["t"] for r in got] == list(range(601)),
+              "比较范围 0..600，首处不同=%s" % d)
+        _, s_kid, _ = cp_state(svc_child)
+        _, s_ctl, _ = cp_state(long_ctrl)
+        check("K2S-l 第 600 年的完整模型状态与全部日志也相同", s_kid == s_ctl)
+        ids = [e["id"] for r in got for e in r["events"]]
+        check("K2S-m 边界年不重复、事件 id 全段无重复",
+              [r["t"] for r in got].count(300) == 1 and len(set(ids)) == len(ids),
+              "%d 个事件" % len(ids))
+    elif svc_child:
+        uncov("K2S-k 跨服务重启续演与连续 600 比较", "没有连续 600 年的对照运行，前提缺失")
 
 # ------------------------------------------------------- 3/4. 边界年与继承历史
 print("\nK3 边界年只出现一次；当年账等于累计差；回助仍能引用继承历史里的原始援助 id")
@@ -454,6 +630,10 @@ if args.report:
         "quick": bool(args.quick),
         "engine": adapter.engine_info("exp06"),
         "commands": COMMANDS,
+        "services": SERVICES,          # 每个测试服务的 PID、起停时刻、退出码
+        "http_calls": HTTP_CALLS[-60:],
+        "test_port": TEST_PORT,
+        "comparison": {"range": "0..600 逐年", "k2s_first_diff": K2S_FIRST_DIFF},
         "results": RESULTS,
         "totals": {"pass": npass, "fail": nfail, "uncovered": nunc, "total": len(RESULTS)},
         "parent_files_unchanged": {"history_sha256": parent_hist_sha,

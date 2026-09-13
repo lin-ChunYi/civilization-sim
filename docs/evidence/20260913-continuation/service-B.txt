@@ -1,0 +1,50 @@
+INFO:     Started server process [63145]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8792 (Press CTRL+C to quit)
+INFO:     127.0.0.1:64202 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64203 - "GET /api/runs/50cba0d5debd/continuation HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64204 - "POST /api/runs/50cba0d5debd/continue HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64205 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64206 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64207 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64208 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64209 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64210 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64212 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64213 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64214 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64216 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64217 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64218 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64219 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64220 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64221 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64222 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64223 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64224 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64225 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64226 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64227 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64228 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64229 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64230 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64231 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64232 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64233 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64234 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64235 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64236 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64237 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64238 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64239 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64240 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64244 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64247 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64249 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64250 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64251 - "GET /api/runs/42b183ea55fe HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [63145]
