@@ -1,0 +1,17 @@
+{
+  "gait": "8 keyframes on one layered skeleton. Phase 0 equals phase 1.",
+  "directions": {
+    "e": "base profile gait, independently sampled",
+    "se": "same gait, squash 0.82",
+    "s": "same gait, squash 0.48 (front)",
+    "sw": "mirror of SE",
+    "w": "mirror of E",
+    "nw": "mirror of NE",
+    "n": "same gait, squash 0.42 (back)",
+    "ne": "same gait, squash 0.82"
+  },
+  "honest": "W/SW/NW are mirrors. N/S are foreshortened copies. Not unique painted frames.",
+  "skins": ["staff", "scout", "gather", "stocky", "cloak", "elder"],
+  "unused_as_body": ["face-*.png", "walk-a/b/c/d.png"],
+  "reason": "pack walk/face sheets are approximate or a different hooded figure"
+}

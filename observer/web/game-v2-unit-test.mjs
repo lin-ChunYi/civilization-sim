@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const motionCode = readFileSync(join(here, "motion.js"), "utf8");
 const code = readFileSync(join(here, "app.js"), "utf8");
 const location = { hash: "", search: "", href: "http://127.0.0.1/static/index.html" };
 const document = {
@@ -31,8 +32,10 @@ const ctx = {
 ctx.globalThis = ctx;
 windowObj.__OBS_MANUAL_BOOT__ = true;
 vm.createContext(ctx);
+vm.runInContext(motionCode, ctx);
 vm.runInContext(code, ctx);
 const U = ctx.window.UnitArt;
+const M = ctx.window.Motion;
 const D = ctx.window.DirectorLogic;
 const out = [];
 const ok = (name, cond, detail) => out.push((cond ? "PASS" : "FAIL") + " " + name + (detail ? " :: " + detail : ""));
@@ -94,14 +97,14 @@ const f0 = U.figureMarkup(pal, "idle", 0, 0, 0, 1, true);
 const f1 = U.figureMarkup(pal, "idle", 1, 0, 0, 1, true);
 const f2 = U.figureMarkup(pal, "idle", 2, 0, 0, 1, true);
 const f3 = U.figureMarkup(pal, "idle", 3, 0, 0, 1, true);
-ok("U19 six silhouettes and sprite href stay distinct",
+ok("U19 six silhouettes stay distinct; walk uses layered rig not a body swap",
   U.silhouetteName(0) === "staff" && U.silhouetteName(1) === "scout"
   && U.silhouetteName(2) === "gather" && U.silhouetteName(3) === "stocky"
   && U.silhouetteName(4) === "cloak" && U.silhouetteName(5) === "elder"
   && /\/static\/assets\/sprites\/char-/.test(mk)
-  && /walk-a/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" }))
-  && /walk-b/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" }))
-  && /approx-poses/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" }))
+  && /motion-rig/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" }))
+  && /data-art="rig"/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" }))
+  && !/face-ne\.png/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk", face: "ne" }))
   && f0 !== f1 && f1 !== f2 && f2 !== f3);
 let gatherId = null;
 for (let i = 0; i < 4000 && !gatherId; i++) {
@@ -122,9 +125,11 @@ ok("U21 eight facings map from endpoint delta",
   && U.faceName(0, 10) === "s" && U.faceName(0, -10) === "n"
   && /face-e/.test(U.faceHref("e")) && /face-nw/.test(U.faceHref("nw")));
 const mkFace = U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk", face: "ne" });
-ok("U22 migrate walker uses 8-dir travel pose without claiming a loop",
-  /data-face="ne"/.test(mkFace) && /face-ne/.test(mkFace) && /approx-poses/.test(mkFace)
-  && /walk-c/.test(U.markup({ id: idA, name: "n", size: 8, cell: 1 }, 0, 0, { pose: "walk" })));
+ok("U22 migrate walker uses 8-dir layered gait of the same variant",
+  /data-dir="ne"/.test(mkFace) && /motion-rig/.test(mkFace)
+  && /data-skin="/.test(mkFace) && /m-leg-l/.test(mkFace)
+  && !/face-ne\.png/.test(mkFace)
+  && !!M && M.samplePose({ skin: "staff", action: "walk", dir: "e", phase: 0 }).skin === "staff");
 
 const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
 out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);

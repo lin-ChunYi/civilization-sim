@@ -412,6 +412,12 @@ const DirectorLogic = {
     try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
     catch (err) { return false; }
   },
+  applyMotionPolicy() {
+    const off = this.prefersReducedMotion();
+    if (typeof document === "undefined" || !document.documentElement || !document.documentElement.classList) return off;
+    document.documentElement.classList.toggle("reduce-motion", off);
+    return off;
+  },
 };
 window.DirectorLogic = DirectorLogic;
 
@@ -621,25 +627,24 @@ const UnitArt = {
     const ring = on ? `<ellipse class="unit-sel-ring unit-ring" cx="0" cy="14" rx="16" ry="6" fill="none" stroke="${pal.accent}" stroke-width="1.7" pointer-events="none"/>` : "";
     const prop = `<image class="unit-prop-art" href="${this.spriteHref(v % 2 ? "prop-pack" : "prop-bedroll")}" x="-7" y="10" width="12" height="9" preserveAspectRatio="xMidYMid meet" pointer-events="none"/>`;
     const spr = 'x="-20" y="-46" width="40" height="56" preserveAspectRatio="xMidYMax meet"';
+    const useRig = !!(typeof Motion !== "undefined" && Motion && (pose === "walk" || pose === "give" || pose === "talk" || pose === "receive" || pose === "listen" || opts.rig));
     let body;
-    if (face) {
-      body = `<g class="unit-body unit-${esc(pose)}" data-walk="approx-poses">
-        <image class="unit-sprite unit-head unit-tunic" href="${this.faceHref(face)}" ${spr}/>
-      </g>`;
-    } else if (pose === "walk") {
-      body = `<g class="unit-body unit-walk" data-walk="approx-poses">
-        <image class="unit-sprite unit-walk-a unit-head unit-tunic" href="${this.spriteHref("walk-a")}" ${spr}/>
-        <image class="unit-sprite unit-walk-b" href="${this.spriteHref("walk-b")}" ${spr}/>
-        <image class="unit-sprite unit-walk-c" href="${this.spriteHref("walk-c")}" ${spr}/>
-        <image class="unit-sprite unit-walk-d" href="${this.spriteHref("walk-d")}" ${spr}/>
-      </g>`;
+    let art = "sprite";
+    if (useRig) {
+      const dir = face || (opts.facing === "left" ? "w" : "e");
+      const sample = Motion.samplePose({
+        id: bid, skin: sil, action: pose === "select" ? "idle" : pose, dir: dir,
+        phase: opts.phase != null ? opts.phase : 0, role: opts.role || "solo",
+      });
+      body = `<g class="unit-body unit-${esc(pose)} unit-rig">${Motion.rigMarkup(sample, pal)}</g>`;
+      art = "rig";
     } else {
       body = `<g class="unit-body unit-${esc(pose)}">
         <image class="unit-sprite unit-head unit-tunic" href="${this.poseHref(b && b.id, pose)}" ${spr}/>
       </g>`;
     }
-    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-silhouette="${sil}" data-pose="${esc(pose)}" data-art="sprite"${face ? ` data-face="${esc(face)}"` : ""} data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${(sc * facing).toFixed(3)},${sc.toFixed(3)})">
-      <title>${esc(name)} · 群体代表（${sil}）· ${size}人。这是群体的可视替身，不是独立个人生平。行走为近似姿势加程序摆动，不是已验证循环。迁徙八方向是行路姿态，不是新的群体身份。</title>
+    return `<g class="band unit${on ? " selected" : ""}${ghost}" data-band="${esc(bid)}" data-unit="group-rep" data-party="${nParty}" data-silhouette="${sil}" data-pose="${esc(pose)}" data-art="${art}"${face || useRig ? ` data-dir="${esc(face || (opts.facing === "left" ? "w" : "e"))}"` : ""} data-cell="${esc(cell)}" transform="translate(${Number(x).toFixed(1)},${Number(y).toFixed(1)}) scale(${sc.toFixed(3)})">
+      <title>${esc(name)} · 群体代表（${sil}）· ${size}人。这是群体的可视替身，不是独立个人生平。行走是同皮肤分层骨骼八关键帧；方向共用/镜像见 Motion.MANIFEST。不把角色换成通用斗篷人物。</title>
       <path class="unit-camp" d="M0,16 L${campRx},12 L0,8 L-${campRx},12 Z" fill="${pal.cloth}" fill-opacity="0.45" stroke="#2a1810" stroke-width="1.1"/>
       ${prop}
       ${ring}
@@ -2688,6 +2693,79 @@ function markEventCells(svg, ev, focus) {
     else if (ev.type === "migrate") p.classList.add("fx-migrate");
   });
 }
+function motionCtx() {
+  return {
+    run: S.run ? String(S.run.run_id) : "",
+    t: S.t,
+    event: S.selEvent ? String(S.selEvent) : "",
+    mode: S.playMode,
+    op: S.opGen,
+  };
+}
+function sameMotionCtx(a, b) {
+  return !!(a && b && a.run === b.run && a.t === b.t && a.event === b.event && a.mode === b.mode && a.op === b.op);
+}
+function applyMotionTick(u) {
+  const anim = S.fxAnim;
+  if (!anim) return;
+  if (anim.kind === "migrate") {
+    const w = document.getElementById("fx-walker");
+    if (w && anim.a && anim.b) {
+      const p = UnitArt.lerp(anim.a, anim.b, u);
+      w.setAttribute("transform", "translate(" + p[0].toFixed(1) + "," + p[1].toFixed(1) + ")");
+      w.setAttribute("data-stage", UnitArt.migrateStage(u));
+      const rig = w.querySelector(".motion-rig");
+      if (rig && typeof Motion !== "undefined") {
+        Motion.applyPose(rig, Motion.samplePose({
+          id: anim.bandId, skin: anim.skin, action: "walk", dir: anim.dir, phase: u,
+        }));
+      }
+    }
+    const cap = document.querySelector("#fx-overlay .fx-caption");
+    if (cap) {
+      const stage = UnitArt.migrateStage(u);
+      cap.textContent = "端点动作 · 路线未记录 · "
+        + (stage === "leave" ? "离开" : (stage === "arrive" ? "到达" : "移动"));
+    }
+    if (u >= 1) {
+      const g = document.querySelector(".band.unit-ghost");
+      if (g) g.classList.remove("unit-ghost");
+      S.fxAwayBand = null;
+    }
+    return;
+  }
+  if (anim.kind === "aid" || anim.kind === "share") {
+    const wrap = document.getElementById("fx-pair");
+    if (!wrap || typeof Motion === "undefined") return;
+    const donor = wrap.querySelector(".motion-rig[data-role='donor']");
+    const recv = wrap.querySelector(".motion-rig[data-role='receiver']");
+    if (donor) {
+      Motion.applyPose(donor, Motion.samplePose({
+        id: anim.donorId, skin: anim.donorSkin,
+        action: anim.kind === "aid" ? "give" : "talk", dir: "e", phase: u, role: "donor",
+      }));
+    }
+    if (recv) {
+      Motion.applyPose(recv, Motion.samplePose({
+        id: anim.recvId, skin: anim.recvSkin,
+        action: anim.kind === "aid" ? "receive" : "listen", dir: "w", phase: u, role: "receiver",
+      }));
+    }
+  }
+}
+function startFxLoop() {
+  if (S.fxRaf != null) return;
+  const step = (now) => {
+    if (!S.fxAnim || S.fxAnim.gen !== S.fxGen) { S.fxRaf = null; return; }
+    if (DirectorLogic.prefersReducedMotion()) { S.fxRaf = null; return; }
+    const u = Math.min(1, (now - S.fxAnim.t0) / Math.max(1, S.fxAnim.dur));
+    S.fxAnim.phase = u;
+    applyMotionTick(u);
+    if (u < 1) S.fxRaf = requestAnimationFrame(step);
+    else S.fxRaf = null;
+  };
+  S.fxRaf = requestAnimationFrame(step);
+}
 function paintMigrateAction(overlay, ev, plan, reduced) {
   if (plan.from == null || plan.to == null || !S.map.cells[plan.from] || !S.map.cells[plan.to]) return;
   const a = cellCenter(S.map.cells[plan.from]);
@@ -2708,13 +2786,18 @@ function paintMigrateAction(overlay, ev, plan, reduced) {
     id: ev.band || "walk", name: rec ? bandName(rec, ev.band) : "群体代表",
     size: 1, cell: plan.from,
   };
-  const u0 = reduced ? 1 : 0;
+  const dir = UnitArt.faceName(b[0] - a[0], b[1] - a[1]);
+  const ctx = motionCtx();
+  let u0 = reduced ? 1 : 0;
+  if (!reduced && S.fxAnim && sameMotionCtx(S.fxAnim.ctx, ctx) && S.fxAnim.kind === "migrate") {
+    u0 = Math.min(1, S.fxAnim.phase || 0);
+  }
   const xy = UnitArt.lerp(a, b, u0);
-  const walker = svgEl("g", { id: "fx-walker", "data-fx": "migrate-walk", "data-path": "endpoints-only", "data-stage": reduced ? "arrive" : "leave" });
+  const walker = svgEl("g", { id: "fx-walker", "data-fx": "migrate-walk", "data-path": "endpoints-only", "data-stage": UnitArt.migrateStage(u0) });
   walker.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
   walker.innerHTML = UnitArt.markup(band, 0, 0, {
     pose: reduced ? "idle" : "walk", selected: true, hit: false, skin: S.skin, showPop: false,
-    face: UnitArt.faceName(b[0] - a[0], b[1] - a[1]),
+    face: dir, phase: u0, rig: true, scale: 1.9,
   });
   overlay.appendChild(walker);
   fxCaption(overlay, (a[0] + b[0]) / 2, Math.min(a[1], b[1]) - 22,
@@ -2724,55 +2807,106 @@ function paintMigrateAction(overlay, ev, plan, reduced) {
   S.fxAwayBand = ev.band ? String(ev.band) : null;
   if (!reduced) {
     const gen = S.fxGen;
-    S.fxAnim = { gen: gen, t0: performance.now(), dur: walkDuration(), a: a, b: b, kind: "migrate" };
-    const step = (now) => {
-      if (gen !== S.fxGen || !S.fxAnim || S.fxAnim.gen !== gen) return;
-      const u = Math.min(1, (now - S.fxAnim.t0) / S.fxAnim.dur);
-      const p = UnitArt.lerp(a, b, u);
-      const w = document.getElementById("fx-walker");
-      const stage = UnitArt.migrateStage(u);
-      if (w) {
-        w.setAttribute("transform", "translate(" + p[0].toFixed(1) + "," + p[1].toFixed(1) + ")");
-        w.setAttribute("data-stage", stage);
-      }
-      const cap = overlay.querySelector(".fx-caption");
-      if (cap) {
-        cap.textContent = "端点动作 · 路线未记录 · "
-          + (stage === "leave" ? "离开" : (stage === "arrive" ? "到达" : "移动"));
-      }
-      if (u < 1) S.fxWalkRaf = requestAnimationFrame(step);
-      else {
-        const g = document.querySelector(".band.unit-ghost");
-        if (g) g.classList.remove("unit-ghost");
-        S.fxAwayBand = null;
-      }
-    };
-    S.fxWalkRaf = requestAnimationFrame(step);
+    if (!(S.fxAnim && sameMotionCtx(S.fxAnim.ctx, ctx) && S.fxAnim.kind === "migrate")) {
+      S.fxAnim = {
+        gen: gen, t0: performance.now() - u0 * walkDuration(), dur: walkDuration(),
+        kind: "migrate", ctx: ctx, a: a, b: b, phase: u0,
+        bandId: String(ev.band || ""), skin: UnitArt.silhouetteName(UnitArt.variant(ev.band)),
+        dir: dir,
+      };
+    } else {
+      S.fxAnim.gen = gen; S.fxAnim.a = a; S.fxAnim.b = b;
+    }
+    startFxLoop();
   }
 }
 function paintPairAction(overlay, ev, plan, reduced) {
   if (plan.cell == null || !S.map.cells[plan.cell]) return;
   const xy = cellCenter(S.map.cells[plan.cell]);
   const wrap = svgEl("g", { id: "fx-pair", "data-fx": plan.kind, "data-event-cell": String(plan.cell) });
-  const art = plan.kind === "share" ? "pair-share" : "pair-aid";
-  const emblem = plan.kind === "share" ? "emblem-share" : (plan.repay ? "emblem-repay" : "emblem-aid");
-  wrap.innerHTML = `<image class="fx-pair-art" href="${UnitArt.spriteHref(art)}" x="-30" y="-40" width="60" height="52" preserveAspectRatio="xMidYMax meet"/>`
-    + `<image class="fx-emblem" href="${UnitArt.spriteHref(emblem)}" x="-8" y="-54" width="16" height="16"/>`;
+  const rec = recNow();
+  const donor = {
+    id: ev.donor || "d", name: rec ? bandName(rec, ev.donor) : "供给方",
+    size: 1, cell: plan.cell,
+  };
+  const recv = {
+    id: ev.receiver || "r", name: rec ? bandName(rec, ev.receiver) : "接收方",
+    size: 1, cell: plan.cell,
+  };
+  const ctx = motionCtx();
+  let u0 = reduced ? 1 : 0;
+  if (!reduced && S.fxAnim && sameMotionCtx(S.fxAnim.ctx, ctx) && S.fxAnim.kind === plan.kind) {
+    u0 = Math.min(1, S.fxAnim.phase || 0);
+  }
+  const donorPose = plan.kind === "share" ? "talk" : "give";
+  const recvPose = plan.kind === "share" ? "listen" : "receive";
+  wrap.innerHTML = UnitArt.markup(donor, -14, -2, {
+    pose: donorPose, hit: false, showPop: false, phase: u0, role: "donor", rig: true, facing: "right", scale: 1.7,
+  }) + UnitArt.markup(recv, 14, -2, {
+    pose: recvPose, hit: false, showPop: false, phase: u0, role: "receiver", rig: true, facing: "left", scale: 1.7,
+  }) + (plan.kind === "share" ? shareGlyphMarkup(0, 0) : aidGlyphMarkup(0, 0, plan.repay));
+  const donorRig = wrap.querySelectorAll(".motion-rig")[0];
+  const recvRig = wrap.querySelectorAll(".motion-rig")[1];
+  if (donorRig) donorRig.setAttribute("data-role", "donor");
+  if (recvRig) recvRig.setAttribute("data-role", "receiver");
   wrap.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
   overlay.appendChild(wrap);
   fxCaption(overlay, xy[0], xy[1] - 28,
     plan.kind === "share" ? "同格信息传递（事件格，不是年末位置）"
       : (plan.repay ? "同格回助（事件格）" : "同格援助（事件格）"));
-  void ev;
-  void reduced;
+  if (!reduced) {
+    const gen = S.fxGen;
+    if (!(S.fxAnim && sameMotionCtx(S.fxAnim.ctx, ctx) && S.fxAnim.kind === plan.kind)) {
+      S.fxAnim = {
+        gen: gen, t0: performance.now() - u0 * 900, dur: 900,
+        kind: plan.kind, ctx: ctx, phase: u0,
+        donorId: String(ev.donor || ""), recvId: String(ev.receiver || ""),
+        donorSkin: UnitArt.silhouetteName(UnitArt.variant(ev.donor)),
+        recvSkin: UnitArt.silhouetteName(UnitArt.variant(ev.receiver)),
+      };
+    } else S.fxAnim.gen = gen;
+    startFxLoop();
+  }
+}
+function fillMotionGroups(agg) {
+  const box = $("motion-groups");
+  if (!box) return;
+  if (!agg || !agg.totalEvents) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  const rows = agg.groups.map((g) => {
+    const title = g.kind === "migrate"
+      ? ("迁移 " + g.from + "→" + g.to)
+      : (g.kind === "aid"
+        ? ("援助" + (g.mark === "repay" ? "·回助" : (g.mark === "recip" ? "·优先" : "·普通")) + " 格" + g.cell + " · " + g.transfers + "笔/" + g.kcal + " kcal")
+        : (g.kind === "share" ? ("信息 格" + g.cell + " · " + g.shares + "条") : (g.kind + " ×" + g.ids.length)));
+    const jumps = g.ids.map((id) => {
+      const ev = g.events.find((e) => String(e.id) === String(id));
+      const y = ev && ev.t != null ? ev.t : (ev && ev.year);
+      return `<button type="button" class="motion-jump" data-eid="${esc(id)}" data-year="${esc(y)}">${esc(id)}</button>`;
+    }).join(" ");
+    return `<div class="motion-group" data-kind="${esc(g.kind)}"><div class="motion-group-h">${esc(title)}</div><div class="motion-group-ids">${jumps}</div></div>`;
+  }).join("");
+  box.innerHTML = `<div class="motion-groups-sum">${esc(agg.summary)}</div>
+    <p class="motion-groups-note">${esc(agg.note)}</p>
+    <div class="motion-groups-list">${rows}</div>`;
+  box.querySelectorAll(".motion-jump").forEach((n) => {
+    n.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      jumpToRecordedEvent(n.dataset.eid, n.dataset.year);
+    });
+  });
 }
 function paintYearActions(svg, rec, opts) {
+  opts = opts || {};
   const overlay = svgEl("g", { id: "fx-overlay", "pointer-events": "none" });
   const items = (rec.events || []).map((e, i) => Object.assign({}, e, { t: rec.t, _i: i }));
-  let n = 0;
-  items.forEach((ev) => {
+  const agg = (typeof Motion !== "undefined" ? Motion : { aggregate: () => ({ groups: [], shown: [], totalEvents: items.length, shownCount: 0, summary: "", note: "" }) })
+    .aggregate(items, { runId: S.run ? S.run.run_id : "", year: rec.t, playCap: Motion && Motion.PLAY_CAP });
+  fillMotionGroups(agg);
+  agg.shown.forEach((g) => {
+    const ev = g.events[0];
     const plan = UnitArt.actionPlan(ev);
-    if (!plan.locate || !plan.animate || n >= 8) return;
+    if (!plan.locate || !plan.animate) return;
     markEventCells(svg, ev, { cells: plan.cells });
     if (plan.kind === "migrate" && plan.from != null && plan.to != null
         && S.map.cells[plan.from] && S.map.cells[plan.to]) {
@@ -2790,18 +2924,16 @@ function paintYearActions(svg, rec, opts) {
         : aidGlyphMarkup(xy[0], xy[1], plan.repay);
       overlay.appendChild(wrap);
     }
-    n += 1;
   });
-  if (n) {
-    fxCaption(overlay, 260, 18, "本年可定位动作 " + n + " 项 · 只画记录端点/事件格");
-    svg.appendChild(overlay);
-  }
+  fxCaption(overlay, 260, 18, agg.summary + " · 只画记录端点/事件格");
+  svg.appendChild(overlay);
   void opts;
 }
 function paintDirectorFx(opts) {
   opts = opts || {};
   const svg = $("map");
   if (!svg || !S.map) return;
+  DirectorLogic.applyMotionPolicy();
   const prev = svg.querySelector("#fx-overlay");
   if (prev) prev.remove();
   svg.querySelectorAll(".fx-hot,.fx-share,.fx-aid,.fx-repay,.fx-migrate").forEach((n) => {
@@ -2817,6 +2949,7 @@ function paintDirectorFx(opts) {
     if (!focus.locate) {
       fxCaption(overlay, 260, 28, "地点未记录 · 不在地图上猜测");
       svg.appendChild(overlay);
+      fillMotionGroups(null);
       return;
     }
     const plan = UnitArt.actionPlan(ev, focus);
@@ -2828,7 +2961,9 @@ function paintDirectorFx(opts) {
   if (S.playing && S.playMode === "year") {
     const rec = recNow();
     if (rec) paintYearActions(svg, rec, { reduced: reduced });
+    return;
   }
+  fillMotionGroups(null);
 }
 function clampCam(x, y) {
   return {
@@ -3470,6 +3605,7 @@ async function boot() {
     S.reduceMotion = !S.reduceMotion;
     $("b-motion").textContent = S.reduceMotion ? "动效关" : "动效开";
     $("b-motion").classList.toggle("on", !S.reduceMotion);
+    DirectorLogic.applyMotionPolicy();
     cancelFx({ keepStatic: !!S.selEvent });
     if (S.selEvent) paintDirectorFx({ staticOnly: S.reduceMotion });
   });
@@ -3873,7 +4009,8 @@ window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, rend
   collectRunDraft, applyForgePreset, confirmStartRun, LibraryLogic, renderLibrary,
   pinCurrentYear, pinCurrentEvent, exportCurrentRecord, jumpToRecordedEvent,
   clearRelEdgeCard, fillRelEdgeCard, UnitArt, paintDirectorFx, OverviewLogic, DirectorLogic,
-  syncEngineForm, engineHasParam, layoutPlayDock, compactPlay };
+  syncEngineForm, engineHasParam, layoutPlayDock, compactPlay, Motion: typeof Motion !== "undefined" ? Motion : null,
+  motionCtx, sameMotionCtx, applyMotionTick, startFxLoop, fillMotionGroups };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {
