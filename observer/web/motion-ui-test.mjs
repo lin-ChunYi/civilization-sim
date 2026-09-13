@@ -160,6 +160,42 @@ try {
     reduced && reduced.cls && reduced.prefers && reduced.raf == null && reduced.walker,
     JSON.stringify(reduced));
 
+  const sysReset = await ev(`(function(){
+    var O=window.__obs;
+    O.S.reduceMotion=false;
+    O.DirectorLogic.applyMotionPolicy();
+    document.documentElement.classList.remove('reduce-motion');
+    return {flag: !!O.S.reduceMotion, cls: document.documentElement.classList.contains('reduce-motion')};
+  })()`);
+  ok("B6a clear manual flag before system prefers path",
+    sysReset && sysReset.flag === false && sysReset.cls === false, JSON.stringify(sysReset));
+  await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  const sysPref = await ev(`(async function(){
+    var O=window.__obs;
+    if (O.S.reduceMotion) return {masked:true};
+    var mm=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    O.DirectorLogic.applyMotionPolicy();
+    await O.gotoYear(4);
+    var rec=O.S.years.get(O.S.run.run_id+'|4');
+    var e=(rec.events||[]).find(function(x){return x.type==='migrate';});
+    await O.focusEvent(Object.assign({}, e, {t:4,_i:0}));
+    var idle=document.querySelector('.unit-body.unit-idle');
+    var anim=idle ? getComputedStyle(idle).animationName : '';
+    return {masked:false, flag: !!O.S.reduceMotion, mm: mm,
+      prefers: O.DirectorLogic.prefersReducedMotion(),
+      cls: document.documentElement.classList.contains('reduce-motion'),
+      raf: O.S.fxRaf, walker: !!document.getElementById('fx-walker'),
+      pose: (document.querySelector('#fx-walker .unit')||{}).getAttribute && document.querySelector('#fx-walker .unit').getAttribute('data-pose'),
+      anim: anim};
+  })()`);
+  ok("B6b system prefers-reduced-motion stops RAF without the manual flag",
+    sysPref && !sysPref.masked && sysPref.mm && sysPref.prefers && !sysPref.flag
+    && sysPref.cls && sysPref.raf == null && sysPref.walker && sysPref.pose === "idle"
+    && (sysPref.anim === "none" || sysPref.anim === ""),
+    JSON.stringify(sysPref));
+  await shot("desktop-system-reduced-migrate.png");
+  await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+
   const pair = await ev(`(async function(){
     var O=window.__obs;
     O.S.reduceMotion=false;

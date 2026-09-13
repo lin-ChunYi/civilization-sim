@@ -7,16 +7,25 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SHOT = join(here, "screenshots", "game-v2");
+const argv = process.argv.slice(2);
+const flag = (name, def) => {
+  const i = argv.indexOf("--" + name);
+  return i >= 0 ? argv[i + 1] : def;
+};
+const BASE = (flag("base-url", "http://127.0.0.1:8788") || "http://127.0.0.1:8788").replace(/\/$/, "");
+const SHOT = flag("artifact-dir", join(here, "screenshots", "game-v2"));
+const REPORT = flag("report", "");
+const USER = flag("user-data-dir", "/tmp/game-v2-cdp");
+const PORT = Number(flag("cdp-port", "9341"));
 mkdirSync(SHOT, { recursive: true });
+mkdirSync(USER, { recursive: true });
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const PORT = 9341;
 const RUN = "preset-exp06-recip1000";
-const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v9#tab=world&run=" + RUN + "&t=0";
+const PAGE = BASE + "/static/index.html?v=game-v9#tab=world&run=" + RUN + "&t=0";
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
   `--remote-debugging-port=${PORT}`,
-  "--user-data-dir=/tmp/game-v2-cdp",
+  `--user-data-dir=${USER}`,
   "--window-size=1440,1100",
   PAGE,
 ], { stdio: "ignore" });
@@ -165,7 +174,8 @@ try {
     return {ok: !!(fe && fe.ok), t:O.S.t, eid:e.id, from:e.from, to:e.to,
       walker: !!(w && w.getAttribute('data-path')==='endpoints-only'),
       stage: w && w.getAttribute('data-stage'),
-      face: unit && unit.getAttribute('data-face'),
+      face: unit && (unit.getAttribute('data-dir') || unit.getAttribute('data-face')),
+      rig: !!(w && w.querySelector('.motion-rig')),
       linePath: line && line.getAttribute('data-path'),
       endpoints: !!(from && to), caption: (document.querySelector('#fx-overlay .fx-caption')||{}).textContent||''};
   })()`);
@@ -189,10 +199,12 @@ try {
     return {ok: !!(fe && fe.ok), t:O.S.t, eid:e.id, cell:e.cell,
       pairCell: pair && pair.getAttribute('data-event-cell'),
       fx: pair && pair.getAttribute('data-fx'),
-      pairArt: !!(pair && pair.querySelector('.fx-pair-art'))};
+      pairArt: !!(pair && pair.querySelector('.fx-pair-art')),
+      rigs: pair ? pair.querySelectorAll('.motion-rig').length : 0};
   })()`);
   ok("V4 信息交换在事件格演示两人互动",
-    share && share.ok && String(share.pairCell) === String(share.cell) && share.fx === "share" && share.pairArt,
+    share && share.ok && String(share.pairCell) === String(share.cell) && share.fx === "share"
+    && (share.pairArt || share.rigs >= 2),
     JSON.stringify(share));
   await shot("desktop-share-cell.png");
 
@@ -289,6 +301,7 @@ try {
   await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
   const reduced = await ev(`(async function(){
     var O=window.__obs;
+    O.S.reduceMotion=false;
     await O.gotoYear(4);
     var rec=O.S.years.get(O.S.run.run_id+'|4');
     var e=(rec.events||[]).find(function(x){return x.type==='migrate';});
@@ -296,21 +309,25 @@ try {
     await new Promise(function(r){setTimeout(r, 40);});
     var w=document.getElementById('fx-walker');
     var pose=w && w.querySelector('.unit') && w.querySelector('.unit').getAttribute('data-pose');
+    var mm=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     return {ok: !!(fe && fe.ok), pose: pose, prefers: O.DirectorLogic.prefersReducedMotion(),
-      walker: !!w, path: w && w.getAttribute('data-path')};
+      walker: !!w, path: w && w.getAttribute('data-path'),
+      reduceFlag: !!O.S.reduceMotion, mm: mm, raf: O.S.fxRaf};
   })()`);
   ok("V9 减少动效时迁移停在终点姿态，仍有端点代表",
     reduced && reduced.ok && reduced.prefers && reduced.walker && reduced.path === "endpoints-only"
-    && reduced.pose === "idle",
+    && reduced.pose === "idle" && reduced.mm && !reduced.reduceFlag && reduced.raf == null,
     JSON.stringify(reduced));
   await shot("desktop-reduced-migrate.png");
 
 } catch (e) {
   ok("cdp crashed", false, String(e && e.stack || e));
 } finally {
-  chrome.kill("SIGKILL");
+  try { chrome.kill("SIGKILL"); } catch (err) {}
   const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
   out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
-  process.stdout.write(out.join("\n") + "\n");
+  const text = out.join("\n") + "\n";
+  if (REPORT) writeFileSync(REPORT, text);
+  process.stdout.write(text);
   process.exit(nf ? 1 : 0);
 }

@@ -7,15 +7,24 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SHOT = join(here, "screenshots", "game-v2");
+const argv = process.argv.slice(2);
+const flag = (name, def) => {
+  const i = argv.indexOf("--" + name);
+  return i >= 0 ? argv[i + 1] : def;
+};
+const BASE = (flag("base-url", "http://127.0.0.1:8788") || "http://127.0.0.1:8788").replace(/\/$/, "");
+const SHOT = flag("artifact-dir", join(here, "screenshots", "game-v2"));
+const REPORT = flag("report", "");
+const USER = flag("user-data-dir", "/tmp/game-v2-eng-cdp");
+const PORT = Number(flag("cdp-port", "9342"));
 mkdirSync(SHOT, { recursive: true });
+mkdirSync(USER, { recursive: true });
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const PORT = 9342;
-const PAGE = "http://127.0.0.1:8788/static/index.html?v=game-v2-eng#tab=runs";
+const PAGE = BASE + "/static/index.html?v=game-v2-eng#tab=runs";
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
   `--remote-debugging-port=${PORT}`,
-  "--user-data-dir=/tmp/game-v2-eng-cdp",
+  `--user-data-dir=${USER}`,
   "--window-size=1440,1100",
   PAGE,
 ], { stdio: "ignore" });
@@ -68,7 +77,7 @@ try {
   })()`);
   ok("E1 向导列出六引擎且默认能力来自后台",
     forge && forge.opts.join(",") === "exp01,exp02,exp03,exp04,exp05,exp06"
-    && forge.api === "obs-1.8" && forge.sigmaHidden && forge.mortHidden,
+    && (forge.api === "obs-1.8" || forge.api === "obs-1.9") && forge.sigmaHidden && forge.mortHidden,
     JSON.stringify(forge));
   await shot("forge-six-engines.png");
 
@@ -123,9 +132,11 @@ try {
 } catch (e) {
   ok("engines cdp crashed", false, String(e && e.stack || e));
 } finally {
-  chrome.kill("SIGKILL");
+  try { chrome.kill("SIGKILL"); } catch (err) {}
   const nf = out.filter((l) => l.indexOf("FAIL") === 0).length;
   out.push("SUMMARY pass=" + out.filter((l) => l.indexOf("PASS") === 0).length + " fail=" + nf);
-  process.stdout.write(out.join("\n") + "\n");
+  const text = out.join("\n") + "\n";
+  if (REPORT) writeFileSync(REPORT, text);
+  process.stdout.write(text);
   process.exit(nf ? 1 : 0);
 }
