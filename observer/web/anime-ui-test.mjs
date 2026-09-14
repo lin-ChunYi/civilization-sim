@@ -135,7 +135,7 @@ const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--disable-http-cache",
   `--remote-debugging-port=${CDP}`, `--user-data-dir=${USER}`,
   "--window-size=1536,1024",
-  BASE + "/index.html?v=f4#tab=world&run=" + SAMPLE + "&t=2",
+  BASE + "/?v=f5#tab=world&run=" + SAMPLE + "&t=2",
 ], { stdio: "ignore" });
 
 let ws;
@@ -384,6 +384,70 @@ try {
   const filt = await ev("document.querySelectorAll('#an-ev-all .an-ev').length");
   ok("B7c filter reduces or equals full list", filt <= apiIds.length, String(filt));
   await click("#an-ev-close");
+
+  await ev("window.__obs.openRun('preset-anime-farm250',{initialYear:1})");
+  await sleep(1200);
+  await ev(`(function(){
+    var f=document.getElementById('an-ev-filter');
+    if(f){ f.selectedIndex=0; f.dispatchEvent(new Event('change',{bubbles:true})); }
+  })()`);
+  await sleep(400);
+  for (let i = 0; i < 10 && !(await ev("!!document.getElementById('an-ev-open')")); i++) await sleep(200);
+  await click("#an-ev-open");
+  await sleep(500);
+  const srcClick = await click("#an-ev-all .an-ev-src summary");
+  const srcOpen = await ev(`(function(){
+    var d=document.querySelector('#an-ev-all .an-ev-src');
+    return {open:!!(d&&d.open), parent:d&&d.parentElement&&d.parentElement.tagName, tag:d&&d.tagName,
+      text:(d&&d.textContent)||'', inButton:!!(d&&d.closest('button'))};
+  })()`);
+  await sleep(1600);
+  await sleep(1600);
+  const srcPoll = await ev(`(function(){
+    var d=document.querySelector('#an-ev-all .an-ev-src');
+    return {open:!!(d&&d.open), text:(d&&d.textContent)||''};
+  })()`);
+  ok("B-src 来源 expands outside event button",
+    !!(srcClick && srcOpen && srcOpen.open && srcOpen.tag === "DETAILS" && !srcOpen.inButton),
+    JSON.stringify({ srcClick, srcOpen }));
+  ok("B-src stays open across two 1.5s polls",
+    !!(srcPoll && srcPoll.open && srcOpen && srcOpen.text === srcPoll.text),
+    JSON.stringify(srcPoll));
+  await click("#an-ev-all .an-ev-src summary");
+  await sleep(200);
+  const srcClosed = await ev("document.querySelector('#an-ev-all .an-ev-src') && document.querySelector('#an-ev-all .an-ev-src').open");
+  ok("B-src second click closes intentionally", srcClosed === false, String(srcClosed));
+  await click("#an-ev-close");
+
+  const mapIdent = await ev(`(function(){
+    var g=document.querySelector('#map .an-chibi');
+    return g && {id:g.getAttribute('data-band'), alias:g.getAttribute('data-alias')};
+  })()`);
+  await click('.an-nav button[data-tab="network"]');
+  await sleep(900);
+  const people = await ev(`(function(){
+    var id=${JSON.stringify(mapIdent && mapIdent.id)};
+    var n=document.querySelector('#net-svg .net-node[data-b="'+id+'"]') || document.querySelector('#net-svg .net-node');
+    var label=n && n.querySelector('text') && n.querySelector('text').textContent;
+    return {id:n && n.getAttribute('data-b'), label:label, oldHex:/群体-/.test(label||'')};
+  })()`);
+  ok("People uses same stable alias, not 群体-hex",
+    people && people.id && people.label && !people.oldHex && (!mapIdent || people.id !== mapIdent.id || people.label.indexOf(mapIdent.alias) >= 0 || people.label === mapIdent.alias),
+    JSON.stringify({ mapIdent, people }));
+  await click('#net-svg .net-node[data-b="' + (people && people.id) + '"]');
+  await sleep(800);
+  const back = await ev(`(function(){
+    return {
+      hash: location.hash,
+      tab: (location.hash.match(/tab=([^&]*)/)||[])[1],
+      sel: window.__obs.S.selBand && String(window.__obs.S.selBand),
+      card: document.getElementById('an-card') && document.getElementById('an-card').innerText
+    };
+  })()`);
+  ok("World→People→select→World keeps full ID and name",
+    back && back.tab === "world" && back.sel === String(people.id) && back.card && back.card.indexOf(String(people.id)) >= 0
+      && (!mapIdent || back.sel !== mapIdent.id || back.card.indexOf(mapIdent.alias) >= 0),
+    JSON.stringify(back).slice(0, 280));
 
   const failYear = await ev(`(function(){
     var rec=window.__obs.S.years.get(window.__obs.S.run.run_id+'|300');

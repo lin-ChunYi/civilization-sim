@@ -1369,7 +1369,20 @@ function fillAnimeChrome(rec) {
 function bindAnimeChrome() {
   const jump = (eid, y) => { if (eid) jumpToRecordedEvent(eid, y); };
   document.querySelectorAll(".an-ev").forEach((n) => {
-    n.onclick = () => jump(n.dataset.eid, n.dataset.year);
+    n.onclick = (e) => {
+      if (e.target.closest && e.target.closest(".an-ev-src")) return;
+      jump(n.dataset.eid, n.dataset.year);
+    };
+  });
+  document.querySelectorAll(".an-ev-src").forEach((d) => {
+    d.addEventListener("click", (e) => e.stopPropagation());
+    d.addEventListener("toggle", () => {
+      const sc = rootAnimeScene();
+      if (!sc.sourceOpen) sc.sourceOpen = {};
+      const k = String(S.run && S.run.run_id || "") + "|" + d.dataset.year + "|" + d.dataset.eid;
+      if (d.open) sc.sourceOpen[k] = true;
+      else delete sc.sourceOpen[k];
+    });
   });
   const open = $("an-ev-open");
   if (open) open.onclick = () => { if ($("an-ev-drawer")) $("an-ev-drawer").hidden = false; };
@@ -1680,7 +1693,14 @@ function renderMap() {
 }
 
 function bandName(rec, id) {
-  const b = (rec.bands || []).find((x) => String(x.id) === String(id));
+  if (isAnimeMode() && rootAnimeScene() && rootAnimeScene().Identity && S.run) {
+    const root = rootAnimeScene().Identity.rootOf(S.run);
+    const recI = rootAnimeScene().Identity.record(root, id);
+    if (recI && recI.alias) return recI.alias;
+    const a = rootAnimeScene().Identity.alias(root, id);
+    if (a) return a;
+  }
+  const b = rec && (rec.bands || []).find((x) => String(x.id) === String(id));
   return b ? b.name : (String(id).slice(0, 8) + "…");
 }
 function yearFromEventId(eid) {
@@ -2087,6 +2107,10 @@ function renderRelations(d) {
   const diag = (d && d.diagnostics) || {};
   const nodes = (d && d.nodes) || [];
   const edges = (d && d.edges) || [];
+  if (isAnimeMode() && rootAnimeScene() && S.run) {
+    rootAnimeScene().Identity.ingest(rootAnimeScene().Identity.rootOf(S.run),
+      nodes.map((n) => ({ id: n.id, t: S.t })));
+  }
   if (S.relSel != null && !edges[S.relSel]) clearRelEdgeCard();
   if ($("net-scope-pill")) {
     $("net-scope-pill").textContent = scope.mode === "full"
@@ -2136,7 +2160,7 @@ function renderRelations(d) {
       <path d="M0,0 L6,3 L0,6" fill="#d4b06a"/></marker></defs>` + out;
     laid.forEach((p) => {
       const on = S.selBand && String(S.selBand) === p.id;
-      const label = p.node.name || p.id.slice(0, 8);
+      const label = bandName(recNow(), p.id);
       const tw = Math.max(48, label.length * 7);
       out += `<g class="net-node" data-b="${esc(p.id)}" tabindex="0" role="button">
         <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${on ? 12 : 10}"
@@ -3299,7 +3323,7 @@ function fillSelSheet() {
   const act = S.selEvent ? String(S.selEvent) : "待机";
   main.innerHTML = `<img class="sel-port" src="${UnitArt.portraitHref(b.id)}" width="56" height="56" alt="群体代表头像，展示用，不是个人生平">
     <div class="sel-copy">
-      <div class="sel-name">${esc(b.name)}</div>
+      <div class="sel-name">${esc(bandName(rec, b.id))}</div>
       <div class="sel-meta">${nf(b.size)}人 · 第 ${b.cell} 格 · ${esc(UnitArt.silhouetteName(UnitArt.variant(b.id)))}</div>
       <div class="sel-act">${esc(act)}</div>
     </div>`;
@@ -4171,6 +4195,7 @@ async function boot() {
   });
   if ($("an-ev-filter")) $("an-ev-filter").addEventListener("change", () => fillAnimeChrome(recNow()));
   if ($("an-events")) $("an-events").addEventListener("click", (e) => {
+    if (e.target.closest(".an-ev-src")) return;
     const b = e.target.closest(".an-ev");
     if (!b) return;
     const eid = b.dataset.eid, y = +b.dataset.year;

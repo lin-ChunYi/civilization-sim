@@ -739,11 +739,17 @@
       all.innerHTML = filtered.map((e) => {
         const qty = e.kcal != null ? " · " + e.kcal + " kcal" : (e.labour_m != null ? " · " + (e.labour_m / 1000) + " 单位劳动" : "");
         const where = e.cell != null ? "第 " + e.cell + " 格" : (e.from != null ? e.from + "→" + e.to : "地点未记录");
-        return "<button type=\"button\" class=\"an-ev an-ev-full\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\">" +
+        const ek = String((run && run.run_id) || "") + "|" + t + "|" + String(e.id || "");
+        const opened = !!(root.AnimeScene && root.AnimeScene.sourceOpen && root.AnimeScene.sourceOpen[ek]);
+        return "<div class=\"an-ev-row\">" +
+          "<button type=\"button\" class=\"an-ev an-ev-full\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\">" +
           "<b>" + esc(speech(e, alias)) + "</b>" +
-          "<span class=\"muted\">" + where + qty + " · id " + esc(String(e.id || "")) + "</span>" +
-          "<details><summary>来源</summary><div class=\"muted\">" + esc(e.source || "未标注") +
-          (e.unrecorded ? " · 未记录：" + esc(e.unrecorded) : "") + "</div></details></button>";
+          "<span class=\"muted\">" + where + qty + " · id " + esc(String(e.id || "")) + "</span></button>" +
+          "<details class=\"an-ev-src\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\"" +
+          (opened ? " open" : "") + "><summary>来源</summary><div class=\"muted an-ev-src-body\">" +
+          esc(e.source || "未标注") +
+          (e.unrecorded ? " · 未记录：" + esc(e.unrecorded) : "") +
+          "</div></details></div>";
       }).join("") || "<p class=\"muted\">没有这一类事件。</p>";
     }
     if (st.$("an-ev-count")) st.$("an-ev-count").textContent = String(items.length);
@@ -812,6 +818,7 @@
   root.AnimeScene = {
     palOf: palOf, daysOfStore: daysOfStore, speech: speech,
     paint: paint, fillChrome: fillChrome, portraitSvg: portraitSvg, chibi: chibi,
+    sourceOpen: {},
     Identity: Identity, slotBands: slotBands, viewBoxFor: viewBoxFor, WORLD: WORLD,
     WORLD_MOBILE: WORLD_MOBILE, worldBase: worldBase, bubbleSpeech: bubbleSpeech,
     poseJoints: poseJoints, chibiBody: chibiBody, cmpId: cmpId,
