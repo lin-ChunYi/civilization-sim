@@ -1,80 +1,104 @@
-html.anime body{
-  background:linear-gradient(180deg,#7ec8ea 0%,#cfe9a8 42%,#b7d48a 100%);
-  color:#2c3a28;
+html.anime,html.anime body{
+  background:#7ec8ee;
+  color:#2c3a28;overflow:hidden;
 }
 html.anime .tabletop,html.anime .grain{display:none}
-html.anime header.hud,html.anime nav.modes,html.anime .overview,html.anime .map-key,html.anime .mapfoot,html.anime #rail,html.anime .rail-tabs,
-html.anime .map-event-chip,html.anime .sel-sheet,html.anime .motion-groups{display:none}
+html.anime header.hud,html.anime nav.modes,html.anime .overview,html.anime .map-key,html.anime .mapfoot,
+html.anime #rail,html.anime .rail-tabs,html.anime .map-event-chip,html.anime .sel-sheet,html.anime .motion-groups,
+html.anime #timeline,html.anime footer,html.anime .console,html.anime .maphead,html.anime .play-dock,
+html.anime #statusline,html.anime #tech-details,html.anime .tech-details,html.anime #continue-prep{
+  display:none !important;
+}
+html.anime main{margin:0;padding:0;height:100%;}
 html.anime #tab-world{
-  position:fixed;left:168px;right:248px;top:58px;bottom:196px;
-  height:auto !important;padding:0;background:transparent;
+  position:fixed;inset:0;z-index:1;
+  height:100% !important;width:100% !important;padding:0;margin:0;
+  background:transparent !important;display:block !important;
 }
-html.anime .world-main,html.anime .sandtable,html.anime .mapbox{
-  height:100% !important;min-height:100%;background:transparent !important;
-  border:none;box-shadow:none;padding:0;
+html.anime .world-main{
+  position:absolute !important;inset:0 !important;
+  display:block !important;grid-template-columns:none !important;
+  height:100% !important;width:100% !important;padding:0;margin:0;gap:0;
+  background:transparent !important;
 }
-html.anime #tab-world{background:transparent !important}
-html.anime #map{display:block;width:100%;height:100%;min-height:480px}
-html.anime .play-dock{
-  position:fixed;left:180px;right:260px;top:8px;bottom:auto;
-  background:rgba(255,255,255,.82);border:1px solid rgba(255,255,255,.9);
-  border-radius:18px;box-shadow:0 8px 24px rgba(40,70,30,.12);
-  color:#2c3a28;z-index:40;padding:6px 10px;
+html.anime .sandtable,html.anime .mapbox{
+  position:absolute !important;inset:0 !important;
+  height:100% !important;width:100% !important;min-height:100%;
+  background:transparent !important;border:none;box-shadow:none;padding:0;margin:0;
+  display:block !important;
 }
-html.anime .play-dock .btn{background:#eef6e4;border-color:#d5e6c4;color:#2c3a28}
-html.anime .play-dock .btn.primary{background:#6aa84f;border-color:#5b8c3a;color:#fff}
+html.anime #map{position:absolute;inset:0;display:block;width:100%;height:100%}
+html.anime h3{color:#2c4a30;letter-spacing:0;font-size:13px}
+html.anime .muted{color:#667866}
 html.anime .an-nav{
-  position:fixed;left:10px;top:10px;bottom:10px;width:148px;z-index:41;
-  background:rgba(255,255,255,.78);border-radius:20px;padding:14px 10px;
-  display:flex;flex-direction:column;gap:8px;
+  position:fixed;left:10px;top:56px;width:92px;z-index:41;
+  background:rgba(255,255,255,.78);border-radius:16px;padding:10px 6px;
+  display:flex;flex-direction:column;gap:2px;
+  box-shadow:0 8px 20px rgba(40,70,30,.12);
 }
-html.anime .an-nav .an-brand{font-weight:800;color:#3d6ea8;padding:4px 8px}
+html.anime .an-nav .an-brand{font-weight:800;color:#2f6fad;padding:2px 6px;font-size:15px}
+html.anime .an-nav .an-sub{font-size:11px;color:#5a6a58;padding:0 6px 8px}
 html.anime .an-nav button{
-  text-align:left;border:0;background:transparent;padding:8px 10px;border-radius:12px;color:#2c3a28;cursor:pointer
+  text-align:left;border:0;background:transparent;padding:7px 8px;border-radius:10px;color:#2c3a28;cursor:pointer;font-size:13px
 }
 html.anime .an-nav button.on,html.anime .an-nav button:hover{background:#e7f3d8}
+html.anime .an-top{
+  position:fixed;left:112px;right:186px;top:8px;height:40px;z-index:45;
+  display:flex;align-items:center;gap:8px;flex-wrap:nowrap;
+  background:rgba(255,255,255,.9);border-radius:20px;padding:0 12px;
+  box-shadow:0 6px 18px rgba(40,70,30,.12);
+}
+html.anime .an-top select{border:1px solid #d5e6c4;border-radius:10px;padding:3px 7px;background:#fff;max-width:148px;font-size:12px}
+html.anime .an-yearline{font-weight:800;font-size:18px;color:#163224;white-space:nowrap}
+html.anime .an-yearline b{font-size:24px;color:#10281c}
+html.anime .an-top-meta{font-size:13px;color:#2f4634;white-space:nowrap;font-weight:600}
+html.anime .an-top input[type=range]{flex:1;min-width:90px}
+html.anime .an-top button{
+  border:1px solid #cfe0b8;background:#eef6e4;border-radius:10px;padding:4px 10px;cursor:pointer;font-weight:700;white-space:nowrap
+}
+html.anime .an-top button.primary{background:#5ea34a;color:#fff;border-color:#4d8a3c}
 html.anime .an-badge{
-  position:fixed;left:180px;top:52px;z-index:39;
-  background:#f4c14a;color:#3a2a10;font-weight:700;font-size:12px;
-  padding:4px 10px;border-radius:999px;
+  position:fixed;left:112px;top:52px;z-index:39;
+  background:#f4c14a;color:#3a2a10;font-weight:700;font-size:11px;
+  padding:3px 9px;border-radius:999px;
 }
 html.anime .an-stats{
-  position:fixed;right:10px;top:10px;bottom:196px;width:228px;z-index:41;
-  background:rgba(255,255,255,.8);border-radius:20px;padding:12px;
-  overflow:auto;
+  position:fixed;right:8px;top:56px;width:168px;z-index:41;
+  background:rgba(255,255,255,.8);border-radius:16px;padding:10px;
+  box-shadow:0 8px 20px rgba(40,70,30,.12);
 }
-html.anime .an-stats h3{margin:0 0 8px;font-size:15px}
-html.anime .an-kv{display:flex;justify-content:space-between;margin:6px 0;font-size:13px}
-html.anime .an-layers{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-html.anime .an-layers button{font-size:12px;border-radius:999px;padding:4px 8px;border:1px solid #d5e6c4;background:#fff}
+html.anime .an-stats h3{margin:0 0 6px;font-size:13px}
+html.anime .an-kv{display:flex;justify-content:space-between;margin:3px 0;font-size:12px}
 html.anime .an-bottom{
-  position:fixed;left:168px;right:10px;bottom:10px;height:176px;z-index:41;
-  display:grid;grid-template-columns:1.1fr 1.2fr .9fr 160px;gap:10px;
+  position:fixed;left:112px;right:186px;bottom:8px;height:100px;z-index:41;
+  display:grid;grid-template-columns:1fr 1.3fr 120px;gap:8px;
 }
 html.anime .an-panel{
-  background:rgba(255,255,255,.86);border-radius:16px;padding:10px 12px;overflow:auto;
+  background:rgba(255,255,255,.88);border-radius:14px;padding:8px 10px;overflow:auto;
+  box-shadow:0 8px 18px rgba(40,70,30,.1);
 }
-html.anime .an-ev{display:block;width:100%;text-align:left;border:0;background:transparent;padding:4px 0;cursor:pointer;font-size:12px}
-html.anime .an-card-h{display:flex;gap:8px;align-items:center}
-html.anime .an-avatar{width:44px;height:44px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.15)}
-html.anime .an-card-kv{margin:8px 0 0;padding-left:16px;font-size:12px}
+html.anime .an-panel h3{margin:0 0 4px;font-size:12px}
+html.anime .an-ev{display:block;width:100%;text-align:left;border:0;background:transparent;padding:2px 0;cursor:pointer;font-size:12px}
+html.anime .an-card-h{display:flex;gap:8px;align-items:flex-start}
+html.anime .an-portrait{flex-shrink:0;background:#eef6e4;border-radius:12px}
+html.anime .an-card-kv{margin:2px 0 0;padding-left:16px;font-size:12px;line-height:1.3}
 html.anime .an-mini-svg{width:100%;height:auto}
 html.anime #continue-dialog{
-  background:rgba(255,255,255,.95);color:#2c3a28;border-color:#d5e6c4
+  background:rgba(255,255,255,.95);color:#2c3a28;border-color:#d5e6c4;bottom:116px;z-index:50
 }
 html.anime #tab-runs:not([hidden]),
 html.anime #tab-metrics:not([hidden]),
 html.anime #tab-network:not([hidden]),
 html.anime #tab-compare:not([hidden]),
 html.anime #tab-progress:not([hidden]){
-  position:fixed;left:168px;right:10px;top:58px;bottom:10px;z-index:42;
+  position:fixed;left:112px;right:8px;top:54px;bottom:8px;z-index:42;
   overflow:auto;background:rgba(255,255,255,.94);border-radius:16px;padding:12px;
   height:auto;
 }
 @media (max-width:900px){
-  html.anime #tab-world{left:0;right:0;top:48px;bottom:148px}
+  html.anime #tab-world{inset:0}
   html.anime .an-nav,html.anime .an-stats{display:none}
-  html.anime .an-bottom{left:6px;right:6px;height:140px;grid-template-columns:1fr 1fr}
-  html.anime .play-dock{left:6px;right:6px}
-  html.anime .an-badge{left:8px;top:44px}
+  html.anime .an-bottom{left:6px;right:6px;height:104px;grid-template-columns:1fr 1fr}
+  html.anime .an-top{left:6px;right:6px}
+  html.anime .an-badge{left:8px;top:50px}
 }

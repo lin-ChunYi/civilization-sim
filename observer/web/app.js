@@ -1505,8 +1505,10 @@ function renderMap() {
     });
     rootAnimeScene().fillChrome({
       map: S.map, rec: rec, run: S.run, t: S.t, selBand: S.selBand || (rec.bands && rec.bands[0] && rec.bands[0].id),
-      cellCenter: cellCenter, needPc: NEED(), $: $,
+      cellCenter: cellCenter, needPc: NEED(), $: $, runs: S.runs,
     });
+    if ($("an-scrub")) $("an-scrub").max = String(maxT());
+    if ($("an-play")) $("an-play").textContent = S.playing ? "暂停" : "播放";
   }
   paintDirectorFx();
   svg.querySelectorAll(".band").forEach((n) =>
@@ -3965,6 +3967,18 @@ async function boot() {
   if ($("an-research")) $("an-research").addEventListener("click", () => {
     document.documentElement.classList.remove("anime");
     showTab("metrics");
+  });
+  if ($("an-play")) $("an-play").addEventListener("click", () => setPlaying(!S.playing));
+  if ($("an-prev")) $("an-prev").addEventListener("click", () => { if ($("b-prev")) $("b-prev").click(); });
+  if ($("an-next")) $("an-next").addEventListener("click", () => { if ($("b-next")) $("b-next").click(); });
+  if ($("an-continue")) $("an-continue").addEventListener("click", () => openContinueDialog());
+  if ($("an-scrub")) $("an-scrub").addEventListener("input", (e) => {
+    setPlaying(false); bumpOp(); gotoYear(+e.target.value, { opGen: S.opGen });
+  });
+  if ($("an-run")) $("an-run").addEventListener("change", (e) => { if (e.target.value) openRun(e.target.value); });
+  if ($("an-speed")) $("an-speed").addEventListener("change", (e) => {
+    S.speed = +e.target.value;
+    if ($("speed")) $("speed").value = e.target.value;
   });
   if ($("an-events")) $("an-events").addEventListener("click", (e) => {
     const b = e.target.closest(".an-ev");
