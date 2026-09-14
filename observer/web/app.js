@@ -3829,10 +3829,16 @@ async function openContinueDialog(runId) {
       " · 续演资格以 /continuation 为准，不以页面版本标签推断。";
   }
   if ($("b-confirm-continue")) $("b-confirm-continue").disabled = !elig.eligible || S.continueBusy;
+  if (isAnimeMode()) {
+    showTab("world");
+    document.documentElement.classList.add("continue-open");
+    if (dlg.parentElement !== document.body) document.body.appendChild(dlg);
+  }
   dlg.hidden = false;
   layoutPlayDock();
 }
 function hideContinueDialog() {
+  document.documentElement.classList.remove("continue-open");
   if ($("continue-dialog")) $("continue-dialog").hidden = true;
 }
 async function confirmContinue() {
@@ -3925,7 +3931,7 @@ function showTab(name) {
   ["world", "network", "compare", "metrics", "events", "runs", "progress"].forEach((t) => {
     const el = $("tab-" + t); if (el) el.hidden = t !== name;
   });
-  document.querySelectorAll("#tabs button, .hud-actions [data-tab]").forEach((b) =>
+  document.querySelectorAll("#tabs button, .hud-actions [data-tab], nav.an-nav [data-tab], #an-menu-nav [data-tab]").forEach((b) =>
     b.classList.toggle("on", b.dataset.tab === name));
   setHash({ tab: name });
   if (name === "metrics") renderCharts();
@@ -4157,12 +4163,15 @@ async function boot() {
     S.evFilter = b.dataset.type; renderEvents();
   });
   if ($("an-nav")) $("an-nav").addEventListener("click", (e) => {
+    if (e.target.closest("#an-research")) return;
     const b = e.target.closest("[data-tab]");
     if (!b) return;
     document.documentElement.classList.add("anime");
     showTab(b.dataset.tab);
   });
-  if ($("an-research")) $("an-research").addEventListener("click", () => {
+  if ($("an-research")) $("an-research").addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     document.documentElement.classList.remove("anime");
     showTab("metrics");
   });

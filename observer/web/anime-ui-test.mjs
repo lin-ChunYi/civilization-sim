@@ -135,7 +135,7 @@ const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--disable-http-cache",
   `--remote-debugging-port=${CDP}`, `--user-data-dir=${USER}`,
   "--window-size=1536,1024",
-  BASE + "/?v=f7#tab=world&run=" + SAMPLE + "&t=2",
+  BASE + "/?v=f9#tab=world&run=" + SAMPLE + "&t=2",
 ], { stdio: "ignore" });
 
 let ws;
@@ -635,6 +635,71 @@ try {
   const elig = await ev("({reason:document.getElementById('continue-reason').textContent, dis:document.getElementById('b-confirm-continue').disabled})");
   ok("B17c user continuation eligible", elig && !elig.dis, JSON.stringify(elig));
   await ev("window.__obs.hideContinueDialog()");
+  await click('.an-nav button[data-tab="runs"]');
+  await sleep(400);
+  await click("#an-continue");
+  await sleep(500);
+  const visDlg = await ev(`(function(){
+    var dlg=document.getElementById('continue-dialog');
+    if(!dlg || dlg.hidden) return {ok:false, why:'hidden'};
+    var r=dlg.getBoundingClientRect();
+    var reason=document.getElementById('continue-reason');
+    var rr=reason && reason.getBoundingClientRect();
+    var hit=document.elementFromPoint(r.x+r.width/2, r.y+Math.min(40, r.height/2));
+    var reasonHit=rr ? document.elementFromPoint(rr.x+Math.min(40,rr.width/2), rr.y+rr.height/2) : null;
+    var inDlg=!!(hit && hit.closest && hit.closest('#continue-dialog'));
+    var reasonTop=!!(reasonHit && reasonHit.closest && reasonHit.closest('#continue-dialog'));
+    var cs=getComputedStyle(dlg);
+    var rcs=reason && getComputedStyle(reason);
+    var readable=!!(reason && reason.textContent && rcs && rcs.visibility!=='hidden' && parseFloat(rcs.opacity||'1')>0.8);
+    var runs=document.getElementById('tab-runs');
+    var runsCs=runs && getComputedStyle(runs);
+    var runsGone= !runs || runs.hidden || (runsCs && (runsCs.display==='none' || runsCs.visibility==='hidden'));
+    var htmlOpen=document.documentElement.classList.contains('continue-open');
+    var parent=dlg.parentElement && dlg.parentElement.tagName;
+    return {
+      ok: inDlg && reasonTop && readable && runsGone && htmlOpen && r.width>200 && r.height>80 && r.top>=0 && r.bottom<=(window.innerHeight||1024),
+      inDlg:inDlg, reasonTop:reasonTop, readable:readable, runsGone:runsGone, htmlOpen:htmlOpen,
+      hit: hit && (hit.id||hit.className||hit.tagName),
+      reason: reason && reason.textContent,
+      tab: (location.hash.match(/tab=([^&]*)/)||[])[1],
+      z: cs.zIndex, top:r.top, h:r.height, w:r.width, parent:parent
+    };
+  })()`);
+  ok("B17h continue dialog topmost readable after Create World",
+    visDlg && visDlg.ok && visDlg.reason && /继续/.test(visDlg.reason) && !/missing_checkpoint/.test(visDlg.reason),
+    JSON.stringify(visDlg));
+  await shot("D-continue-dialog-1536.png", 1536, 1024, false);
+  await ev("window.__obs.hideContinueDialog()");
+  await click("#an-research");
+  await sleep(400);
+  const deskRes = await ev("({anime:document.documentElement.classList.contains('anime'), metricsHidden:document.getElementById('tab-metrics').hidden})");
+  ok("B17r desktop Research leaves anime",
+    deskRes && deskRes.anime === false && deskRes.metricsHidden === false,
+    JSON.stringify(deskRes));
+  await click('#tabs button[data-tab="world"]');
+  await sleep(400);
+  const motBox = await ev(`(function(){
+    var n=document.getElementById('b-motion');
+    if(!n) return {ok:false};
+    var r=n.getBoundingClientRect();
+    return {ok:r.width>8 && r.height>8, w:r.width, h:r.height, t:n.textContent, anime:document.documentElement.classList.contains('anime')};
+  })()`);
+  ok("B17s research World shows motion control", motBox && motBox.ok && motBox.anime === false, JSON.stringify(motBox));
+  await click("#b-motion");
+  await sleep(200);
+  const mot = await ev("({reduce:window.__obs.S.reduceMotion, label:document.getElementById('b-motion') && document.getElementById('b-motion').textContent})");
+  ok("B17s2 reduced motion toggle", mot && mot.reduce === true, JSON.stringify(mot));
+  await click("#b-motion");
+  await sleep(150);
+  await ev(`(function(){
+    document.documentElement.classList.add('anime');
+    var n=document.querySelector('nav.an-nav [data-tab="world"]');
+    if(n) n.click();
+  })()`);
+  await sleep(400);
+  const backDesk = await ev("({anime:document.documentElement.classList.contains('anime'), tab:(location.hash.match(/tab=([^&]*)/)||[])[1], reduce:window.__obs.S.reduceMotion})");
+  ok("B17t desktop return World from Research", backDesk && backDesk.anime === true && backDesk.tab === "world", JSON.stringify(backDesk));
   await ev("window.__obs.openContinueDialog('preset-anime-farm250')");
   await sleep(300);
   const inelig = await ev("({reason:document.getElementById('continue-reason').textContent, dis:document.getElementById('b-confirm-continue').disabled})");

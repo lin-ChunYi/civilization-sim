@@ -16,7 +16,7 @@ const BASE = (flag("base-url", "http://127.0.0.1:8913") || "").replace(/\/$/, ""
 const ART = flag("artifact-dir", join(here, "screenshots", "anime-record"));
 const USER = flag("user-data-dir", "/tmp/g-anime-record");
 const CDP = Number(flag("cdp-port", "9411"));
-const PAGE = BASE + "/?v=f6#tab=world&run=preset-anime-farm250&t=0";
+const PAGE = BASE + "/?v=f9#tab=world&run=preset-anime-farm250&t=0";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const FRAMES = join(ART, "rec-frames-real");
 const SAMPLE = "preset-anime-farm250";
