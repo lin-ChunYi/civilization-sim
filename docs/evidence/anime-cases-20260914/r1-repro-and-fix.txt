@@ -1,0 +1,24 @@
+# C_ANIME_SUPPORT_01_R1：验收报的故障，本机原样复现 + 修好之后的同条件对照
+# 复现办法：把产生这份清单的那个临时目录移开（mv），让环境和新检出的机器一样。
+
+$ mv /tmp/chronicle-exp07-20260913/anime/data /tmp/chronicle-exp07-20260913/anime/data-hidden
+
+## 旧脚本（提交 67c6715 里的 verify-cases.py）
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-ecool-civilization-sim/b574e413-4372-4621-8ce2-812e4d6e96bd/scratchpad/old-verify.py", line 17, in <module>
+    ra, rb, rc, rd = years(A), years(B), years(C), years(D)
+                     ^^^^^^^^
+  File "/private/tmp/claude-501/-Users-ecool-civilization-sim/b574e413-4372-4621-8ce2-812e4d6e96bd/scratchpad/old-verify.py", line 15, in years
+    return [json.loads(l) for l in open(p)]
+                                   ^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/chronicle-exp07-20260913/anime/data/runs/e289c4c7ff47/years.jsonl'
+旧脚本退出码=1
+
+## 新脚本（本轮 R1），同一时刻、同一台机器、同样没有那个目录
+  PASS  第12年 事件 id 相同                                        记录=['t12-farm_harvest-0', 't12-farm_harvest-1', 't12-field_decay-2', 't12-field_built-3']
+  PASS  第12年 状态摘要相同                                          记录='4b404b4450a5776a6afa2e45dcb3e34a'
+
+  通过 123 / 失败 0（共 123 项）
+新脚本退出码=0
+
+$ mv /tmp/chronicle-exp07-20260913/anime/data-hidden /tmp/chronicle-exp07-20260913/anime/data   # 放回，未删除任何数据

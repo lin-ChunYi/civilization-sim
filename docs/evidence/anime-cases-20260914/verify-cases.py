@@ -1,27 +1,84 @@
 #!/usr/bin/env python3
 """逐条复核 docs/ANIME-REAL-CASES.md 里写下的每一个数字。
 
-用法：python3 verify-cases.py [数据目录]
-默认数据目录 /tmp/chronicle-exp07-20260913/anime/data —— 也就是生成这份清单的那次运行。
+**在任何一份新检出的仓库里都能跑**，不依赖产生这份清单的那台机器上的临时目录。
+数据有两个来源，都在仓库里：
+
+1. 本目录里**已提交的真实 API 响应** —— `run{A,B,C,D}-meta.json`、
+   `runA-year-*.json`、`runB/C/D-year-*.json`、`bandA-*.json`、`relationsA-y295.json`。
+2. 用仓库里的引擎（`exp06/verify6.py` / `exp07/verify7.py`）与观察层适配器
+   （`observer/adapter.py`）**按 `real-cases.json` 里记着的参数就地重算整段历史**。
+   参数从证据文件里读，不写死在脚本里；重算只读引擎，不启服务、不落盘、不写任何目录。
+
+脚本先证明「就地重算 == 已提交的 API 响应」（逐字段比，见"响应可重放"一组），
+再用重算出来的整段历史去查那些**需要全年数据**的断言：逐年累计、事件总数与去重、
+弃耕轨迹、301 年逐年对照。这样既不用把上百 MB 的逐年记录塞进仓库，
+也没有任何一条断言被降级。
+
+    python3 docs/evidence/anime-cases-20260914/verify-cases.py [--data-dir 观察台数据目录]
+
+`--data-dir` 是可选的：指向一个真实的观察台数据目录
+（里面要有 `runs/<run_id>/years.jsonl`），脚本就改用那份**真正落过盘的记录**，
+并额外断言它与就地重算的结果逐年相同。不给就只用仓库里的东西。
+
 任何一条对不上就返回非零退出码：文档里的数字不许"看起来合理"。
 """
-import json, sys, os
+import argparse, json, sys, os
+from pathlib import Path
 
-DATA = sys.argv[1] if len(sys.argv) > 1 else '/tmp/chronicle-exp07-20260913/anime/data'
-A, B, C, D = 'e289c4c7ff47', '05c2f8d4d969', 'fa781b561845', '4f83f009ef28'
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[2]                      # docs/evidence/<本目录> -> 仓库根
+sys.path.insert(0, str(REPO))
 
-def years(rid):
-    p = os.path.join(DATA, 'runs', rid, 'years.jsonl')
-    return [json.loads(l) for l in open(p)]
+ap = argparse.ArgumentParser()
+ap.add_argument("--data-dir", default=os.environ.get("ANIME_CASES_DATA_DIR"),
+                help="可选：真实观察台数据目录（需含 runs/<run_id>/years.jsonl）")
+ARGS = ap.parse_args()
 
-ra, rb, rc, rd = years(A), years(B), years(C), years(D)
+CASES = json.loads((HERE / "real-cases.json").read_text(encoding="utf-8"))
+RUNS = CASES["runs"]
+A, B, C, D = (RUNS[t]["run_id"] for t in ("A", "B", "C", "D"))
+
+from observer import adapter, config            # noqa: E402  只读加载，不起服务
+
+PARAM_KEYS = ("sigma_m", "move_mort_m", "share_m", "aid_m", "recip_m", "farm_m")
+
+
+def replay(tag):
+    """按证据里记着的参数就地重算整段历史，返回逐年记录（与接口同一口径）。"""
+    r = RUNS[tag]
+    eng, sha = adapter.load_engine(r["engine"])
+    keys = set(config.ENGINES[r["engine"]]["params"])
+    kw = {k: r[k] for k in PARAM_KEYS if k in keys}
+    st = eng.make_world(r["seed"], config.ARMS[r["arm"]]["poison"], **kw)
+    rec = adapter.Recorder(r["engine"])
+    rows = [rec.year_record(st)]
+    for _ in range(r["years"]):
+        eng.step(st)
+        rows.append(rec.year_record(st))
+    return rows, sha
+
+
+def from_disk(run_id):
+    """--data-dir 模式：读真正落过盘的逐年记录。"""
+    p = Path(ARGS.data_dir) / "runs" / run_id / "years.jsonl"
+    return [json.loads(l) for l in p.open(encoding="utf-8")]
+
+
 ok = bad = 0
 
+def _brief(v, cap=150):
+    t = repr(v)
+    return t if len(t) <= cap else t[:cap] + f"…（共 {len(t)} 字符）"
+
+
 def check(name, got, want):
+    """比较是**精确**的；只有打印出来的那一行会截断，方便人读。"""
     global ok, bad
     good = got == want
     ok, bad = ok + good, bad + (not good)
-    print(f"  {'PASS' if good else 'FAIL'}  {name:52s} 记录={got!r}" + ("" if good else f"  文档={want!r}"))
+    print(f"  {'PASS' if good else 'FAIL'}  {name:52s} 记录={_brief(got)}"
+          + ("" if good else f"  文档={_brief(want)}"))
 
 def ev(rows, eid):
     for r in rows:
@@ -39,6 +96,44 @@ def firstev(rows, t):
 
 def count(rows, t):
     return sum(1 for r in rows for e in r['events'] if e['type'] == t)
+
+
+def committed(name):
+    return json.loads((HERE / name).read_text(encoding="utf-8"))
+
+
+print("== 响应可重放：就地重算 == 已提交的真实 API 响应 ==")
+REPLAY = {}
+for tag in ("A", "B", "C", "D"):
+    rows, sha = replay(tag)
+    REPLAY[tag] = rows
+    meta = committed(f"run{tag}-meta.json")
+    check(f"{tag} 重算用的引擎源码就是记录里那一版（sha256）", sha, meta["engine_sha256"])
+    check(f"{tag} 重算 {len(rows) - 1} 年，年数与记录一致", len(rows) - 1, meta["years_done"])
+
+CITED = {"A": (0, 1, 2, 4, 52, 218, 219, 267, 290, 295, 297, 300),
+         "B": (300,), "C": (300,), "D": (1, 41, 300)}
+for tag, ts in CITED.items():
+    for t in ts:
+        want = committed(f"run{tag}-year-{t}.json")
+        check(f"{tag} 第 {t} 年：重算结果与已提交响应逐字段相同",
+              REPLAY[tag][t] == want,
+              True if REPLAY[tag][t] == want else
+              [k for k in set(REPLAY[tag][t]) | set(want)
+               if REPLAY[tag][t].get(k) != want.get(k)])
+
+ra, rb, rc, rd = REPLAY["A"], REPLAY["B"], REPLAY["C"], REPLAY["D"]
+SOURCE = "就地重算（仓库内引擎 + 适配层）"
+if ARGS.data_dir:
+    print("== --data-dir：与真正落过盘的逐年记录对照 ==")
+    for tag, rid in (("A", A), ("B", B), ("C", C), ("D", D)):
+        disk = from_disk(rid)
+        diff = [r["t"] for r, q in zip(disk, REPLAY[tag]) if r != q]
+        check(f"{tag} 盘上的 years.jsonl 与重算逐年相同：不同的年份", diff, [])
+        check(f"{tag} 盘上的年数", len(disk), len(REPLAY[tag]))
+    ra, rb, rc, rd = (from_disk(x) for x in (A, B, C, D))
+    SOURCE = f"盘上的记录（--data-dir {ARGS.data_dir}）"
+print(f"  ——以下断言的数据来源：{SOURCE}")
 
 print("== 案例 1 第一次开垦 ==")
 t, e = firstev(ra, 'field_built')
@@ -190,7 +285,7 @@ check("B 末年 人口/群体", (rb[300]['agg']['pop'], rb[300]['agg']['bands'])
 
 print("== 没有发生的事 ==")
 check("extinct 事件次数", count(ra, 'extinct'), 0)
-cells = json.load(open(os.path.join(DATA, 'runs', A, 'meta.json')))['cell_ids']
+cells = committed('runA-meta.json')['meta']['cell_ids']
 prev, back = None, []
 ever, end = set(), set()
 for r in ra:
@@ -218,8 +313,52 @@ check("A 事件总数", len(ids), 6969)
 check("A 事件 id 无重复", len(set(ids)), len(ids))
 check("t218 当年 -0 是分裂（序号各类型共用）", ra[218]['events'][0]['id'], 't218-split-0')
 
+print("== 已提交的卷宗 / 关系网与整段历史对得上 ==")
+farmer = committed('bandA-farmer-y2.json')
+fid = farmer['id']
+check("首个耕作者卷宗的 sizes 就是逐年记录里的 (年, 人数, 存粮)",
+      farmer['sizes'],
+      [[r['t'], b['size'], b['store']] for r in ra[:3] for b in r['bands'] if b['id'] == fid])
+check("卷宗的 state_at_year 与第 2 年记录一致",
+      farmer['state_at_year'],
+      next({"year": 2, "cell": b['cell'], "size": b['size'], "store": b['store']}
+           for b in ra[2]['bands'] if b['id'] == fid))
+check("卷宗说它是开局群体，记录里第 0 年就在", (farmer['first_seen'], farmer['parent']),
+      (0, None) if any(b['id'] == fid for b in ra[0]['bands']) else ("第0年没有它", None))
+
+rep = committed('bandA-repayer-y295.json')
+rid_ = rep['id']
+split = next(e for r in ra for e in r['events']
+             if e['type'] == 'split' and e['band'] == rid_)
+check("回助者卷宗的血缘与分裂事件一致",
+      (rep['parent'], rep['born_at']), (split['parent'], split['year']))
+check("回助者卷宗的 sizes 覆盖第 218..295 年且逐年对得上",
+      rep['sizes'],
+      [[r['t'], b['size'], b['store']] for r in ra[218:296]
+       for b in r['bands'] if b['id'] == rid_])
+
+rel = committed('relationsA-y295.json')
+aid_ids = {e['id'] for r in ra[:296] for e in r['events'] if e['type'] == 'aid'}
+edge_ids = [i for e in rel['edges'] for i in e['event_ids']]
+check("关系网每一条边引用的事件 id 都在第 0..295 年的记录里", set(edge_ids) - aid_ids, set())
+check("关系网的总转移笔数 == 第 0..295 年的援助事件条数",
+      rel['totals']['transfers'], len(aid_ids))
+check("关系网的总 kcal == 那些援助事件的 kcal 之和",
+      rel['totals']['kcal'],
+      sum(e['kcal'] for r in ra[:296] for e in r['events'] if e['type'] == 'aid'))
+by_edge = {}
+for r in ra[:296]:
+    for e in r['events']:
+        if e['type'] == 'aid':
+            by_edge.setdefault((e['donor'], e['receiver']), []).append(e)
+check("关系网每条边的 kcal / 笔数 / 最近一次事件都能逐条对回记录",
+      [(e['donor'], e['receiver'], e['kcal'], e['transfers'], e['last_event_id'])
+       for e in sorted(rel['edges'], key=lambda x: (x['donor'], x['receiver']))],
+      [(d, rc_, sum(x['kcal'] for x in evs), len(evs), evs[-1]['id'])
+       for (d, rc_), evs in sorted(by_edge.items())])
+
 print("== 案例 11 弃耕（D，FARM_M=1000）==")
-cells_d = json.load(open(os.path.join(DATA, 'runs', D, 'meta.json')))['cell_ids']
+cells_d = committed('runD-meta.json')['meta']['cell_ids']
 prev, zeroed = None, []
 for r in rd:
     f = r['farm']['field_m']
@@ -282,10 +421,14 @@ check("第2年 逐格明细逐行", [(c['cell'], c['weather_m'], c['worked_m'], 
        (30, 1026, 5000, 9362250, 0, 9362250)])
 
 print("== 跨实例回放（另一条 run_id、另一个数据目录，同参数同版本）==")
-SAMPLE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                      '..', 'exp07-20260913', 'sample-year.json')
-if os.path.exists(SAMPLE):
-    sm = json.load(open(SAMPLE))
+SAMPLE = HERE.parent / 'exp07-20260913' / 'sample-year.json'
+if SAMPLE.exists():
+    sm = json.loads(SAMPLE.read_text(encoding='utf-8'))
+    check("样例与案例 A 是同一组参数（跨实例比较的前提）",
+          [sm['run'][k] for k in ('seed', 'sigma_m', 'move_mort_m', 'share_m',
+                                  'aid_m', 'recip_m', 'farm_m', 'arm')],
+          [RUNS['A'][k] for k in ('seed', 'sigma_m', 'move_mort_m', 'share_m',
+                                  'aid_m', 'recip_m', 'farm_m', 'arm')])
     s12, a12 = sm['year_12'], ra[12]
     check("样例是另一条 run_id", sm['run']['run_id'] != A, True)
     check("model_run_id 相同", sm['run']['model_run_id'], '8d6281d91c14c3697d4390e8baca5fb9')
