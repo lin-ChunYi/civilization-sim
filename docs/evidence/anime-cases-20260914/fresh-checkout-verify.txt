@@ -1,0 +1,52 @@
+# 在另一份全新检出里跑同一条命令（C_ANIME_SUPPORT_01_R1 自测）
+#
+# $ git clone --branch backend/exp07-farming --single-branch <本仓库> <新目录>
+# $ cd <新目录> && git log --oneline -1
+#   15bec98 C_ANIME_SUPPORT_01_R1：复核脚本改成任何一份新检出都能跑
+# 这份检出里没有任何运行数据目录，也没有观察台数据库。
+#
+# $ python3 docs/evidence/anime-cases-20260914/verify-cases.py
+
+== 响应可重放：就地重算 == 已提交的真实 API 响应 ==
+  PASS  A 重算用的引擎源码就是记录里那一版（sha256）                           记录='6c18ed20b1e94035f08ea77847fa1ac7739e50fe76866872cc55a59bbe1e6a20'
+  PASS  A 重算 300 年，年数与记录一致                                   记录=300
+  PASS  B 重算用的引擎源码就是记录里那一版（sha256）                           记录='43c9338551a23d6d7065f657394a25d5be041e63724ab12a23350bde53e5d186'
+  PASS  B 重算 300 年，年数与记录一致                                   记录=300
+  PASS  C 重算用的引擎源码就是记录里那一版（sha256）                           记录='6c18ed20b1e94035f08ea77847fa1ac7739e50fe76866872cc55a59bbe1e6a20'
+  PASS  C 重算 300 年，年数与记录一致                                   记录=300
+  PASS  D 重算用的引擎源码就是记录里那一版（sha256）                           记录='6c18ed20b1e94035f08ea77847fa1ac7739e50fe76866872cc55a59bbe1e6a20'
+  PASS  D 重算 300 年，年数与记录一致                                   记录=300
+  PASS  A 第 0 年：重算结果与已提交响应逐字段相同                              记录=True
+  PASS  A 第 1 年：重算结果与已提交响应逐字段相同                              记录=True
+  PASS  A 第 2 年：重算结果与已提交响应逐字段相同                              记录=True
+  PASS  A 第 4 年：重算结果与已提交响应逐字段相同                              记录=True
+  PASS  A 第 52 年：重算结果与已提交响应逐字段相同                             记录=True
+  PASS  A 第 218 年：重算结果与已提交响应逐字段相同                            记录=True
+  PASS  A 第 219 年：重算结果与已提交响应逐字段相同                            记录=True
+  PASS  A 第 267 年：重算结果与已提交响应逐字段相同                            记录=True
+  PASS  A 第 290 年：重算结果与已提交响应逐字段相同                            记录=True
+  PASS  A 第 295 年：重算结果与已提交响应逐字段相同                            记录=True
+  PASS  A 第 297 年：重算结果与已提交响应逐字段相同                            记录=True
+  PASS  A 第 300 年：重算结果与已提交响应逐字段相同                            记录=True
+  PASS  B 第 300 年：重算结果与已提交响应逐字段相同                            记录=True
+  PASS  C 第 300 年：重算结果与已提交响应逐字段相同                            记录=True
+  PASS  D 第 1 年：重算结果与已提交响应逐字段相同                              记录=True
+  PASS  D 第 41 年：重算结果与已提交响应逐字段相同                             记录=True
+  PASS  D 第 300 年：重算结果与已提交响应逐字段相同                            记录=True
+  ——以下断言的数据来源：就地重算（仓库内引擎 + 适配层）
+== 案例 1 第一次开垦 ==
+  PASS  首次开垦年份                                               记录=1
+  PASS  事件 id                                                记录='t1-field_built-0'
+  …（中间略，完整输出与本目录的 cases-verify.txt 一致）
+  PASS  第12年 事件 id 相同                                        记录=['t12-farm_harvest-0', 't12-farm_harvest-1', 't12-field_decay-2', 't12-field_built-3']
+  PASS  第12年 状态摘要相同                                          记录='4b404b4450a5776a6afa2e45dcb3e34a'
+
+  通过 123 / 失败 0（共 123 项）
+退出码=0
+
+# 跑完之后 git status --porcelain 为空：脚本没有往检出里写任何东西。
+#
+# 再保险一次：把产生这份清单的那个临时目录也 mv 走，同一条命令仍然：
+
+  通过 123 / 失败 0（共 123 项）
+退出码=0
