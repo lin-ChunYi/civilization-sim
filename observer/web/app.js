@@ -1288,6 +1288,9 @@ function camViewBox() {
   const x = (W - w) / 2 - S.cam.x, y = (H - h) / 2 - S.cam.y;
   return x + " " + y + " " + w + " " + h;
 }
+function rootAnimeScene() {
+  return (typeof AnimeScene !== "undefined") ? AnimeScene : (typeof window !== "undefined" ? window.AnimeScene : null);
+}
 function setLayer(name) {
   if (name === "mem") { setView("mem"); S.layer = "mem"; }
   else {
@@ -1495,6 +1498,16 @@ function renderMap() {
   svg.innerHTML = out;
   S._mapYear = S.t;
   S._mapRun = S.run ? S.run.run_id : null;
+  if (document.documentElement.classList.contains("anime") && rootAnimeScene()) {
+    rootAnimeScene().paint(svg, {
+      map: S.map, rec: rec, run: S.run, t: S.t, selBand: S.selBand, selCell: S.selCell,
+      cellCenter: cellCenter, needPc: NEED(), $: $,
+    });
+    rootAnimeScene().fillChrome({
+      map: S.map, rec: rec, run: S.run, t: S.t, selBand: S.selBand || (rec.bands && rec.bands[0] && rec.bands[0].id),
+      cellCenter: cellCenter, needPc: NEED(), $: $,
+    });
+  }
   paintDirectorFx();
   svg.querySelectorAll(".band").forEach((n) =>
     n.addEventListener("click", (e) => {
@@ -3943,6 +3956,25 @@ async function boot() {
     const b = e.target.closest("button[data-type]"); if (!b) return;
     S.evFilter = b.dataset.type; renderEvents();
   });
+  if ($("an-nav")) $("an-nav").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-tab]");
+    if (!b) return;
+    document.documentElement.classList.add("anime");
+    showTab(b.dataset.tab);
+  });
+  if ($("an-research")) $("an-research").addEventListener("click", () => {
+    document.documentElement.classList.remove("anime");
+    showTab("metrics");
+  });
+  if ($("an-events")) $("an-events").addEventListener("click", (e) => {
+    const b = e.target.closest(".an-ev");
+    if (!b) return;
+    const eid = b.dataset.eid, y = +b.dataset.year;
+    if (eid) jumpToRecordedEvent(eid, y);
+  });
+  if ($("farm-off")) $("farm-off").addEventListener("click", () => { if ($("f-farm")) $("f-farm").value = "0"; });
+  if ($("farm-25")) $("farm-25").addEventListener("click", () => { if ($("f-farm")) $("f-farm").value = "250"; });
+  if ($("farm-50")) $("farm-50").addEventListener("click", () => { if ($("f-farm")) $("f-farm").value = "500"; });
 
   try {
     S.cfg = await api("/api/config");
@@ -3975,13 +4007,15 @@ async function boot() {
   await refresh();
   const hp = hashParams();
   const wanted = hp.run && S.runs.find((r) => r.run_id === hp.run);
-  const first = wanted || S.runs.find((r) => r.status === "running") ||
+  const demo = S.runs.find((r) => r.run_id === "eba544f66543");
+  const first = wanted || demo || S.runs.find((r) => r.status === "running") ||
     S.runs.find((r) => r.years_recorded > 0);
   if (hp.mode === "events") S.playMode = "events";
   if (hp.archive === "full") S.bandScope = "full";
   if (first) {
     const parsedT = hp.t ? OverviewLogic.parseStrictInt(hp.t, { name: "年份", min: 0 }) : { ok: false };
-    await openRun(first.run_id, { initialYear: parsedT.ok ? parsedT.value : 0 });
+    const startY = parsedT.ok ? parsedT.value : (first.run_id === "eba544f66543" ? 2 : 0);
+    await openRun(first.run_id, { initialYear: startY });
     if (hp.mode === "events") setPlayMode("events", { silent: true, force: true });
     if (parsedT.ok && S.t !== parsedT.value) await gotoYear(parsedT.value);
     if (hp.event) {
@@ -4103,6 +4137,8 @@ function syncEngineForm() {
   if (shareWrap) shareWrap.hidden = !engineHasParam(name, "share_m");
   if (aidWrap) aidWrap.hidden = !engineHasParam(name, "aid_m");
   if (recipWrap) recipWrap.hidden = !engineHasParam(name, "recip_m");
+  if ($("f-farm-wrap")) $("f-farm-wrap").hidden = !engineHasParam(name, "farm_m");
+  applyParamChrome(name, "farm_m", "f-farm-title", "f-farm-hint", "f-farm");
   applyParamChrome(name, "share_m", "f-share-title", "f-share-hint", "f-share");
   applyParamChrome(name, "aid_m", "f-aid-title", "f-aid-hint", "f-aid");
   applyParamChrome(name, "recip_m", "f-recip-title", null, "f-recip");
@@ -4166,6 +4202,14 @@ function collectRunDraft() {
       notes.push("优先回助需要 AID_M>0 才有预算。当前 AID_M=0，优先机制不会发生。未暗改 AID_M。");
     }
   }
+  if (engineHasParam(engine, "farm_m")) {
+    const spec = engineParamMeta(engine, "farm_m") || { min: 0, max: 1000 };
+    const farm = OverviewLogic.parseStrictInt($("f-farm") ? $("f-farm").value : "0", {
+      name: (spec.label || "FARM_M"), min: spec.min != null ? spec.min : 0,
+      max: spec.max != null ? spec.max : 1000 });
+    if (!farm.ok) return { ok: false, error: farm.error };
+    body.farm_m = farm.value;
+  }
   const lines = [
     "引擎 " + engine,
     "seed " + body.seed,
@@ -4175,6 +4219,7 @@ function collectRunDraft() {
     body.share_m != null ? ("SHARE_M " + body.share_m + "‰") : "SHARE_M 此引擎无此参数",
     body.aid_m != null ? ("AID_M " + body.aid_m + "‰") : "AID_M 此引擎无此参数（缺指标不填 0）",
     body.recip_m != null ? ("RECIP_M " + body.recip_m + "‰") : "RECIP_M 此引擎无此参数",
+    body.farm_m != null ? ("FARM_M " + body.farm_m + "‰") : "FARM_M 此引擎无此参数",
     "信息条件 " + body.arm,
   ];
   return { ok: true, body: body, notes: notes, summary: lines.join(" · ") };

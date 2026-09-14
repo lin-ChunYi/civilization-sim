@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="zh-CN" class="game">
+<html lang="zh-CN" class="game anime">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>文明观察台 · CHRONICLE</title>
+<title>文明观察台 · 动漫世界</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/anime-ui.css">
 </head>
 <body>
 <div class="tabletop" aria-hidden="true"></div>
@@ -43,6 +44,31 @@
 </nav>
 
 <div id="toast" class="toast" hidden></div>
+<nav class="an-nav" id="an-nav" aria-label="主导航">
+  <div class="an-brand">青空观察</div>
+  <button type="button" data-tab="world" class="on">世界</button>
+  <button type="button" data-tab="network">人群</button>
+  <button type="button" data-tab="metrics">历史</button>
+  <button type="button" data-tab="runs">创建世界</button>
+  <button type="button" id="an-research">研究模式</button>
+</nav>
+<div class="an-badge" id="an-badge">示例世界 · 历史回放</div>
+<aside class="an-stats" id="an-stats">
+  <h3>世界概览</h3>
+  <div class="an-kv"><span>人口</span><b id="an-pop">—</b></div>
+  <div class="an-kv"><span>群体</span><b id="an-bands">—</b></div>
+  <div class="an-kv"><span>耕地</span><b id="an-fields">—</b></div>
+  <div class="an-kv"><span>本年作物</span><b id="an-food">—</b></div>
+  <div class="an-kv"><span>本年迁移</span><b id="an-mig">—</b></div>
+  <div class="an-kv"><span>本年援助</span><b id="an-aid">—</b></div>
+  <div class="an-layers" id="an-layers"></div>
+</aside>
+<div class="an-bottom">
+  <div class="an-panel" id="an-events"></div>
+  <div class="an-panel" id="an-card"></div>
+  <div class="an-panel" id="an-activity"></div>
+  <div class="an-panel" id="an-mini"></div>
+</div>
 
 <main>
 <section id="tab-world" class="world-shell">
@@ -422,6 +448,7 @@
 <footer id="footer"></footer>
 <script src="/static/motion.js"></script>
 <script src="/static/farming.js"></script>
+<script src="/static/anime-scene.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
