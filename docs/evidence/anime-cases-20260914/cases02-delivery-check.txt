@@ -1,0 +1,56 @@
+# C_ANIME_CASES_02 交付自检：干净检出 → 生成 → 起服务 → 按固定 id 取到清单里的每一条
+#
+# 端口 8902（起之前先确认空闲），本批独立数据目录 /tmp/chronicle-anime-finish-20260914，
+# 既有的实时 / 测试存档一个都没碰，也没有复制或覆写用户自建的运行。
+
+$ git clone --branch backend/exp07-farming --single-branch <本仓库> <新目录>
+$ cd <新目录> && git log --oneline -1
+  5bacf70 C_ANIME_CASES_02：四条案例做成固定 id 的预置案例，交出可分发清单
+$ ls observer/preset/
+  preset-exp06-recip0  preset-exp06-recip1000  preset-s4242-sig400-mort50
+  （干净检出里没有本批案例的数据，下一步现做）
+
+$ python3 -m observer.make_anime_cases
+  已生成 preset-anime-farm250（8.1 MB）
+  已生成 preset-anime-exp06（2.4 MB）
+  已生成 preset-anime-farm0（3.5 MB）
+  已生成 preset-anime-farm1000（5.9 MB）
+  清单已写入 docs/evidence/anime-cases-20260914/anime-cases-manifest.json
+    A preset-anime-farm250     有：开垦/收获/迁移/援助/回助
+    B preset-anime-exp06       有：迁移/援助/回助   缺：开垦(engine_lacks_mechanism)/收获(engine_lacks_mechanism)
+    C preset-anime-farm0       有：迁移/援助/回助   缺：开垦(param_zero)/收获(param_zero)
+    D preset-anime-farm1000    有：开垦/收获/迁移   缺：援助(not_observed)/回助(not_observed)
+
+$ python3 -m observer.make_anime_cases --check
+  清单与已提交的那份逐字节相同          退出码=0
+  （在另一台机器上重算出来的清单与仓库里那份一致 —— 标识与哈希跨机器稳定）
+
+$ python3 docs/evidence/anime-cases-20260914/verify-cases.py
+  通过 170 / 失败 0（共 170 项）        退出码=0
+
+$ git status --porcelain
+  （空：生成的数据在 .gitignore 里，检出仍然干净）
+
+$ lsof -nP -iTCP:8902 -sTCP:LISTEN        # 起服务之前先确认端口空闲
+  8902 空闲
+$ OBSERVER_DATA_DIR=/tmp/chronicle-anime-finish-20260914/clean-data \
+    python3 -m uvicorn observer.app:app --host 127.0.0.1 --port 8902
+  [observer] 装入 7 个预生成案例          （原有 3 条 + 本批 4 条）
+
+# 按清单里的固定 id 逐条取：身份对得上、farm_m 对得上、每一类"有"的首次事件都能取到
+  A preset-anime-farm250     身份=True farm_m=250(True) 五类首事件命中=5/5
+  B preset-anime-exp06       身份=True farm_m=0(True)   三类首事件命中=3/3   farm 段整段缺席
+  C preset-anime-farm0       身份=True farm_m=0(True)   三类首事件命中=3/3   farm 段在、值为 0
+  D preset-anime-farm1000    身份=True farm_m=1000(True) 三类首事件命中=3/3
+
+$ （服务停掉）lsof -nP -iTCP:8902 -sTCP:LISTEN
+  8902 已释放
+
+# ---------------------------------------------------------------------------
+# 为什么要改 observer/presets.py（必要性）：安装预置案例的 INSERT 原来不带 farm_m。
+# 错误注入实测 —— 把 INSERT 退回 67c6715 那一版，再装同一份 run.json：
+#   注入版（旧 INSERT）装出来的行：engine=exp07 farm_m=0
+#   run.json 里存的其实是 farm_m = 250
+#   O11b 判据是 farm_m == 250 → FAIL（注入确实会被 O11b 抓到）
+# 也就是说：不改这一处，EXP-07 的预置案例会被登记成"参数 0"，
+# 界面与续演比对就会拿 FARM_M=0 去对一份 FARM_M=250 的历史。

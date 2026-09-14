@@ -42,6 +42,8 @@ OBSERVER_DATA_DIR=/tmp/chronicle-exp07-20260913/anime/data \
 | `config.json` / `map.json` / `milestones.json` | 引擎能力表、地图形状、预生成案例 |
 | `verify-cases.py` / `cases-verify.txt` | **逐条复核清单里每一个数字**的脚本与输出 |
 | `r1-repro-and-fix.txt` | 验收报的那个故障在本机的原样复现，以及修好之后同条件的对照 |
+| `anime-cases-manifest.json` | **交接契约 `anime-cases-1`**（C_ANIME_CASES_02）：四条案例的固定 id、配置、模型哈希、五类事件的年份与事件 id、缺项理由 |
+| `cases02-delivery-check.txt` | 交付自检：干净检出 → 生成 → 起服务 → 按固定 id 逐条取到；含 presets 改动的必要性与错误注入 |
 | `fresh-checkout-verify.txt` | 在**另一份全新检出**里跑同一条命令的完整输出 |
 | `archive-size-measured.txt` | EXP-07 存档体积的实测原始数据（`docs/TODO-BACKLOG.md` #17/#18 的更正依据） |
 | `service.txt` | 测试服务日志（含每一次真实 HTTP 请求） |
