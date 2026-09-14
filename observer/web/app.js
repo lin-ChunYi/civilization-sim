@@ -4166,6 +4166,26 @@ async function boot() {
     document.documentElement.classList.remove("anime");
     showTab("metrics");
   });
+  if ($("an-menu")) $("an-menu").addEventListener("click", (e) => {
+    const b = e.target.closest("#an-menu-nav [data-tab]");
+    if (!b) return;
+    document.documentElement.classList.add("anime");
+    showTab(b.dataset.tab);
+    if ($("an-top")) $("an-top").classList.remove("open");
+    if ($("an-more")) $("an-more").setAttribute("aria-expanded", "false");
+  });
+  if ($("an-research-m")) $("an-research-m").addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if ($("an-top")) $("an-top").classList.remove("open");
+    if ($("an-more")) $("an-more").setAttribute("aria-expanded", "false");
+    document.documentElement.classList.remove("anime");
+    showTab("metrics");
+  });
+  if ($("an-tokbtn")) $("an-tokbtn").addEventListener("click", () => {
+    if ($("an-token") && $("token")) $("token").value = $("an-token").value;
+    if ($("tokbtn")) $("tokbtn").click();
+  });
   if ($("an-play")) $("an-play").addEventListener("click", () => setPlaying(!S.playing));
   if ($("an-prev")) $("an-prev").addEventListener("click", () => { if ($("b-prev")) $("b-prev").click(); });
   if ($("an-next")) $("an-next").addEventListener("click", () => { if ($("b-next")) $("b-next").click(); });

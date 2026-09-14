@@ -62,6 +62,7 @@ html.anime .an-top button{
 html.anime .an-top button.primary{background:#5ea34a;color:#fff;border-color:#4d8a3c}
 html.anime #an-more{display:none}
 html.anime .an-bottom-toggle{display:none}
+html.anime .an-menu-nav{display:none}
 html.anime .an-badge{
   position:fixed;left:112px;top:52px;z-index:39;
   background:#f4c14a;color:#3a2a10;font-weight:700;font-size:11px;
@@ -146,6 +147,12 @@ html.anime #tab-progress:not([hidden]){
     box-shadow:0 10px 24px rgba(40,70,30,.16);z-index:47;
   }
   html.anime .an-top.open .an-menu{display:flex}
+  html.anime .an-top.open .an-menu-nav{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+  html.anime .an-menu-nav button,html.anime .an-access summary{
+    text-align:left;border:0;background:#eef6e4;border-radius:10px;padding:8px 10px;cursor:pointer;font-weight:700
+  }
+  html.anime .an-access{margin-top:2px}
+  html.anime .an-access input{width:100%;margin:6px 0;padding:6px;border:1px solid #d5e6c4;border-radius:8px}
   html.anime .an-top select{max-width:none;width:100%}
   html.anime #an-more{display:inline-flex}
   html.anime .an-bottom{

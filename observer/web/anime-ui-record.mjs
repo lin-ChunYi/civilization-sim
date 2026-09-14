@@ -241,7 +241,7 @@ try {
   const recStart = Date.now();
   logAct("screencast-start", { wall: recStart, url: PAGE });
 
-  await sleep(5000);
+  await sleep(8000);
   await requireYear(0);
   if (!await clickSel("#an-play", "play")) throw new Error("play button failed");
   await sleep(32000);
@@ -263,30 +263,30 @@ try {
   if (!await waitYear(2, 6000)) throw new Error("did not reach year 2");
   await requireYear(2);
   await clickEventId("t2-farm_harvest-0", "year-2 harvest");
-  await sleep(12000);
+  await sleep(16000);
 
   const chibi = await boxOf("#map .an-chibi .an-chibi-zoom") || await boxOf("#map .an-chibi");
   if (chibi && chibi.x != null) {
     await clickAt(chibi.x, chibi.y);
     logAct("click", { sel: "#map .an-chibi", note: "select group representative" });
   } else throw new Error("no chibi to click");
-  await sleep(6000);
+  await sleep(12000);
 
   await scrubTo(52);
   await requireYear(52);
   await openFullList("view all at year 52");
-  await sleep(12000);
+  await sleep(16000);
   if (!await clickSel("#an-ev-close", "close view all")) throw new Error("close view-all failed");
 
   await scrubTo(218);
   await requireYear(218);
   await clickEventId("t218-migrate-1", "migrate t218-migrate-1");
-  await sleep(20000);
+  await sleep(22000);
 
   await scrubTo(267);
   await requireYear(267);
   await clickEventId("t267-aid-4", "aid t267-aid-4");
-  await sleep(20000);
+  await sleep(22000);
 
   await scrubTo(0);
   await requireYear(0);
@@ -320,28 +320,35 @@ try {
     throw new Error("user continue not eligible, got " + reason2);
   }
   if (!await clickSel("#b-continue-cancel", "cancel user continue")) throw new Error("user continue cancel failed");
-  await sleep(8000);
+  await sleep(10000);
 
   await send("Page.stopScreencast");
-  await sleep(400);
-  const recEnd = Date.now();
-  logAct("screencast-stop", { wall: recEnd, elapsedMs: recEnd - recStart, frames: n });
+  await sleep(300);
+  if (ws) ws.close();
+  const recEnd = frames.length ? frames[frames.length - 1].wallMs : Date.now();
+  const wallSpanMs = frames.length ? (frames[frames.length - 1].wallMs - frames[0].wallMs) : 0;
+  logAct("screencast-stop", { wall: recEnd, elapsedMs: recEnd - recStart, wallSpanMs, frames: n });
 
   const concat = join(FRAMES, "concat.txt");
   let txt = "ffconcat version 1.0\n";
+  let sumDur = 0;
   for (let i = 0; i < frames.length; i++) {
-    const dur = i + 1 < frames.length
-      ? Math.max(0.04, (frames[i + 1].wallMs - frames[i].wallMs) / 1000)
-      : 0.2;
+    let durMs;
+    if (i + 1 < frames.length) durMs = frames[i + 1].wallMs - frames[i].wallMs;
+    else durMs = 1;
+    if (durMs < 1) durMs = 1;
+    const dur = durMs / 1000;
     frames[i].durationSec = dur;
+    sumDur += dur;
     txt += "file '" + join(FRAMES, frames[i].file).replace(/'/g, "'\\''") + "'\n";
-    txt += "duration " + dur.toFixed(4) + "\n";
+    txt += "duration " + dur.toFixed(6) + "\n";
   }
   if (frames.length) txt += "file '" + join(FRAMES, frames[frames.length - 1].file).replace(/'/g, "'\\''") + "'\n";
   writeFileSync(concat, txt);
   const mp4 = join(ART, "G_ANIME_01_FINISH_01.mp4");
   const ff = spawnSync("ffmpeg", [
     "-y", "-f", "concat", "-safe", "0", "-i", concat,
+    "-fps_mode", "vfr", "-video_track_timescale", "1000",
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", mp4,
   ], { encoding: "utf8" });
   const probe = spawnSync("ffprobe", [
@@ -351,16 +358,20 @@ try {
   const firstTs = frames[0] ? frames[0].cdpTimestamp : null;
   const lastTs = frames.length ? frames[frames.length - 1].cdpTimestamp : null;
   const cdpSpan = (firstTs != null && lastTs != null) ? (lastTs - firstTs) : null;
+  const wallSpanSec = wallSpanMs / 1000;
+  const driftSec = Number.isFinite(fileDuration) ? fileDuration - wallSpanSec : null;
   const log = {
     url: PAGE,
     parent_run_id: parentId,
-    startedAt: new Date(recStart).toISOString(),
+    startedAt: new Date(frames[0] ? frames[0].wallMs : recStart).toISOString(),
     endedAt: new Date(recEnd).toISOString(),
     elapsedMs: recEnd - recStart,
     frameCount: frames.length,
     cdpTimestampSpanSec: cdpSpan,
-    wallSpanMs: frames.length ? (frames[frames.length - 1].wallMs - frames[0].wallMs) : null,
+    wallSpanMs,
+    concatSumDurationSec: sumDur,
     fileDurationSec: fileDuration,
+    durationDriftSec: driftSec,
     ffmpegStatus: ff.status,
     actions,
     frames: frames.map((f) => ({
@@ -369,11 +380,15 @@ try {
     })),
   };
   writeFileSync(join(ART, "recording-log.json"), JSON.stringify(log, null, 2));
-  process.stdout.write("elapsedMs=" + log.elapsedMs + " fileDuration=" + fileDuration + " frames=" + frames.length + "\n");
+  process.stdout.write("start=" + log.startedAt + " end=" + log.endedAt +
+    " elapsedMs=" + log.elapsedMs + " wallSpanMs=" + wallSpanMs +
+    " concatSum=" + sumDur.toFixed(3) + " ffprobe=" + fileDuration +
+    " drift=" + (driftSec == null ? "na" : driftSec.toFixed(3)) +
+    " frames=" + frames.length + "\n");
   if (ff.status !== 0) process.stdout.write((ff.stderr || "").slice(-800) + "\n");
-  if (ws) ws.close();
-  if (ff.status !== 0 || frames.length < 80 || !(fileDuration >= 180)) {
-    process.stdout.write("duration too short or encode failed\n");
+  if (ff.status !== 0 || frames.length < 80 || wallSpanMs < 195000 ||
+      driftSec == null || Math.abs(driftSec) > 2) {
+    process.stdout.write("duration/drift check failed (need ~200s wall, ffprobe within 2s of wall span)\n");
     process.exit(1);
   }
 } catch (e) {
