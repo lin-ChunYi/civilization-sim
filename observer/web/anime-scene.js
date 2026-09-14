@@ -22,50 +22,196 @@
     for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) >>> 0;
     return h;
   }
-  function aliasOf(id, used) {
+  function cmpId(a, b) {
+    const sa = String(a), sb = String(b);
+    if (sa.length !== sb.length) return sa.length - sb.length;
+    if (sa < sb) return -1;
+    if (sa > sb) return 1;
+    return 0;
+  }
+  function takeAlias(used, id) {
     const h = hashId(id);
     const sid = String(id);
-    if (used) {
-      for (const k of Object.keys(used)) if (used[k] === sid) return k;
-      for (let k = 0; k < ALIAS.length; k++) {
-        const name = ALIAS[(h + k) % ALIAS.length];
-        if (!used[name]) { used[name] = sid; return name; }
-      }
-      const name = ALIAS[h % ALIAS.length] + "·" + sid.slice(-3);
-      used[name] = sid;
-      return name;
+    for (let k = 0; k < ALIAS.length; k++) {
+      const name = ALIAS[(h + k) % ALIAS.length];
+      if (!used[name]) { used[name] = sid; return name; }
     }
-    return ALIAS[h % ALIAS.length];
-  }
-  function palOfName(name) {
-    const base = String(name || "").split("·")[0];
-    const i = ALIAS.indexOf(base);
-    return PAL[(i >= 0 ? i : 0) % PAL.length];
+    const name = ALIAS[h % ALIAS.length] + "·" + sid;
+    used[name] = sid;
+    return name;
   }
   function palOf(id) { return PAL[hashId(id) % PAL.length]; }
-  function bindAliases(ids) {
-    const used = {};
-    const map = {};
-    const unique = [];
-    const seen = {};
-    (ids || []).forEach((id) => {
-      const s = String(id);
-      if (seen[s]) return;
-      seen[s] = 1;
-      unique.push(s);
-    });
-    unique.sort();
-    unique.forEach((id) => { map[id] = aliasOf(id, used); });
-    return function alias(id) {
-      const s = String(id);
-      if (!map[s]) map[s] = aliasOf(s, used);
-      return map[s];
-    };
-  }
+  const WORLD = { x: -80, y: -90, w: 720, h: 480 };
+  const WORLD_MOBILE = { x: 10, y: 30, w: 500, h: 760 };
+  const Identity = {
+    tables: {},
+    ready: {},
+    rootOf(run) {
+      if (!run) return "none";
+      if (run.lineage && run.lineage.root_run_id) return String(run.lineage.root_run_id);
+      if (run.root_run_id) return String(run.root_run_id);
+      return String(run.run_id);
+    },
+    table(root) {
+      const k = String(root || "none");
+      if (!this.tables[k]) this.tables[k] = { byId: {}, used: {}, order: [] };
+      return this.tables[k];
+    },
+    reset(root) {
+      const k = String(root || "none");
+      delete this.tables[k];
+      delete this.ready[k];
+    },
+    ingest(root, items) {
+      const tab = this.table(root);
+      (items || []).forEach((it) => {
+        if (it == null || it.id == null || it.id === "") return;
+        const id = String(it.id);
+        const t = it.t == null ? 0 : Number(it.t);
+        if (tab.byId[id]) {
+          if (it.snap) tab.byId[id].snap = it.snap;
+          if (Number.isFinite(t) && t < tab.byId[id].firstT) tab.byId[id].firstT = t;
+          if (it.parent) tab.byId[id].parent = it.parent;
+          return;
+        }
+        tab.byId[id] = {
+          id: id, firstT: Number.isFinite(t) ? t : 0, parent: it.parent || null, snap: it.snap || null,
+        };
+      });
+      this.rebuild(tab);
+      return tab;
+    },
+    rebuild(tab) {
+      const ids = Object.keys(tab.byId).sort((a, b) => {
+        const da = tab.byId[a], db = tab.byId[b];
+        return (da.firstT - db.firstT) || cmpId(a, b);
+      });
+      tab.used = {};
+      tab.order = [];
+      ids.forEach((id) => {
+        const rec = tab.byId[id];
+        rec.alias = takeAlias(tab.used, id);
+        rec.pal = palOf(id);
+        rec.variant = hashId(id) % 6;
+        tab.order.push(id);
+      });
+    },
+    of(root, id) {
+      if (id == null || id === "") return null;
+      return this.table(root).byId[String(id)] || null;
+    },
+    alias(root, id) {
+      const rec = this.of(root, id);
+      return rec && rec.alias ? rec.alias : String(id);
+    },
+    pal(root, id) {
+      const rec = this.of(root, id);
+      return rec && rec.pal ? rec.pal : palOf(id);
+    },
+    record(root, id) {
+      const rec = this.of(root, id);
+      if (!rec || !rec.pal) return null;
+      return {
+        alias: rec.alias, variant: rec.variant,
+        hairKind: rec.pal.hairKind, tool: rec.pal.tool,
+        cloth: rec.pal.cloth, hair: rec.pal.hair, sash: rec.pal.sash, tag: rec.pal.tag,
+      };
+    },
+    async ensure(run, opts) {
+      opts = opts || {};
+      const root = this.rootOf(run);
+      if (this.ready[root]) {
+        if (opts.rec && opts.rec.bands) this.ingest(root, opts.rec.bands.map((b) => ({ id: b.id, t: opts.rec.t, snap: b })));
+        return this.table(root);
+      }
+      const appearances = [];
+      const api = opts.api;
+      const from = (run && run.lineage && run.lineage.from_year != null) ? run.lineage.from_year : 0;
+      if (typeof api === "function") {
+        try {
+          const y0 = await api("/api/runs/" + run.run_id + "/year/" + from);
+          (y0.bands || []).forEach((b) => appearances.push({ id: b.id, t: y0.t != null ? y0.t : from, snap: b }));
+        } catch (e) { /* year 0 may be pending */ }
+        const ser = opts.series || [];
+        let prev = null;
+        const extra = [];
+        ser.forEach((row) => {
+          const n = row && row.agg ? row.agg.bands : null;
+          if (prev != null && n != null && n > prev) extra.push(row.t);
+          prev = n;
+        });
+        for (let i = 0; i < extra.length; i++) {
+          const t = extra[i];
+          if (t === from) continue;
+          try {
+            const rec = await api("/api/runs/" + run.run_id + "/year/" + t);
+            (rec.events || []).forEach((ev) => {
+              if (ev.type === "split") {
+                const child = ev.band || ev.child;
+                if (child) appearances.push({ id: child, t: rec.t, parent: ev.parent });
+              }
+            });
+            (rec.bands || []).forEach((b) => appearances.push({ id: b.id, t: rec.t, snap: b }));
+          } catch (e) { /* skip */ }
+        }
+      }
+      if (opts.rec && opts.rec.bands) {
+        opts.rec.bands.forEach((b) => appearances.push({ id: b.id, t: opts.rec.t, snap: b }));
+      }
+      this.ingest(root, appearances);
+      this.ready[root] = true;
+      return this.table(root);
+    },
+  };
   function daysOfStore(store, size, needPc) {
+    if (store == null || size == null || needPc == null) return null;
     const n = Number(size), s = Number(store), need = Number(needPc);
-    if (!n || n <= 0 || !Number.isFinite(s) || !Number.isFinite(need) || need <= 0) return null;
+    if (!Number.isFinite(n) || n <= 0 || !Number.isFinite(s) || !Number.isFinite(need) || need <= 0) return null;
     return Math.floor((s / (n * need)) * 365);
+  }
+  function worldBase() {
+    if (typeof window !== "undefined" && window.innerWidth <= 900) return WORLD_MOBILE;
+    return WORLD;
+  }
+  function viewBoxFor(cam, base) {
+    const B = base || worldBase();
+    const k = Math.max(0.7, Math.min(3.2, (cam && cam.k) || 1));
+    const w = B.w / k, h = B.h / k;
+    const x = B.x + (B.w - w) / 2 - ((cam && cam.x) || 0);
+    const y = B.y + (B.h - h) / 2 - ((cam && cam.y) || 0);
+    return x.toFixed(2) + " " + y.toFixed(2) + " " + w.toFixed(2) + " " + h.toFixed(2);
+  }
+  function slotBands(bands, map, cellCenter) {
+    const groups = new Map();
+    (bands || []).forEach((b) => {
+      const i = b.cell == null ? -1 : +b.cell;
+      if (!groups.has(i)) groups.set(i, []);
+      groups.get(i).push(b);
+    });
+    const out = [];
+    groups.forEach((list, cell) => {
+      list.sort((a, b) => cmpId(a.id, b.id));
+      const c = map && map.cells && map.cells[cell];
+      const home = c && cellCenter ? cellCenter(c) : [0, 0];
+      const n = list.length;
+      list.forEach((b, k) => {
+        let x = home[0], y = home[1];
+        if (n === 2) x += k === 0 ? -48 : 48;
+        else if (n === 3) {
+          const ang = -Math.PI / 2 + k * (2 * Math.PI / 3);
+          x += Math.cos(ang) * 46; y += Math.sin(ang) * 36;
+        } else if (n > 3) {
+          const ang = -Math.PI / 2 + k * (2 * Math.PI / n);
+          const r = 28 + Math.min(26, n * 3);
+          x += Math.cos(ang) * r; y += Math.sin(ang) * r * 0.8;
+        }
+        out.push({
+          b: b, x: x, y: y, cell: cell, slot: k, n: n,
+          homeX: home[0], homeY: home[1],
+        });
+      });
+    });
+    return out;
   }
   function speech(ev, alias) {
     if (!ev) return "";
@@ -73,12 +219,32 @@
     if (ev.type === "aid") return a(ev.donor) + " 把粮食分给了 " + a(ev.receiver);
     if (ev.type === "share") return a(ev.donor) + " 把见闻告诉了 " + a(ev.receiver);
     if (ev.type === "migrate") return a(ev.band) + " 迁到了另一处";
-    if (ev.type === "field_built") return a((ev.participants && ev.participants[0]) || ev.band) + " 在这里开垦了土地";
-    if (ev.type === "farm_harvest") return a((ev.participants && ev.participants[0]) || ev.band) + " 收成了作物";
+    if (ev.type === "field_built" || ev.type === "farm_harvest") {
+      const who = (ev.participants && ev.participants.length)
+        ? ev.participants.map((id) => a(id)).join("、")
+        : a(ev.band);
+      const verb = ev.type === "field_built" ? " 开垦了土地" : " 收成了作物";
+      const qty = ev.type === "farm_harvest" && ev.kcal != null
+        ? "（" + Math.round(Number(ev.kcal) || 0) + " kcal）" : "";
+      const place = ev.cell != null ? " · 第 " + ev.cell + " 格" : "";
+      return who + verb + place + qty;
+    }
     if (ev.type === "field_decay") return "这片耕地在退化";
     if (ev.type === "split") return a(ev.parent || ev.band) + " 分成了两个群体";
     if (ev.type === "extinct") return a(ev.band) + " 这一支已无在世人口";
     return ev.text || ev.type;
+  }
+  function bubbleSpeech(ev, alias) {
+    if (!ev) return "";
+    const a = (id) => alias(id);
+    if (ev.type === "aid") return a(ev.donor) + " 援助";
+    if (ev.type === "share") return a(ev.donor) + " 交流";
+    if (ev.type === "migrate") return a(ev.band) + " 迁移";
+    if (ev.type === "field_built") return (ev.participants && ev.participants[0] ? a(ev.participants[0]) : a(ev.band)) + " 开垦";
+    if (ev.type === "farm_harvest") return (ev.participants && ev.participants[0] ? a(ev.participants[0]) : a(ev.band)) + " 收成";
+    if (ev.type === "split") return a(ev.parent || ev.band) + " 分裂";
+    if (ev.type === "field_decay") return "耕地退化";
+    return ev.type || "";
   }
   function toolMarkup(kind, pal) {
     if (kind === "hoe") {
@@ -126,31 +292,58 @@
       "<path d=\"M-9,-12 Q-11,-6 -5,-4\" fill=\"" + pal.hair + "\"/>" +
       "<path d=\"M9,-12 Q11,-6 5,-4\" fill=\"" + pal.hair + "\"/>";
   }
+  function poseJoints(opts) {
+    const pose = (opts && opts.pose) || "idle";
+    const phase = opts && opts.phase != null ? opts.phase : 0;
+    const dir = (opts && opts.dir) || "e";
+    const Motion = (typeof root !== "undefined" && root.Motion) || (typeof globalThis !== "undefined" ? globalThis.Motion : null);
+    if (Motion && typeof Motion.samplePose === "function") {
+      const action = pose === "select" ? "idle" : (pose === "farm" ? "give" : pose);
+      return Motion.samplePose({
+        id: opts && opts.id, action: action, phase: phase, dir: dir, role: (opts && opts.role) || "solo",
+      });
+    }
+    return {
+      action: pose, dir: dir, phase: phase, flip: 1,
+      joints: { hipY: 0, lThigh: 5, rThigh: -5, lShin: 6, rShin: 8, lArm: -14, rArm: 12, lFore: 0, rFore: 0, torso: 0 },
+    };
+  }
   function chibiBody(b, opts) {
     opts = opts || {};
-    const pal = opts.pal || palOf(b.id);
-    const pose = opts.pose || "idle";
-    const bob = pose === "walk" ? -2.4 : (pose === "give" ? 0.8 : 0);
-    const armL = pose === "give" ? -52 : (pose === "receive" ? -26 : -14);
-    const armR = pose === "give" ? 16 : (pose === "walk" ? 24 : 12);
-    const legL = pose === "walk" ? -14 : 5;
-    const legR = pose === "walk" ? 12 : -5;
-    return "<g class=\"an-body\" transform=\"translate(0," + bob + ")\">" +
+    const pal = opts.pal || palOf(b && b.id);
+    const sample = opts.sample || poseJoints({
+      pose: opts.pose || "idle", phase: opts.phase, dir: opts.dir, id: b && b.id, role: opts.role,
+    });
+    const j = sample.joints;
+    const gift = sample.action === "give"
+      ? "<circle class=\"m-gift\" cx=\"12\" cy=\"-6\" r=\"2.4\" fill=\"" + pal.sash + "\"/>" : "";
+    return "<g class=\"an-body motion-rig\" data-art=\"chibi-rig\" data-skin=\"chibi\" data-action=\"" +
+      esc(sample.action || "idle") + "\" data-dir=\"" + esc(sample.dir || "e") +
+      "\" data-role=\"" + esc(opts.role || "solo") + "\" data-phase=\"" + Number(sample.phase || 0).toFixed(4) +
+      "\" data-lthigh=\"" + j.lThigh.toFixed(2) + "\" data-rthigh=\"" + j.rThigh.toFixed(2) +
+      "\" data-band=\"" + esc(String(b && b.id != null ? b.id : "")) + "\">" +
       "<ellipse cx=\"0\" cy=\"20\" rx=\"13\" ry=\"4.2\" fill=\"rgba(40,50,20,0.22)\"/>" +
-      "<g transform=\"rotate(" + legL + " -4 9)\">" +
-      "<path d=\"M-7,8 Q-8,18 -6,21 L-2,21 Q-3,13 -2,8Z\" fill=\"" + pal.pants + "\"/>" +
-      "<ellipse cx=\"-4\" cy=\"21.5\" rx=\"3.2\" ry=\"1.6\" fill=\"#3a2a1c\"/></g>" +
-      "<g transform=\"rotate(" + legR + " 4 9)\">" +
-      "<path d=\"M2,8 Q3,18 5,21 L8,21 Q7,13 6,8Z\" fill=\"" + pal.pants + "\"/>" +
-      "<ellipse cx=\"6\" cy=\"21.5\" rx=\"3.2\" ry=\"1.6\" fill=\"#2e2118\"/></g>" +
+      "<g class=\"m-hip\" transform=\"translate(0," + j.hipY.toFixed(2) + ")\">" +
+      "<g class=\"m-leg-l\" transform=\"rotate(" + j.lThigh.toFixed(2) + ")\">" +
+      "<path d=\"M-3,2 Q-5,12 -4,18\" fill=\"none\" stroke=\"" + pal.pants + "\" stroke-width=\"3.2\" stroke-linecap=\"round\"/>" +
+      "<g class=\"m-shin-l\" transform=\"translate(0,12) rotate(" + j.lShin.toFixed(2) + ")\">" +
+      "<ellipse class=\"m-foot-l\" cx=\"-3\" cy=\"8\" rx=\"3.2\" ry=\"1.6\" fill=\"#3a2a1c\"/></g></g>" +
+      "<g class=\"m-leg-r\" transform=\"rotate(" + j.rThigh.toFixed(2) + ")\">" +
+      "<path d=\"M3,2 Q5,12 4,18\" fill=\"none\" stroke=\"" + pal.pants + "\" stroke-width=\"3.2\" stroke-linecap=\"round\"/>" +
+      "<g class=\"m-shin-r\" transform=\"translate(0,12) rotate(" + j.rShin.toFixed(2) + ")\">" +
+      "<ellipse class=\"m-foot-r\" cx=\"3\" cy=\"8\" rx=\"3.2\" ry=\"1.6\" fill=\"#2e2118\"/></g></g>" +
+      "<g class=\"m-torso\" transform=\"rotate(" + j.torso.toFixed(2) + ")\">" +
       "<path d=\"M-12,-1 C-13,12 -6,16 0,16 C6,16 13,12 12,-1 C6,-5 -6,-5 -12,-1Z\" fill=\"" + pal.cloth + "\" stroke=\"#2a1c12\" stroke-width=\"1.15\"/>" +
       "<path d=\"M-6,-2 L6,-2 L5,2 L-5,2Z\" fill=\"" + pal.sash + "\" opacity=\"0.85\"/>" +
       "<path d=\"M-9,5 L9,6 L8,8.5 L-10,7.4Z\" fill=\"" + pal.sash + "\"/>" +
-      "<g transform=\"rotate(" + armL + " -9 1)\">" +
-      "<path d=\"M-10,0 Q-13,9 -10,15\" fill=\"none\" stroke=\"" + pal.skin + "\" stroke-width=\"3.4\" stroke-linecap=\"round\"/></g>" +
-      "<g transform=\"rotate(" + armR + " 9 1)\">" +
-      "<path d=\"M10,0 Q13,9 10,15\" fill=\"none\" stroke=\"" + pal.skin + "\" stroke-width=\"3.4\" stroke-linecap=\"round\"/></g>" +
+      "<g class=\"m-arm-l\" transform=\"rotate(" + j.lArm.toFixed(2) + ")\">" +
+      "<path d=\"M-10,0 Q-13,9 -10,15\" fill=\"none\" stroke=\"" + pal.skin + "\" stroke-width=\"3.4\" stroke-linecap=\"round\"/>" +
+      "<g class=\"m-fore-l\" transform=\"translate(-10,15) rotate(" + j.lFore.toFixed(2) + ")\"></g></g>" +
+      "<g class=\"m-arm-r\" transform=\"rotate(" + j.rArm.toFixed(2) + ")\">" +
+      "<path d=\"M10,0 Q13,9 10,15\" fill=\"none\" stroke=\"" + pal.skin + "\" stroke-width=\"3.4\" stroke-linecap=\"round\"/>" +
+      "<g class=\"m-fore-r\" transform=\"translate(10,15) rotate(" + j.rFore.toFixed(2) + ")\">" + gift + "</g></g>" +
       toolMarkup(pal.tool, pal) +
+      "<g class=\"m-head\">" +
       "<circle cx=\"0\" cy=\"-12\" r=\"10\" fill=\"" + pal.skin + "\" stroke=\"#2a1c12\" stroke-width=\"1.1\"/>" +
       hairMarkup(pal.hairKind, pal) +
       "<ellipse cx=\"-5.2\" cy=\"-10.2\" rx=\"2.1\" ry=\"1.3\" fill=\"#f2b8a8\" opacity=\"0.55\"/>" +
@@ -160,28 +353,36 @@
       "<circle cx=\"-2.9\" cy=\"-12.55\" r=\"0.4\" fill=\"#fff\"/>" +
       "<circle cx=\"3.9\" cy=\"-12.55\" r=\"0.4\" fill=\"#fff\"/>" +
       "<path d=\"M-2.4,-8 Q0,-6.2 2.4,-8\" fill=\"none\" stroke=\"#c27a6a\" stroke-width=\"0.95\" stroke-linecap=\"round\"/>" +
-      "</g>";
+      "</g></g></g></g>";
   }
   function chibi(b, x, y, opts) {
     opts = opts || {};
-    const pal = opts.pal || palOfName(opts.alias) || palOf(b.id);
+    const pal = opts.pal || palOf(b.id);
     const on = !!opts.selected;
-    const alias = opts.alias || aliasOf(b.id);
-    const sc = opts.scale != null ? opts.scale : (on ? 2.35 : 2.15);
+    const alias = opts.alias || String(b.id);
+    const n = opts.n || 1;
+    const sc = opts.scale != null ? opts.scale : (n >= 6 ? 1.15 : (n >= 3 ? 1.4 : (n >= 2 ? 1.7 : (on ? 2.35 : 2.15))));
     const title = alias + " · " + (b.size != null ? b.size : "?") + "人。群体代表，不是独立个人。";
     const ring = on ? "<circle cx=\"0\" cy=\"18\" r=\"16\" fill=\"none\" stroke=\"#fff4c8\" stroke-width=\"2.2\" opacity=\"0.95\"/>" : "";
-    const tag = opts.noTag ? "" : ("<g class=\"an-tag\" transform=\"translate(0,-56)\">" +
+    const tag = opts.noTag ? "" : ("<g class=\"an-tag\" transform=\"translate(0," + (n > 2 ? -48 : -56) + ")\">" +
       "<rect x=\"-42\" y=\"-11\" width=\"84\" height=\"20\" rx=\"10\" fill=\"" + pal.tag + "\" stroke=\"#fff\" stroke-width=\"1.6\"/>" +
       "<text x=\"0\" y=\"3.2\" text-anchor=\"middle\" font-size=\"9\" fill=\"#fff\" font-weight=\"700\">" +
       esc(alias) + " · " + (b.size != null ? b.size : "?") + "人</text></g>");
     return "<g class=\"an-chibi band unit" + (on ? " selected" : "") + "\" data-band=\"" + esc(String(b.id)) +
-      "\" data-unit=\"group-rep\" data-art=\"chibi\" transform=\"translate(" + x.toFixed(1) + "," + y.toFixed(1) + ")\">" +
+      "\" data-alias=\"" + esc(alias) + "\" data-cloth=\"" + esc(pal.cloth) + "\" data-hair=\"" + esc(pal.hair) +
+      "\" data-tool=\"" + esc(pal.tool) + "\" data-cell=\"" + esc(String(b.cell != null ? b.cell : "")) +
+      "\" data-slot=\"" + (opts.slot != null ? opts.slot : 0) + "\" data-n=\"" + n +
+      "\" data-unit=\"group-rep\" data-art=\"chibi\" transform=\"translate(" + Number(x).toFixed(1) + "," + Number(y).toFixed(1) + ")\">" +
       "<title>" + esc(title) + "</title>" + ring +
-      "<g transform=\"scale(" + sc + ")\">" + chibiBody(b, { pose: opts.pose, pal: pal }) + "</g>" + tag + "</g>";
+      "<rect class=\"an-hit\" x=\"-18\" y=\"-22\" width=\"36\" height=\"48\" fill=\"transparent\"/>" +
+      "<g class=\"an-chibi-zoom\" transform=\"scale(" + sc + ")\">" +
+      chibiBody(b, { pose: opts.pose, pal: pal, phase: opts.phase, dir: opts.dir, role: opts.role, sample: opts.sample }) +
+      "</g>" + tag + "</g>";
   }
-  function portraitSvg(b, alias) {
-    const pal = palOfName(alias) || palOf(b.id);
-    return "<svg class=\"an-portrait\" viewBox=\"-22 -34 44 60\" width=\"72\" height=\"88\" aria-hidden=\"true\">" +
+  function portraitSvg(b, alias, pal) {
+    pal = pal || palOf(b && b.id);
+    return "<svg class=\"an-portrait\" viewBox=\"-22 -34 44 60\" width=\"72\" height=\"88\" data-band=\"" +
+      esc(String(b && b.id != null ? b.id : "")) + "\" data-cloth=\"" + esc(pal.cloth) + "\" aria-hidden=\"true\">" +
       chibiBody(b, { pose: "idle", pal: pal }) + "</svg>";
   }
   function pine(x, y, s) {
@@ -295,36 +496,6 @@
   function jitter(h, mag) {
     return [((h % 97) / 97 - 0.5) * mag, (((h >>> 8) % 53) / 53 - 0.5) * mag];
   }
-  function spreadBands(bands, map, cellCenter) {
-    const pts = (bands || []).map((b) => {
-      const cell = map.cells[b.cell];
-      const xy = cell ? cellCenter(cell) : [0, 0];
-      return { b: b, x: xy[0], y: xy[1] };
-    });
-    const home = pts.map((p) => ({ x: p.x, y: p.y }));
-    const minD = 96;
-    const maxMove = 34;
-    const streamX = 260;
-    for (let n = 0; n < 12; n++) {
-      for (let i = 0; i < pts.length; i++) {
-        for (let j = i + 1; j < pts.length; j++) {
-          const dx = pts[j].x - pts[i].x, dy = pts[j].y - pts[i].y;
-          const d = Math.hypot(dx, dy) || 0.2;
-          if (d >= minD) continue;
-          const f = (minD - d) / 2;
-          pts[i].x -= dx / d * f; pts[i].y -= dy / d * f;
-          pts[j].x += dx / d * f; pts[j].y += dy / d * f;
-        }
-      }
-      pts.forEach((p, i) => {
-        p.x = Math.max(home[i].x - maxMove, Math.min(home[i].x + maxMove, p.x));
-        p.y = Math.max(home[i].y - maxMove, Math.min(home[i].y + maxMove, p.y));
-        if (home[i].x < streamX) p.x = Math.min(p.x, streamX - 42);
-        else p.x = Math.max(p.x, streamX + 42);
-      });
-    }
-    return pts;
-  }
   function streamMarkup(blocks) {
     if (!blocks.length) return "";
     const byRow = {};
@@ -356,15 +527,17 @@
   }
   function paint(svg, st) {
     if (!svg || !st || !st.map) return;
-    svg.setAttribute("viewBox", "-80 -90 720 480");
+    svg.setAttribute("viewBox", viewBoxFor(st.cam, worldBase()));
     svg.setAttribute("width", "100%");
     svg.setAttribute("height", "100%");
-    svg.setAttribute("preserveAspectRatio", "xMidYMid slice");
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
     const rec = st.rec;
     const cells = st.map.cells || [];
     const farm = rec && rec.farm && rec.farm.schema === "farm-1" ? rec.farm : null;
     const fields = farm && Array.isArray(farm.field_m) ? farm.field_m : null;
-    const alias = bindAliases((rec && rec.bands || []).map((b) => b.id));
+    const rootId = Identity.rootOf(st.run);
+    if (rec && rec.bands) Identity.ingest(rootId, rec.bands.map((b) => ({ id: b.id, t: rec.t, snap: b })));
+    const alias = (id) => Identity.alias(rootId, id);
     const pass = [];
     const block = [];
     const occ = new Set();
@@ -387,7 +560,7 @@
       "<path d=\"M22,19 C21,10 26,9 25,19\" fill=\"none\" stroke=\"#4e7f32\" stroke-width=\"1.05\"/>" +
       "<path d=\"M30,20 C29,11 34,10 33,20\" fill=\"none\" stroke=\"#74a84a\" stroke-width=\"0.95\"/>" +
       "</pattern></defs>";
-    out += "<rect class=\"an-sky\" x=\"-80\" y=\"-90\" width=\"720\" height=\"480\" fill=\"url(#anSky)\"/>";
+    out += "<rect class=\"an-sky\" x=\"-120\" y=\"-120\" width=\"900\" height=\"1000\" fill=\"url(#anSky)\"/>";
     out += "<path d=\"M-80,70 L10,-8 L70,42 L140,-28 L210,36 L290,-18 L370,40 L460,-22 L560,32 L640,8 L640,120 L-80,120Z\" fill=\"#8aa7c4\" opacity=\"0.7\"/>";
     out += "<path d=\"M-80,88 L40,22 L110,62 L190,8 L270,54 L360,18 L450,58 L560,24 L640,48 L640,150 L-80,150Z\" fill=\"#9bb3c9\"/>";
     out += "<path d=\"M120,-18 L140,22 L100,22Z\" fill=\"#eef6ff\" opacity=\"0.55\"/>";
@@ -395,7 +568,7 @@
     out += "<path d=\"M460,-12 L478,24 L442,24Z\" fill=\"#eef6ff\" opacity=\"0.5\"/>";
     out += "<ellipse cx=\"90\" cy=\"4\" rx=\"70\" ry=\"22\" fill=\"#fff\" opacity=\"0.5\"/>";
     out += "<ellipse cx=\"400\" cy=\"-18\" rx=\"90\" ry=\"26\" fill=\"#fff\" opacity=\"0.42\"/>";
-    out += "<rect x=\"-80\" y=\"70\" width=\"720\" height=\"320\" fill=\"#7fb445\"/>";
+    out += "<rect x=\"-120\" y=\"70\" width=\"900\" height=\"800\" fill=\"#7fb445\"/>";
     out += "<rect x=\"-80\" y=\"70\" width=\"720\" height=\"320\" fill=\"url(#anGrass)\" opacity=\"0.55\"/>";
     out += "<path d=\"M-80,210 C40,160 160,230 280,180 C400,130 520,210 640,170 L640,390 L-80,390Z\" fill=\"#6fa03c\" opacity=\"0.35\"/>";
     out += "<ellipse cx=\"110\" cy=\"168\" rx=\"130\" ry=\"54\" fill=\"#8fbc52\" opacity=\"0.55\"/>";
@@ -452,85 +625,169 @@
       out += "<path class=\"cell\" d=\"M" + (p.x - 24) + "," + p.y + " L" + p.x + "," + (p.y - 18) +
         " L" + (p.x + 24) + "," + p.y + " L" + p.x + "," + (p.y + 18) + "Z\" fill=\"transparent\" data-cell=\"" + p.c.i + "\"/>";
     });
-    const laid = spreadBands(rec && rec.bands || [], st.map, st.cellCenter)
+    const laid = slotBands(rec && rec.bands || [], st.map, st.cellCenter)
       .slice().sort((a, b) => a.y - b.y);
+    const stacked = {};
     laid.forEach((p) => {
       const name = alias(p.b.id);
-      out += tent(p.x - 32, p.y + 10, palOfName(name));
+      const pal = Identity.pal(rootId, p.b.id);
+      out += tent(p.x - 32, p.y + 10, pal);
+      if (p.n > 1 && !stacked[p.cell]) {
+        stacked[p.cell] = 1;
+        out += "<g class=\"an-cell-stack\" data-cell=\"" + p.cell + "\" data-count=\"" + p.n +
+          "\" transform=\"translate(" + p.homeX.toFixed(1) + "," + (p.homeY + 22).toFixed(1) + ")\">" +
+          "<rect x=\"-16\" y=\"-8\" width=\"32\" height=\"16\" rx=\"8\" fill=\"#fff\" stroke=\"#5d8230\"/>" +
+          "<text x=\"0\" y=\"3\" text-anchor=\"middle\" font-size=\"8\" fill=\"#2c4a30\">同格 " + p.n + "</text></g>";
+      }
     });
+    if (rec && rec.constructed) {
+      out += "<g class=\"an-constructed\" transform=\"translate(280,20)\">" +
+        "<rect x=\"-90\" y=\"-12\" width=\"180\" height=\"20\" rx=\"8\" fill=\"#f4c14a\"/>" +
+        "<text x=\"0\" y=\"3\" text-anchor=\"middle\" font-size=\"9\" fill=\"#3a2a10\">构造用例，不是自然历史</text></g>";
+    }
     const evs = (rec && rec.events) || [];
     evs.slice(0, 3).forEach((e, i) => {
       if (e.cell == null || !st.map.cells[e.cell]) return;
       const xy = st.cellCenter(st.map.cells[e.cell]);
-      const txt = speech(e, alias);
-      const w = Math.min(132, 16 + txt.length * 7.2);
+      const txt = bubbleSpeech(e, alias);
+      const w = Math.min(86, 18 + txt.length * 8);
       const side = i % 2 ? -1 : 1;
-      out += "<g class=\"an-bubble\" transform=\"translate(" + (xy[0] + side * 36) + "," + (xy[1] - 70) + ")\">" +
-        "<rect x=\"-8\" y=\"-13\" width=\"" + w + "\" height=\"20\" rx=\"9\" fill=\"#fff\" stroke=\"#d5e4cc\"/>" +
-        "<text x=\"2\" y=\"1.6\" font-size=\"8\" fill=\"#334433\">" + esc(txt.slice(0, 18)) + "</text></g>";
+      out += "<g class=\"an-bubble\" transform=\"translate(" + (xy[0] + side * 28) + "," + (xy[1] - 62) + ")\">" +
+        "<rect x=\"-8\" y=\"-11\" width=\"" + w + "\" height=\"18\" rx=\"9\" fill=\"#fff\" stroke=\"#d5e6c4\"/>" +
+        "<text x=\"2\" y=\"2\" font-size=\"8\" fill=\"#334433\">" + esc(txt) + "</text></g>";
     });
     laid.forEach((p) => {
       const on = st.selBand && String(st.selBand) === String(p.b.id);
       const name = alias(p.b.id);
       out += chibi(p.b, p.x, p.y - 4, {
         selected: on, pose: on && st.pose ? st.pose : "idle",
-        alias: name, pal: palOfName(name),
+        alias: name, pal: Identity.pal(rootId, p.b.id),
+        n: p.n, slot: p.slot, phase: st.phase, dir: st.dir,
       });
     });
     svg.innerHTML = out;
   }
   function fillChrome(st) {
     const rec = st.rec, run = st.run, t = st.t;
+    const rootId = Identity.rootOf(run);
+    if (rec && rec.bands) Identity.ingest(rootId, rec.bands.map((b) => ({ id: b.id, t: rec.t, snap: b })));
+    const alias = (id) => Identity.alias(rootId, id);
     const pop = rec && rec.agg ? rec.agg.pop : null;
     const nb = rec && rec.bands ? rec.bands.length : null;
     const farm = rec && rec.farm && rec.farm.schema === "farm-1" ? rec.farm : null;
     const fieldU = farm ? (farm.field_total_m || 0) / 1000 : null;
     const harv = farm && farm.year ? farm.year.harvested_kcal : null;
     const need = st.needPc || 730000;
-    if (st.$("an-year")) st.$("an-year").textContent = String(t);
-    if (st.$("an-pop")) st.$("an-pop").textContent = pop == null ? "—" : String(pop);
-    if (st.$("an-pop-top")) st.$("an-pop-top").textContent = pop == null ? "—" : String(pop);
-    if (st.$("an-bands")) st.$("an-bands").textContent = nb == null ? "—" : String(nb);
-    if (st.$("an-bands-top")) st.$("an-bands-top").textContent = nb == null ? "—" : String(nb);
-    if (st.$("an-fields")) st.$("an-fields").textContent = farm ? (fieldU.toFixed(1) + " 单位") : "不支持耕作";
-    if (st.$("an-food")) st.$("an-food").textContent = harv == null ? (farm ? "0" : "不支持耕作") : (harv / need).toFixed(1) + " 人年";
-    if (st.$("an-mig")) st.$("an-mig").textContent = rec && rec.year && rec.year.mig_total != null ? String(rec.year.mig_total) : "未记录";
-    if (st.$("an-aid")) st.$("an-aid").textContent = rec && rec.aid && rec.aid.events != null ? String(rec.aid.events) : "未记录";
-    if (st.$("an-badge")) st.$("an-badge").textContent = "示例世界 · 历史回放";
+    const recorded = run && run.years_recorded != null ? run.years_recorded : null;
+    if (st.$("an-year")) st.$("an-year").textContent = t == null ? "—" : String(t);
+    if (st.$("an-pop")) st.$("an-pop").textContent = rec ? (pop == null ? "—" : String(pop)) : "—";
+    if (st.$("an-pop-top")) st.$("an-pop-top").textContent = rec ? (pop == null ? "—" : String(pop)) : "—";
+    if (st.$("an-bands")) st.$("an-bands").textContent = rec ? (nb == null ? "—" : String(nb)) : "—";
+    if (st.$("an-bands-top")) st.$("an-bands-top").textContent = rec ? (nb == null ? "—" : String(nb)) : "—";
+    if (st.$("an-fields")) {
+      st.$("an-fields").textContent = !rec ? "—" : (farm ? (fieldU.toFixed(1) + " 单位") : "未记录");
+    }
+    if (st.$("an-food")) {
+      st.$("an-food").textContent = !rec ? "—" : (harv == null ? (farm ? "0" : "未记录") : (harv / need).toFixed(1) + " 人年");
+    }
+    if (st.$("an-mig")) st.$("an-mig").textContent = rec && rec.year && rec.year.mig_total != null ? String(rec.year.mig_total) : (rec ? "未记录" : "—");
+    if (st.$("an-aid")) st.$("an-aid").textContent = rec && rec.aid && rec.aid.events != null ? String(rec.aid.events) : (rec ? "未记录" : "—");
+    const sample = st.sampleMatch || null;
+    if (st.$("an-badge")) {
+      if (!run) st.$("an-badge").textContent = "还没有打开世界";
+      else if (sample) st.$("an-badge").textContent = "示例世界 · 历史回放";
+      else if (run.kind === "preset") st.$("an-badge").textContent = "预生成案例";
+      else st.$("an-badge").textContent = (run.status === "running" ? "自建世界 · 计算中" : "自建世界");
+    }
+    if (st.$("an-status")) {
+      const view = t == null ? "—" : String(t);
+      const calc = recorded == null ? "—" : String(recorded);
+      const miss = !rec && t != null ? " · 这一年记录未加载，不沿用旧年数字" : "";
+      const prep = st.continueNote ? " · " + st.continueNote : "";
+      st.$("an-status").textContent = "正在看第 " + view + " 年 · 已计算到第 " + calc + " 年" + miss + prep;
+    }
     if (st.$("an-scrub") && t != null) st.$("an-scrub").value = String(t);
+    if (st.$("an-scrub") && recorded != null) st.$("an-scrub").max = String(recorded);
     if (st.$("an-run") && st.runs) {
       const cur = run && run.run_id;
       st.$("an-run").innerHTML = st.runs.map((r) => {
         const sel = r.run_id === cur ? " selected" : "";
+        const mark = r.kind === "preset" ? "（示例）" : "";
         const lab = r.label || ("世界 " + String(r.run_id).slice(0, 6));
-        return "<option value=\"" + esc(r.run_id) + "\"" + sel + ">" + esc(lab) + "</option>";
+        return "<option value=\"" + esc(r.run_id) + "\"" + sel + ">" + esc(lab + mark) + "</option>";
       }).join("");
     }
-    const alias = bindAliases((rec && rec.bands || []).map((b) => b.id));
+    const items = (rec && rec.events) || [];
+    const filt = st.evFilter || "all";
+    const filtered = filt === "all" ? items : items.filter((e) => {
+      if (filt === "repay") return e.type === "aid" && e.repay;
+      return e.type === filt;
+    });
     const list = st.$("an-events");
     if (list) {
-      const items = (rec && rec.events) || [];
+      const n = items.length;
+      const more = n > 5
+        ? "<button type=\"button\" class=\"an-ev-more\" id=\"an-ev-open\">本年共 " + n + " 条 · 查看全部</button>"
+        : (n ? "<div class=\"muted\">本年共 " + n + " 条</div>" : "");
       list.innerHTML = "<h3>这一年</h3>" + (items.slice(0, 5).map((e) => {
         return "<button type=\"button\" class=\"an-ev\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\">" +
           esc(speech(e, alias)) + "</button>";
-      }).join("") || "<p class=\"muted\">这一年没有可核实事件。</p>");
+      }).join("") || "<p class=\"muted\">这一年没有可核实事件。</p>") + more;
     }
+    const all = st.$("an-ev-all");
+    if (all) {
+      all.innerHTML = filtered.map((e) => {
+        const qty = e.kcal != null ? " · " + e.kcal + " kcal" : (e.labour_m != null ? " · " + (e.labour_m / 1000) + " 单位劳动" : "");
+        const where = e.cell != null ? "第 " + e.cell + " 格" : (e.from != null ? e.from + "→" + e.to : "地点未记录");
+        return "<button type=\"button\" class=\"an-ev an-ev-full\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\">" +
+          "<b>" + esc(speech(e, alias)) + "</b>" +
+          "<span class=\"muted\">" + where + qty + " · id " + esc(String(e.id || "")) + "</span>" +
+          "<details><summary>来源</summary><div class=\"muted\">" + esc(e.source || "未标注") +
+          (e.unrecorded ? " · 未记录：" + esc(e.unrecorded) : "") + "</div></details></button>";
+      }).join("") || "<p class=\"muted\">没有这一类事件。</p>";
+    }
+    if (st.$("an-ev-count")) st.$("an-ev-count").textContent = String(items.length);
     const card = st.$("an-card");
-    if (card && rec) {
-      const b = (rec.bands || []).find((x) => String(x.id) === String(st.selBand)) || rec.bands[0];
-      if (b) {
-        const days = daysOfStore(b.store, b.size, need);
-        const al = alias(b.id);
-        const farmCell = farm && farm.cells && farm.cells.find((c) => +c.cell === +b.cell);
-        const fu = farmCell ? (farmCell.field_after_m / 1000) : null;
-        card.innerHTML = "<div class=\"an-card-h\">" + portraitSvg(b, al) +
-          "<div><strong>" + esc(al) + "</strong>" +
-          "<div class=\"muted\">来源 ID " + esc(String(b.id)) + "</div>" +
-          "<ul class=\"an-card-kv\">" +
-          "<li>人口 " + b.size + " 人</li>" +
-          "<li>储粮 " + (b.store / need).toFixed(1) + " 人年" +
-          (days == null ? "" : "，约 " + days + " 天") + "</li>" +
-          "<li>耕地 " + (fu == null ? (farm ? "本格无田" : "不支持耕作") : fu.toFixed(1) + " 单位") + "</li></ul></div></div>";
+    if (card) {
+      if (!rec) {
+        card.innerHTML = "<p class=\"muted\">这一年还没有读到记录，不沿用旧档案。</p>";
+      } else if (!st.selBand) {
+        card.innerHTML = "<p class=\"muted\">点一个群体看档案。</p>";
+      } else {
+        const b = (rec.bands || []).find((x) => String(x.id) === String(st.selBand));
+        const ident = Identity.of(rootId, st.selBand);
+        const al = ident ? ident.alias : alias(st.selBand);
+        const pal = ident ? ident.pal : palOf(st.selBand);
+        if (b) {
+          const days = daysOfStore(b.store, b.size, need);
+          const farmCell = farm && farm.cells && farm.cells.find((c) => +c.cell === +b.cell);
+          const fu = farmCell ? (farmCell.field_after_m / 1000) : null;
+          const storeLine = b.store == null ? "储粮未记录" : ((b.store / need).toFixed(1) + " 人年" + (days == null ? "" : "，约 " + days + " 天"));
+          card.innerHTML = "<div class=\"an-card-h\">" + portraitSvg(b, al, pal) +
+            "<div><strong>" + esc(al) + "</strong>" +
+            "<div class=\"muted\">来源 ID " + esc(String(b.id)) + "</div>" +
+            "<ul class=\"an-card-kv\">" +
+            "<li>人口 " + b.size + " 人</li>" +
+            "<li>" + storeLine + "</li>" +
+            "<li>耕地 " + (fu == null ? (farm ? "本格无田" : "未记录") : fu.toFixed(1) + " 单位") + "</li>" +
+            "<li>第 " + b.cell + " 格</li></ul></div></div>";
+        } else {
+          const known = !!(ident && ident.pal && ident.alias);
+          if (!known) {
+            card.innerHTML = "<p>找不到这个群体。</p>" +
+              "<p class=\"muted\">来源 ID " + esc(String(st.selBand)) +
+              " 从未在本世界身份表里出现。不是历史消失，也不把别的在世群体当成当前选中者。</p>";
+          } else {
+            const ghost = ident.snap || { id: st.selBand, size: "?", cell: "?" };
+            const note = rec.constructed
+              ? "构造历史：这个 ID 在更早的受控记录里出现过，本年不在在世名单。自然样例没有 extinct 事件，本条不是自然消失。"
+              : "这一年已不在在世名单。下面是该 ID 自己的历史身份，不是把别人当成当前选中者。";
+            card.innerHTML = "<div class=\"an-card-h\">" + portraitSvg(ghost, ident.alias, ident.pal) +
+              "<div><strong>" + esc(ident.alias) + "</strong>" +
+              "<div class=\"muted\">来源 ID " + esc(String(st.selBand)) + "</div>" +
+              "<p>" + note + "</p></div></div>";
+          }
+        }
       }
     }
     const mini = st.$("an-mini");
@@ -546,14 +803,18 @@
         if (!c) return;
         const x = 13 + (c.col + (c.row % 2 ? 0.5 : 0)) * 12;
         const y = 12 + c.row * 9;
-        m += "<circle cx=\"" + x + "\" cy=\"" + y + "\" r=\"2.6\" fill=\"" + palOfName(alias(b.id)).tag + "\" stroke=\"#fff\" stroke-width=\"0.6\"/>";
+        m += "<circle cx=\"" + x + "\" cy=\"" + y + "\" r=\"2.6\" fill=\"" + Identity.pal(rootId, b.id).tag + "\" stroke=\"#fff\" stroke-width=\"0.6\"/>";
       });
       m += "</svg>";
       mini.innerHTML = m;
     }
   }
   root.AnimeScene = {
-    aliasOf: aliasOf, palOf: palOf, palOfName: palOfName, daysOfStore: daysOfStore, speech: speech,
+    palOf: palOf, daysOfStore: daysOfStore, speech: speech,
     paint: paint, fillChrome: fillChrome, portraitSvg: portraitSvg, chibi: chibi,
+    Identity: Identity, slotBands: slotBands, viewBoxFor: viewBoxFor, WORLD: WORLD,
+    WORLD_MOBILE: WORLD_MOBILE, worldBase: worldBase, bubbleSpeech: bubbleSpeech,
+    poseJoints: poseJoints, chibiBody: chibiBody, cmpId: cmpId,
   };
+  if (typeof globalThis !== "undefined") globalThis.AnimeScene = root.AnimeScene;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>文明观察台 · 动漫世界</title>
-<link rel="stylesheet" href="/static/style.css?v=a6">
-<link rel="stylesheet" href="/static/anime-ui.css?v=a6">
+<link rel="stylesheet" href="/static/style.css?v=f4">
+<link rel="stylesheet" href="/static/anime-ui.css?v=f4">
 </head>
 <body>
 <div class="tabletop" aria-hidden="true"></div>
@@ -54,22 +54,49 @@
   <button type="button" id="an-research">研究模式</button>
 </nav>
 <div class="an-top" id="an-top">
-  <select id="an-run" aria-label="切换世界"></select>
-  <div class="an-yearline">第 <b id="an-year">0</b> 年</div>
-  <div class="an-top-meta"><span id="an-pop-top">—</span>人 · <span id="an-bands-top">—</span>个群体</div>
-  <button type="button" id="an-prev" title="上一年">◀</button>
-  <button type="button" id="an-play" class="primary">播放</button>
-  <button type="button" id="an-next" title="下一年">▶</button>
-  <select id="an-speed" aria-label="速率">
-    <option value="0.5">0.5×</option>
-    <option value="1" selected>1×</option>
-    <option value="2">2×</option>
-    <option value="4">4×</option>
-  </select>
+  <div class="an-top-main">
+    <div class="an-menu" id="an-menu">
+      <select id="an-run" class="an-run" aria-label="切换世界"></select>
+      <select id="an-speed" aria-label="速率">
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+      </select>
+      <button type="button" id="an-continue">继续演化</button>
+    </div>
+    <div class="an-yearline">第 <b id="an-year">0</b> 年</div>
+    <div class="an-top-meta"><span id="an-pop-top">—</span>人 · <span id="an-bands-top">—</span>个群体</div>
+    <button type="button" id="an-prev" title="上一年">◀</button>
+    <button type="button" id="an-play" class="primary">播放</button>
+    <button type="button" id="an-next" title="下一年">▶</button>
+    <button type="button" id="an-more" aria-expanded="false">菜单</button>
+  </div>
   <input id="an-scrub" type="range" min="0" max="300" value="0" aria-label="年份">
-  <button type="button" id="an-continue">继续演化</button>
+  <div class="an-status" id="an-status">正在看第 — 年 · 已计算到第 — 年</div>
 </div>
-<div class="an-badge" id="an-badge">示例世界 · 历史回放</div>
+<div class="an-badge" id="an-badge"></div>
+<div class="an-year-fail" id="an-year-fail" hidden></div>
+<div class="an-setup" id="an-setup" hidden></div>
+<div class="an-ev-drawer" id="an-ev-drawer" hidden>
+  <div class="an-ev-drawer-h">
+    <strong>本年事件 <span id="an-ev-count">0</span></strong>
+    <select id="an-ev-filter" aria-label="事件类别">
+      <option value="all">全部</option>
+      <option value="field_built">开垦</option>
+      <option value="farm_harvest">收成</option>
+      <option value="migrate">迁移</option>
+      <option value="aid">援助</option>
+      <option value="repay">回助</option>
+      <option value="share">信息</option>
+      <option value="split">分裂</option>
+      <option value="field_decay">退化</option>
+    </select>
+    <button type="button" id="an-ev-close">关闭</button>
+  </div>
+  <div id="an-ev-all"></div>
+</div>
+<div class="an-cell-roster" id="an-cell-roster" hidden></div>
 <aside class="an-stats" id="an-stats">
   <h3>世界概览</h3>
   <div class="an-kv"><span>人口</span><b id="an-pop">—</b></div>
@@ -80,7 +107,8 @@
   <div class="an-kv"><span>本年援助</span><b id="an-aid">—</b></div>
   <div class="an-layers" id="an-layers"></div>
 </aside>
-<div class="an-bottom">
+<div class="an-bottom" id="an-bottom">
+  <button type="button" class="an-bottom-toggle" id="an-bottom-toggle">展开档案</button>
   <div class="an-panel" id="an-events"></div>
   <div class="an-panel" id="an-card"></div>
   <div class="an-panel" id="an-mini"></div>
@@ -462,9 +490,10 @@
 </main>
 
 <footer id="footer"></footer>
-<script src="/static/motion.js?v=a6"></script>
-<script src="/static/farming.js?v=a6"></script>
-<script src="/static/anime-scene.js?v=a6"></script>
-<script src="/static/app.js?v=a6"></script>
+<script src="/static/motion.js?v=f4"></script>
+<script src="/static/farming.js?v=f4"></script>
+<script src="/static/anime-cases.js?v=f4"></script>
+<script src="/static/anime-scene.js?v=f4"></script>
+<script src="/static/app.js?v=f4"></script>
 </body>
 </html>
