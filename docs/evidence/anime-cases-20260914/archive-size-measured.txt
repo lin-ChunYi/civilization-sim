@@ -1,0 +1,6 @@
+# EXP-07 存档体积实测（2026-09-14）
+# 同参数 seed=4242 farm_m=250（sigma_m=0），来自 C_FARM_API_01_R1 那轮的测试数据目录
+# run_id            年数  years.jsonl(bytes)  checkpoint.json(bytes)
+faf4aaa40f2d   121       1615615        398640
+16f86b3e3a7e   301       8104868       2576851
+52a5613abb1f   601     109330475      19543720

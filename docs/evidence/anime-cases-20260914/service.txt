@@ -1,0 +1,66 @@
+INFO:     Started server process [27867]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8902 (Press CTRL+C to quit)
+[observer] 装入 3 个预生成案例
+INFO:     127.0.0.1:56876 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56877 - "POST /api/runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56878 - "GET /api/runs/e289c4c7ff47 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56879 - "GET /api/runs/e289c4c7ff47 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56882 - "GET /api/runs/e289c4c7ff47 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56884 - "GET /api/runs/e289c4c7ff47 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56885 - "GET /api/runs/e289c4c7ff47 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56890 - "GET /api/runs/e289c4c7ff47 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56891 - "GET /api/runs/e289c4c7ff47 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56892 - "POST /api/runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56893 - "GET /api/runs/05c2f8d4d969 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56894 - "GET /api/runs/05c2f8d4d969 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56897 - "GET /api/runs/05c2f8d4d969 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56898 - "POST /api/runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56899 - "GET /api/runs/fa781b561845 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56900 - "GET /api/runs/fa781b561845 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56902 - "GET /api/runs/fa781b561845 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56912 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56913 - "GET /api/runs/e289c4c7ff47 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56914 - "GET /api/runs/05c2f8d4d969 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56915 - "GET /api/runs/fa781b561845 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56916 - "GET /api/runs/e289c4c7ff47/year/0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56917 - "GET /api/runs/e289c4c7ff47/year/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56918 - "GET /api/runs/e289c4c7ff47/year/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56919 - "GET /api/runs/e289c4c7ff47/year/4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56920 - "GET /api/runs/e289c4c7ff47/year/52 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56921 - "GET /api/runs/e289c4c7ff47/year/218 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56922 - "GET /api/runs/e289c4c7ff47/year/219 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56923 - "GET /api/runs/e289c4c7ff47/year/267 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56924 - "GET /api/runs/e289c4c7ff47/year/290 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56925 - "GET /api/runs/e289c4c7ff47/year/295 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56926 - "GET /api/runs/e289c4c7ff47/year/297 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56927 - "GET /api/runs/e289c4c7ff47/year/300 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56928 - "GET /api/runs/05c2f8d4d969/year/300 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56929 - "GET /api/runs/fa781b561845/year/300 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56931 - "GET /api/runs/e289c4c7ff47/band/7567856178022945294?at_year=2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56932 - "GET /api/runs/e289c4c7ff47/band/2324318534456326687?at_year=295 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56933 - "GET /api/runs/e289c4c7ff47/relations?at_year=295 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56934 - "GET /api/milestones HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56935 - "GET /api/map HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [27867]
+INFO:     Started server process [33576]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8902 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57653 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57654 - "POST /api/runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57655 - "GET /api/runs/4f83f009ef28 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57675 - "GET /api/runs/4f83f009ef28 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57704 - "GET /api/runs/4f83f009ef28 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57705 - "GET /api/runs/4f83f009ef28 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57706 - "GET /api/runs/4f83f009ef28 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57707 - "GET /api/runs/4f83f009ef28 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57718 - "GET /api/runs/4f83f009ef28unD-meta.json HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:57719 - "GET /api/runs/4f83f009ef28/year/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57720 - "GET /api/runs/4f83f009ef28/year/41 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57721 - "GET /api/runs/4f83f009ef28/year/300 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57723 - "GET /api/runs/4f83f009ef28 HTTP/1.1" 200 OK

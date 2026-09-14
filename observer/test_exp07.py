@@ -366,6 +366,30 @@ for fm in (0, 250, 1000):
                       for c in cs for p in c["participants"]),
               "%d 个格年，例：cell=%s 参与者 %d" % (len(cs), cs[0]["cell"],
                                               len(cs[0]["participants"])))
+    # 逐格明细必须能**独立加回**当年总量。事件只在实际量 > 0 时才记，
+    # 所以"潜在产出一颗没人收"的格在日志里是空的 —— 照日志拼 cells 会少掉这部分。
+    bad_sum = []
+    for y in ys[1:]:
+        f = y["farm"]
+        for k in ("potential_kcal", "harvested_kcal", "uncollected_kcal", "built_m", "decayed_m"):
+            tot = sum(c[k] for c in f["cells"])
+            if tot != f["year"][k]:
+                bad_sum.append((y["t"], k, tot, f["year"][k]))
+    check("R12 FARM_M=%-4d 的 cells 逐格加总 == 当年 farm.year（五项）" % fm,
+          not bad_sum, str(bad_sum[:2]))
+    zero_take = [(y["t"], c) for y in ys[1:] for c in y["farm"]["cells"]
+                 if c["potential_kcal"] > 0 and c["harvested_kcal"] == 0]
+    if not zero_take:
+        uncov("R12b FARM_M=%-4d 有潜在产出却一颗没收的格" % fm,
+              "FARM_M=0 不耕作，潜在产出恒为 0，这条路径不存在" if fm == 0
+              else "这 8 年里没出现这种格，本档没有承重")
+    else:
+        t0, c0 = zero_take[0]
+        check("R12b FARM_M=%-4d 潜在产出全没人收的格：仍在 cells 里且不是 0/null" % fm,
+              all(c["uncollected_kcal"] == c["potential_kcal"] and c["weather_m"] is not None
+                  and c["worked_m"] > 0 for _t, c in zero_take),
+              "%d 个格年，例：第 %d 年 cell=%s 潜在 %d 全作废" %
+              (len(zero_take), t0, c0["cell"], c0["potential_kcal"]))
 
 # ---------------------------------------------------------------- S 60+60
 print("\nS EXP-07 续演：60 + 60 与连续 120 逐年一致")

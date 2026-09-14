@@ -62,7 +62,16 @@
 - `cells`：本年**有劳动或有旧耕地**的格，按 `cell` 升序。
   "有劳动"包括**只有采集劳动**的情况 —— 所以 `FARM_M=0` 时 `cells` 也不是空的：
   那些格的 `built_m/decayed_m/potential_kcal` 都是 0、`weather_m` 为 `null`，
-  但 `participants` 会如实列出在那儿采集的群体。每项：
+  但 `participants` 会如实列出在那儿采集的群体。
+
+  **逐格能加回当年总量**：任何一年
+  `Σ cells[*].potential_kcal == year.potential_kcal`，
+  `harvested_kcal` / `uncollected_kcal` / `built_m` / `decayed_m` 四项同理。
+  逐格明细取自引擎的**逐格结算痕迹**，不是事件日志 —— 事件只在实际量 > 0 时才记，
+  所以"潜在产出一颗没人收"的格在日志里什么都没有，照日志拼出来的 `cells` 会比
+  `year` 少一截（少掉的正是没人收的那部分）。`weather_m` 为 `null` 只代表
+  **这一格这一年没有产量结算**（没地也没耕作劳动），不是"天气等于 1000"。
+  每项：
 
   | 字段 | 说明 |
   |---|---|
@@ -163,6 +172,10 @@ curl -s -X POST http://127.0.0.1:8902/api/runs/<run_id>/continue \
 
 真实请求与响应（含两个服务的 PID 与起停）在
 `docs/evidence/exp07-20260913/api-report.json` 的 `http_calls` / `services` 段。
+
+**给前端的真实案例清单**：[`ANIME-REAL-CASES.md`](ANIME-REAL-CASES.md)
+—— 十个带 `run_id` / 事件 id / 当年人口存粮耕地的可回放案例，外加两组受控对照、
+"本案例里没有发生的事"，以及"参考图里有、模型里没有"的对照表。
 
 **给 Grok 的可回放样例**：`docs/evidence/exp07-20260913/sample-year.json`
 —— EXP-07 / seed 4242 / **SIGMA_M=400** / FARM_M=250 / 12 年，含第 0、1、2、12 年的完整

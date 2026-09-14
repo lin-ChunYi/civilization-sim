@@ -1,0 +1,1185 @@
+{
+ "task": "C_ANIME_SUPPORT_01",
+ "generated_at": 1789350820.1609752,
+ "generated_at_text": "2026-09-14 09:53:40",
+ "produced_by": "本机（远端）独立测试服务 127.0.0.1:8902，数据目录 /tmp/chronicle-exp07-20260913/anime/data",
+ "not_the_root_machine": "根本机那条 aaad77b8f251 在根/Grok 自己的 127.0.0.1:8901 上，本文件没有读过它，也不替它断言任何事件。",
+ "runs": {
+  "A": {
+   "run_id": "e289c4c7ff47",
+   "label": "动漫前端案例 A：EXP-07 耕作 sigma400",
+   "engine": "exp07",
+   "engine_label": "EXP-07 原始耕作与弃耕",
+   "seed": 4242,
+   "years": 300,
+   "sigma_m": 400,
+   "move_mort_m": 50,
+   "share_m": 1000,
+   "aid_m": 1000,
+   "recip_m": 1000,
+   "arm": "memory",
+   "status": "done",
+   "years_done": 300,
+   "model_run_id": "8d6281d91c14c3697d4390e8baca5fb9",
+   "full_digest": "8d6281d91c14c3697d4390e8baca5fb9/2a3e1ca14a83d53c17973ded56f85776",
+   "engine_sha256": "6c18ed20b1e94035f08ea77847fa1ac7739e50fe76866872cc55a59bbe1e6a20",
+   "api_version": "obs-1.10",
+   "repo_commit": "6efdd81db2ab",
+   "farm_m": 250
+  },
+  "B": {
+   "run_id": "05c2f8d4d969",
+   "label": "动漫前端案例 B：EXP-06 同参数无农业",
+   "engine": "exp06",
+   "engine_label": "EXP-06 援助记忆与优先回助",
+   "seed": 4242,
+   "years": 300,
+   "sigma_m": 400,
+   "move_mort_m": 50,
+   "share_m": 1000,
+   "aid_m": 1000,
+   "recip_m": 1000,
+   "arm": "memory",
+   "status": "done",
+   "years_done": 300,
+   "model_run_id": "df1a9f4798463f545288f85ac096169b",
+   "full_digest": "df1a9f4798463f545288f85ac096169b/f80ebd6f1b7de72765cc3754ed227a74",
+   "engine_sha256": "43c9338551a23d6d7065f657394a25d5be041e63724ab12a23350bde53e5d186",
+   "api_version": "obs-1.10",
+   "repo_commit": "6efdd81db2ab",
+   "farm_m": "（旧引擎没有这个参数）"
+  },
+  "C": {
+   "run_id": "fa781b561845",
+   "label": "动漫前端案例 C：EXP-07 同引擎 FARM_M=0 受控对照",
+   "engine": "exp07",
+   "engine_label": "EXP-07 原始耕作与弃耕",
+   "seed": 4242,
+   "years": 300,
+   "sigma_m": 400,
+   "move_mort_m": 50,
+   "share_m": 1000,
+   "aid_m": 1000,
+   "recip_m": 1000,
+   "arm": "memory",
+   "status": "done",
+   "years_done": 300,
+   "model_run_id": "112c9e1f580ac47710e8dc0c5ae0da17",
+   "full_digest": "112c9e1f580ac47710e8dc0c5ae0da17/ff6070addaae8847cf1e61dfa33a6c75",
+   "engine_sha256": "6c18ed20b1e94035f08ea77847fa1ac7739e50fe76866872cc55a59bbe1e6a20",
+   "api_version": "obs-1.10",
+   "repo_commit": "6efdd81db2ab",
+   "farm_m": 0
+  },
+  "D": {
+   "run_id": "4f83f009ef28",
+   "label": "动漫前端案例 D：EXP-07 全员耕作 FARM_M=1000（出现真正的弃耕）",
+   "engine": "exp07",
+   "engine_label": "EXP-07 原始耕作与弃耕",
+   "seed": 4242,
+   "years": 300,
+   "sigma_m": 400,
+   "move_mort_m": 50,
+   "share_m": 1000,
+   "aid_m": 1000,
+   "recip_m": 1000,
+   "arm": "memory",
+   "status": "done",
+   "years_done": 300,
+   "model_run_id": "940cca8853e07c07c61dd4d1b1f77868",
+   "full_digest": "940cca8853e07c07c61dd4d1b1f77868/b1d6db9717a083d46e26526373cffb8e",
+   "engine_sha256": "6c18ed20b1e94035f08ea77847fa1ac7739e50fe76866872cc55a59bbe1e6a20",
+   "api_version": "obs-1.10",
+   "repo_commit": "6efdd81db2ab",
+   "farm_m": 1000
+  }
+ },
+ "cases": [
+  {
+   "key": "first_field_built",
+   "title": "第一次开垦",
+   "run_id": "e289c4c7ff47",
+   "engine": "exp07",
+   "year": 1,
+   "event_id": "t1-field_built-0",
+   "event": {
+    "source": "模型状态 st['field_m'] 与本相位的劳动结算",
+    "cell": 0,
+    "participants": [
+     "7567856178022945294"
+    ],
+    "labour_m": 5000,
+    "field_before_m": 0,
+    "field_after_m": 5000,
+    "unrecorded": "作物品种、耕作方式与土地权属未记录：模型里没有这些量。",
+    "type": "field_built",
+    "amount_m": 5000,
+    "labour_used_m": 5000,
+    "text": "群体-69066D 在第 0 号格开垦了 5.0 个耕作规模单位",
+    "id": "t1-field_built-0",
+    "year": 1
+   },
+   "year_snapshot": {
+    "year": 1,
+    "pop": 120,
+    "bands": 6,
+    "store_total_kcal": 41401117,
+    "stock_total_kcal": 2591814772,
+    "field_total_m": 30000,
+    "farm_year": {
+     "farm_effort_m": 30000,
+     "forage_effort_m": 90000,
+     "potential_kcal": 0,
+     "harvested_kcal": 0,
+     "uncollected_kcal": 0,
+     "built_m": 30000,
+     "decayed_m": 0
+    },
+    "farm_cum": {
+     "farm_effort_m": 30000,
+     "forage_effort_m": 90000,
+     "potential_kcal": 0,
+     "harvested_kcal": 0,
+     "uncollected_kcal": 0,
+     "built_m": 30000,
+     "decayed_m": 0
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/e289c4c7ff47/year/1",
+    "GET /api/runs/e289c4c7ff47"
+   ],
+   "note": "首次按真实记录挑选：逐年扫描 0..300 年的 events，取该类型出现的第一条。"
+  },
+  {
+   "key": "first_farm_harvest",
+   "title": "第一次收成",
+   "run_id": "e289c4c7ff47",
+   "engine": "exp07",
+   "year": 2,
+   "event_id": "t2-farm_harvest-0",
+   "event": {
+    "source": "模型日志 st['farm_log']（潜在产出按投入耕作的劳动比例分配）",
+    "cell": 0,
+    "participants": [
+     "7567856178022945294"
+    ],
+    "labour_m": 5000,
+    "field_before_m": 5000,
+    "field_after_m": 5000,
+    "unrecorded": "作物品种、耕作方式与土地权属未记录：模型里没有这些量。",
+    "type": "farm_harvest",
+    "kcal": 3849598,
+    "worked_m": 5000,
+    "weather_m": 949,
+    "potential_kcal": 8659625,
+    "uncollected_kcal": 4810027,
+    "person_years": 5.27342191780822,
+    "per_band_kcal": {
+     "7567856178022945294": 3849598
+    },
+    "text": "群体-69066D 在第 0 号格收了 3849598 kcal（5.27 人年口粮）；潜在 8659625 kcal，没人收的 4810027 kcal 就地作废",
+    "id": "t2-farm_harvest-0",
+    "year": 2
+   },
+   "year_snapshot": {
+    "year": 2,
+    "pop": 120,
+    "bands": 6,
+    "store_total_kcal": 64497805,
+    "stock_total_kcal": 3152661280,
+    "field_total_m": 30000,
+    "farm_year": {
+     "farm_effort_m": 30000,
+     "forage_effort_m": 90000,
+     "potential_kcal": 48399000,
+     "harvested_kcal": 25424715,
+     "uncollected_kcal": 22974285,
+     "built_m": 0,
+     "decayed_m": 0
+    },
+    "farm_cum": {
+     "farm_effort_m": 60000,
+     "forage_effort_m": 180000,
+     "potential_kcal": 48399000,
+     "harvested_kcal": 25424715,
+     "uncollected_kcal": 22974285,
+     "built_m": 30000,
+     "decayed_m": 0
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/e289c4c7ff47/year/2",
+    "GET /api/runs/e289c4c7ff47"
+   ],
+   "note": "首次按真实记录挑选：逐年扫描 0..300 年的 events，取该类型出现的第一条。"
+  },
+  {
+   "key": "first_field_decay",
+   "title": "第一次耕地退化",
+   "run_id": "e289c4c7ff47",
+   "engine": "exp07",
+   "year": 4,
+   "event_id": "t4-field_decay-6",
+   "event": {
+    "source": "模型状态 st['field_m']：没有劳动维护的部分按 FIELD_DECAY_M 退化",
+    "cell": 26,
+    "participants": [
+     "16913398721865340058"
+    ],
+    "labour_m": 4750,
+    "field_before_m": 5000,
+    "field_after_m": 4950,
+    "unrecorded": "作物品种、耕作方式与土地权属未记录：模型里没有这些量。",
+    "type": "field_decay",
+    "amount_m": 50,
+    "unworked_m": 250,
+    "text": "第 26 号格有 0.1 个耕作规模单位没人维护，退化了",
+    "id": "t4-field_decay-6",
+    "year": 4
+   },
+   "year_snapshot": {
+    "year": 4,
+    "pop": 124,
+    "bands": 6,
+    "store_total_kcal": 67890000,
+    "stock_total_kcal": 3218893077,
+    "field_total_m": 31200,
+    "farm_year": {
+     "farm_effort_m": 31000,
+     "forage_effort_m": 93000,
+     "potential_kcal": 54978581,
+     "harvested_kcal": 3857725,
+     "uncollected_kcal": 51120856,
+     "built_m": 1250,
+     "decayed_m": 50
+    },
+    "farm_cum": {
+     "farm_effort_m": 121000,
+     "forage_effort_m": 363000,
+     "potential_kcal": 152424456,
+     "harvested_kcal": 35761830,
+     "uncollected_kcal": 116662626,
+     "built_m": 31250,
+     "decayed_m": 50
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/e289c4c7ff47/year/4",
+    "GET /api/runs/e289c4c7ff47"
+   ],
+   "note": "首次按真实记录挑选：逐年扫描 0..300 年的 events，取该类型出现的第一条。"
+  },
+  {
+   "key": "first_split",
+   "title": "第一次分裂",
+   "run_id": "e289c4c7ff47",
+   "engine": "exp07",
+   "year": 52,
+   "event_id": "t52-split-0",
+   "event": {
+    "type": "split",
+    "source": "模型日志 st['log']",
+    "band": "10755205082838774531",
+    "parent": "10929267446675359160",
+    "text": "群体-97AC8E 分裂出 群体-95422A",
+    "id": "t52-split-0",
+    "year": 52
+   },
+   "year_snapshot": {
+    "year": 52,
+    "pop": 200,
+    "bands": 8,
+    "store_total_kcal": 105401609,
+    "stock_total_kcal": 3132604178,
+    "field_total_m": 50850,
+    "farm_year": {
+     "farm_effort_m": 49250,
+     "forage_effort_m": 147750,
+     "potential_kcal": 90755423,
+     "harvested_kcal": 51882937,
+     "uncollected_kcal": 38872486,
+     "built_m": 1500,
+     "decayed_m": 400
+    },
+    "farm_cum": {
+     "farm_effort_m": 2017000,
+     "forage_effort_m": 6051000,
+     "potential_kcal": 3532068912,
+     "harvested_kcal": 1061051345,
+     "uncollected_kcal": 2471017567,
+     "built_m": 53924,
+     "decayed_m": 3074
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/e289c4c7ff47/year/52",
+    "GET /api/runs/e289c4c7ff47"
+   ],
+   "note": "首次按真实记录挑选：逐年扫描 0..300 年的 events，取该类型出现的第一条。"
+  },
+  {
+   "key": "first_migrate",
+   "title": "第一次迁移",
+   "run_id": "e289c4c7ff47",
+   "engine": "exp07",
+   "year": 218,
+   "event_id": "t218-migrate-1",
+   "event": {
+    "type": "migrate",
+    "source": "状态差分（cell 字段前后不同）",
+    "band": "13746285471758625353",
+    "from": 23,
+    "to": 31,
+    "text": "群体-BEC49D 由 23 号格迁至 31 号格",
+    "unrecorded": "本次迁移的死亡人数未记录：当年账本只记全局分项，群体层的出生/原死亡/迁移死亡无法从年末快照拆开",
+    "id": "t218-migrate-1",
+    "year": 218
+   },
+   "year_snapshot": {
+    "year": 218,
+    "pop": 759,
+    "bands": 27,
+    "store_total_kcal": 372796670,
+    "stock_total_kcal": 2541241751,
+    "field_total_m": 191336,
+    "farm_year": {
+     "farm_effort_m": 189250,
+     "forage_effort_m": 567750,
+     "potential_kcal": 352833012,
+     "harvested_kcal": 148665535,
+     "uncollected_kcal": 204167477,
+     "built_m": 2950,
+     "decayed_m": 523
+    },
+    "farm_cum": {
+     "farm_effort_m": 18507500,
+     "forage_effort_m": 55522500,
+     "potential_kcal": 33176639808,
+     "harvested_kcal": 10059281149,
+     "uncollected_kcal": 23117358659,
+     "built_m": 327017,
+     "decayed_m": 135681
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/e289c4c7ff47/year/218",
+    "GET /api/runs/e289c4c7ff47"
+   ],
+   "note": "首次按真实记录挑选：逐年扫描 0..300 年的 events，取该类型出现的第一条。"
+  },
+  {
+   "key": "first_share",
+   "title": "第一次同格信息交换",
+   "run_id": "e289c4c7ff47",
+   "engine": "exp07",
+   "year": 219,
+   "event_id": "t219-share-1",
+   "event": {
+    "type": "share",
+    "source": "模型日志 st['share_log']",
+    "band": "13746285471758625353",
+    "donor": "17007643766652821449",
+    "receiver": "13746285471758625353",
+    "cell": 31,
+    "mem_cell": 23,
+    "value": 11143912,
+    "memt": 217,
+    "text": "群体-EC0749 把第 23 号格的记忆（11143912 kcal，记于第 217 年）传给了 群体-BEC49D，地点在第 31 号格",
+    "id": "t219-share-1",
+    "year": 219
+   },
+   "year_snapshot": {
+    "year": 219,
+    "pop": 770,
+    "bands": 28,
+    "store_total_kcal": 379642545,
+    "stock_total_kcal": 2505851604,
+    "field_total_m": 202982,
+    "farm_year": {
+     "farm_effort_m": 189750,
+     "forage_effort_m": 569250,
+     "potential_kcal": 306837026,
+     "harvested_kcal": 132005998,
+     "uncollected_kcal": 174831028,
+     "built_m": 14955,
+     "decayed_m": 3309
+    },
+    "farm_cum": {
+     "farm_effort_m": 18697250,
+     "forage_effort_m": 56091750,
+     "potential_kcal": 33483476834,
+     "harvested_kcal": 10191287147,
+     "uncollected_kcal": 23292189687,
+     "built_m": 341972,
+     "decayed_m": 138990
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/e289c4c7ff47/year/219",
+    "GET /api/runs/e289c4c7ff47"
+   ],
+   "note": "首次按真实记录挑选：逐年扫描 0..300 年的 events，取该类型出现的第一条。"
+  },
+  {
+   "key": "first_aid",
+   "title": "第一次同格援助",
+   "run_id": "e289c4c7ff47",
+   "engine": "exp07",
+   "year": 267,
+   "event_id": "t267-aid-4",
+   "event": {
+    "type": "aid",
+    "source": "模型日志 st['aid_log']",
+    "band": "17007643766652821449",
+    "donor": "13746285471758625353",
+    "receiver": "17007643766652821449",
+    "cell": 31,
+    "kcal": 83864,
+    "person_years": 0.11488219178082192,
+    "phase": "normal",
+    "repay": false,
+    "text": "群体-BEC49D 向 群体-EC0749 援助了 83864 kcal（0.11 人年口粮），地点在第 31 号格",
+    "unrecorded": "动机、路线与因果关系未记录：模型里没有这些量，不要为动画补编。",
+    "id": "t267-aid-4",
+    "year": 267
+   },
+   "year_snapshot": {
+    "year": 267,
+    "pop": 1183,
+    "bands": 33,
+    "store_total_kcal": 547574682,
+    "stock_total_kcal": 1991222882,
+    "field_total_m": 298200,
+    "farm_year": {
+     "farm_effort_m": 293250,
+     "forage_effort_m": 879750,
+     "potential_kcal": 521156214,
+     "harvested_kcal": 386393869,
+     "uncollected_kcal": 134762345,
+     "built_m": 3147,
+     "decayed_m": 1240
+    },
+    "farm_cum": {
+     "farm_effort_m": 30054250,
+     "forage_effort_m": 90162750,
+     "potential_kcal": 53880456621,
+     "harvested_kcal": 21723552369,
+     "uncollected_kcal": 32156904252,
+     "built_m": 499974,
+     "decayed_m": 201774
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/e289c4c7ff47/year/267",
+    "GET /api/runs/e289c4c7ff47"
+   ],
+   "note": "首次按真实记录挑选：逐年扫描 0..300 年的 events，取该类型出现的第一条。"
+  },
+  {
+   "key": "only_repay",
+   "title": "整段历史里唯一一次「回助」",
+   "run_id": "e289c4c7ff47",
+   "engine": "exp07",
+   "year": 295,
+   "event_id": "t295-aid-24",
+   "event": {
+    "type": "aid",
+    "source": "模型日志 st['aid_log']",
+    "band": "7329565065455868839",
+    "donor": "2324318534456326687",
+    "receiver": "7329565065455868839",
+    "cell": 31,
+    "kcal": 1307221,
+    "person_years": 1.790713698630137,
+    "phase": "recip",
+    "repay": true,
+    "text": "回助 · 群体-2041A3 向 群体-65B7D8 援助了 1307221 kcal（1.79 人年口粮），地点在第 31 号格（优先回助阶段：供给方记得对方帮过自己）",
+    "unrecorded": "动机、路线与因果关系未记录：模型里没有这些量，不要为动画补编。",
+    "basis": {
+     "why": "供给方的援助记忆里有接收方，且该记忆只由实际转移累加",
+     "remembered_kcal": 53537,
+     "remembered_last_year": 289,
+     "remembered_last_year_display": 290,
+     "remembered_last_event_id": "t290-aid-13",
+     "prior_events": [
+      "t290-aid-13"
+     ],
+     "year_note": "remembered_last_year 是引擎内部 tick；要显示或跳转请用 remembered_last_year_display / remembered_last_event_id，它们来自真实事件记录",
+     "source": "模型状态 band['amem'] 的援助前快照 + 本次运行的援助日志"
+    },
+    "id": "t295-aid-24",
+    "year": 295
+   },
+   "year_snapshot": {
+    "year": 295,
+    "pop": 1518,
+    "bands": 41,
+    "store_total_kcal": 490580560,
+    "stock_total_kcal": 1723842194,
+    "field_total_m": 416859,
+    "farm_year": {
+     "farm_effort_m": 376250,
+     "forage_effort_m": 1128750,
+     "potential_kcal": 678843407,
+     "harvested_kcal": 577647647,
+     "uncollected_kcal": 101195760,
+     "built_m": 24301,
+     "decayed_m": 10156
+    },
+    "farm_cum": {
+     "farm_effort_m": 39421500,
+     "forage_effort_m": 118264500,
+     "potential_kcal": 70683836957,
+     "harvested_kcal": 35039541300,
+     "uncollected_kcal": 35644295657,
+     "built_m": 713702,
+     "decayed_m": 296843
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/e289c4c7ff47/year/295",
+    "GET /api/runs/e289c4c7ff47/relations?at_year=295",
+    "GET /api/runs/e289c4c7ff47/band/2324318534456326687?at_year=295"
+   ],
+   "note": "模型没有 repay 这个事件类型：回助是 aid 事件上的 phase='recip' / repay=true，外加 basis 段指回被记住的那一笔。前端要做因果动画只能用 basis 里的真实 id。",
+   "prior_event": {
+    "type": "aid",
+    "source": "模型日志 st['aid_log']",
+    "band": "2324318534456326687",
+    "donor": "7329565065455868839",
+    "receiver": "2324318534456326687",
+    "cell": 22,
+    "kcal": 53537,
+    "person_years": 0.07333835616438356,
+    "phase": "normal",
+    "repay": false,
+    "text": "群体-65B7D8 向 群体-2041A3 援助了 53537 kcal（0.07 人年口粮），地点在第 22 号格",
+    "unrecorded": "动机、路线与因果关系未记录：模型里没有这些量，不要为动画补编。",
+    "id": "t290-aid-13",
+    "year": 290
+   },
+   "prior_year": 290,
+   "repay_count_in_run": 1
+  },
+  {
+   "key": "pop_peak",
+   "title": "人口峰值年",
+   "run_id": "e289c4c7ff47",
+   "engine": "exp07",
+   "year": 297,
+   "event_id": null,
+   "event": null,
+   "year_snapshot": {
+    "year": 297,
+    "pop": 1550,
+    "bands": 42,
+    "store_total_kcal": 523032677,
+    "stock_total_kcal": 1722631906,
+    "field_total_m": 412990,
+    "farm_year": {
+     "farm_effort_m": 384000,
+     "forage_effort_m": 1152000,
+     "potential_kcal": 698101017,
+     "harvested_kcal": 574083737,
+     "uncollected_kcal": 124017280,
+     "built_m": 7470,
+     "decayed_m": 7252
+    },
+    "farm_cum": {
+     "farm_effort_m": 40185000,
+     "forage_effort_m": 120555000,
+     "potential_kcal": 72101703921,
+     "harvested_kcal": 36248820772,
+     "uncollected_kcal": 35852883149,
+     "built_m": 725406,
+     "decayed_m": 312416
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/e289c4c7ff47/series"
+   ],
+   "note": "扫描 0..300 年 agg.pop 的最大值；并列时取最早一年。"
+  },
+  {
+   "key": "final_year",
+   "title": "末年全景",
+   "run_id": "e289c4c7ff47",
+   "engine": "exp07",
+   "year": 300,
+   "event_id": null,
+   "event": null,
+   "year_snapshot": {
+    "year": 300,
+    "pop": 1549,
+    "bands": 45,
+    "store_total_kcal": 522080652,
+    "stock_total_kcal": 1678450826,
+    "field_total_m": 454083,
+    "farm_year": {
+     "farm_effort_m": 386250,
+     "forage_effort_m": 1158750,
+     "potential_kcal": 633821204,
+     "harvested_kcal": 499308003,
+     "uncollected_kcal": 134513201,
+     "built_m": 42369,
+     "decayed_m": 16960
+    },
+    "farm_cum": {
+     "farm_effort_m": 41345500,
+     "forage_effort_m": 124036500,
+     "potential_kcal": 74138422542,
+     "harvested_kcal": 37875291133,
+     "uncollected_kcal": 36263131409,
+     "built_m": 799841,
+     "decayed_m": 345758
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/e289c4c7ff47/year/300"
+   ],
+   "note": "第 300 年的年末快照；farm.cum 是整段历史的累计。"
+  },
+  {
+   "key": "abandonment",
+   "title": "真正的弃耕：第 1 年开垦、第 41 年归零",
+   "run_id": "4f83f009ef28",
+   "engine": "exp07",
+   "year": 41,
+   "event_id": "t41-field_decay-4",
+   "event": {
+    "source": "模型状态 st['field_m']：没有劳动维护的部分按 FIELD_DECAY_M 退化",
+    "cell": 6,
+    "participants": [],
+    "labour_m": 0,
+    "field_before_m": 1,
+    "field_after_m": 0,
+    "unrecorded": "作物品种、耕作方式与土地权属未记录：模型里没有这些量。",
+    "type": "field_decay",
+    "amount_m": 1,
+    "unworked_m": 1,
+    "text": "第 6 号格有 0.0 个耕作规模单位没人维护，退化了",
+    "id": "t41-field_decay-4",
+    "year": 41
+   },
+   "year_snapshot": {
+    "year": 41,
+    "pop": 76,
+    "bands": 6,
+    "store_total_kcal": 41062500,
+    "stock_total_kcal": 3387930000,
+    "field_total_m": 76120,
+    "farm_year": {
+     "farm_effort_m": 75000,
+     "forage_effort_m": 0,
+     "potential_kcal": 148532735,
+     "harvested_kcal": 70080000,
+     "uncollected_kcal": 78452735,
+     "built_m": 1200,
+     "decayed_m": 283
+    },
+    "farm_cum": {
+     "farm_effort_m": 2569000,
+     "forage_effort_m": 0,
+     "potential_kcal": 4456216429,
+     "harvested_kcal": 2244885962,
+     "uncollected_kcal": 2211330467,
+     "built_m": 181237,
+     "decayed_m": 105117
+    }
+   },
+   "endpoints": [
+    "GET /api/runs/4f83f009ef28/year/1",
+    "GET /api/runs/4f83f009ef28/year/41"
+   ],
+   "note": "A 里没有任何一格退回 0；把 FARM_M 拉到 1000 的同一颗种子就有了。逐年扫描 field_m，取上一年大于 0、这一年等于 0 的格。",
+   "zeroed_cells": [
+    {
+     "year": 41,
+     "cell": 6,
+     "field_before_m": 1
+    },
+    {
+     "year": 41,
+     "cell": 18,
+     "field_before_m": 1
+    },
+    {
+     "year": 41,
+     "cell": 26,
+     "field_before_m": 1
+    },
+    {
+     "year": 206,
+     "cell": 6,
+     "field_before_m": 1
+    },
+    {
+     "year": 251,
+     "cell": 18,
+     "field_before_m": 1
+    },
+    {
+     "year": 254,
+     "cell": 37,
+     "field_before_m": 1
+    },
+    {
+     "year": 296,
+     "cell": 13,
+     "field_before_m": 1
+    }
+   ],
+   "built_year_1": [
+    "t1-field_built-4",
+    "t1-field_built-6",
+    "t1-field_built-7"
+   ],
+   "migrated_away_year_1": [
+    "t1-migrate-0",
+    "t1-migrate-1",
+    "t1-migrate-2"
+   ],
+   "field_trajectory_cell_6": [
+    [
+     0,
+     0
+    ],
+    [
+     1,
+     20000
+    ],
+    [
+     2,
+     16000
+    ],
+    [
+     3,
+     12800
+    ],
+    [
+     4,
+     10240
+    ],
+    [
+     5,
+     8192
+    ],
+    [
+     6,
+     6553
+    ],
+    [
+     7,
+     5242
+    ],
+    [
+     8,
+     4193
+    ],
+    [
+     9,
+     3354
+    ],
+    [
+     10,
+     2683
+    ],
+    [
+     11,
+     2146
+    ],
+    [
+     12,
+     1716
+    ],
+    [
+     13,
+     1372
+    ],
+    [
+     14,
+     1097
+    ],
+    [
+     15,
+     877
+    ],
+    [
+     16,
+     701
+    ],
+    [
+     17,
+     560
+    ],
+    [
+     18,
+     448
+    ],
+    [
+     19,
+     358
+    ],
+    [
+     20,
+     286
+    ],
+    [
+     21,
+     228
+    ],
+    [
+     22,
+     182
+    ],
+    [
+     23,
+     145
+    ],
+    [
+     24,
+     116
+    ],
+    [
+     25,
+     92
+    ],
+    [
+     26,
+     73
+    ],
+    [
+     27,
+     58
+    ],
+    [
+     28,
+     46
+    ],
+    [
+     29,
+     36
+    ],
+    [
+     30,
+     28
+    ],
+    [
+     31,
+     22
+    ],
+    [
+     32,
+     17
+    ],
+    [
+     33,
+     13
+    ],
+    [
+     34,
+     10
+    ],
+    [
+     35,
+     8
+    ],
+    [
+     36,
+     6
+    ],
+    [
+     37,
+     4
+    ],
+    [
+     38,
+     3
+    ],
+    [
+     39,
+     2
+    ],
+    [
+     40,
+     1
+    ],
+    [
+     41,
+     0
+    ],
+    [
+     42,
+     0
+    ],
+    [
+     43,
+     0
+    ],
+    [
+     44,
+     0
+    ]
+   ]
+  }
+ ],
+ "controlled_comparisons": {
+  "A_vs_C": {
+   "what": "同一颗种子、同一台引擎，只有 FARM_M 不同（250 / 0）",
+   "A_final": {
+    "year": 300,
+    "pop": 1549,
+    "bands": 45,
+    "store_total_kcal": 522080652,
+    "stock_total_kcal": 1678450826,
+    "field_total_m": 454083,
+    "farm_year": {
+     "farm_effort_m": 386250,
+     "forage_effort_m": 1158750,
+     "potential_kcal": 633821204,
+     "harvested_kcal": 499308003,
+     "uncollected_kcal": 134513201,
+     "built_m": 42369,
+     "decayed_m": 16960
+    },
+    "farm_cum": {
+     "farm_effort_m": 41345500,
+     "forage_effort_m": 124036500,
+     "potential_kcal": 74138422542,
+     "harvested_kcal": 37875291133,
+     "uncollected_kcal": 36263131409,
+     "built_m": 799841,
+     "decayed_m": 345758
+    }
+   },
+   "C_final": {
+    "year": 300,
+    "pop": 282,
+    "bands": 15,
+    "store_total_kcal": 129103117,
+    "stock_total_kcal": 2987038961,
+    "field_total_m": 0,
+    "farm_year": {
+     "farm_effort_m": 0,
+     "forage_effort_m": 277000,
+     "potential_kcal": 0,
+     "harvested_kcal": 0,
+     "uncollected_kcal": 0,
+     "built_m": 0,
+     "decayed_m": 0
+    },
+    "farm_cum": {
+     "farm_effort_m": 0,
+     "forage_effort_m": 70686000,
+     "potential_kcal": 0,
+     "harvested_kcal": 0,
+     "uncollected_kcal": 0,
+     "built_m": 0,
+     "decayed_m": 0
+    }
+   },
+   "model_run_id_A": "8d6281d91c14c3697d4390e8baca5fb9",
+   "model_run_id_C": "112c9e1f580ac47710e8dc0c5ae0da17",
+   "note": "model_run_id 不同 —— 只改 FARM_M 就是另一个世界，这是运行身份的一部分。"
+  },
+  "C_vs_B": {
+   "what": "EXP-07 的 FARM_M=0 与 EXP-06 同种子同参数",
+   "compared_fields": "agg / stock / 两边都有的 cum 键 / 群体(id,cell,size,store) / 事件 id 序列",
+   "years_compared": 301,
+   "years_differing": [],
+   "state_hash_B_300": "f80ebd6f1b7de72765cc3754ed227a74",
+   "state_hash_C_300": "ff6070addaae8847cf1e61dfa33a6c75",
+   "note": "逐年全同：FARM_M=0 时 EXP-07 退化成 EXP-06 的那段历史。state_hash 不同是应该的 —— 两台引擎的哈希覆盖的字段集不一样，EXP-07 多了耕地与耕作账。"
+  }
+ },
+ "did_not_happen": {
+  "extinct_events": {
+   "count": 0,
+   "meaning": "观察层有 extinct 事件类型（群体消失），本案例 300 年一次都没有出现。"
+  },
+  "field_abandoned_to_zero": {
+   "count": 0,
+   "detail": [],
+   "meaning": "「弃耕」在本案例里**没有**发生到归零：耕地每年都在退化（cum.decayed_m=345758），但没有任何一格退回 0。曾有耕地的格 34 个，第 300 年仍有耕地的 34 个。"
+  },
+  "repay_events": {
+   "count": 1,
+   "meaning": "回助只发生过一次（第 295 年），不是常态，别做成固定桥段。"
+  }
+ },
+ "ledgers_at_300": {
+  "A": {
+   "births_cum": 7404,
+   "deaths_demo_cum": 5927,
+   "mig_deaths_cum": 48,
+   "mig_total": 28,
+   "aid_events": 18,
+   "aid_transfers": 30,
+   "aid_kcal": 57271429,
+   "repay_kcal": 1307221,
+   "repay_transfers": 1,
+   "share_groups": 193,
+   "need_cum": 120728860000,
+   "deficit_cum": 104865559
+  },
+  "B": {
+   "births_cum": 3109,
+   "deaths_demo_cum": 2774,
+   "mig_deaths_cum": 173,
+   "mig_total": 153,
+   "aid_events": 50,
+   "aid_transfers": 57,
+   "aid_kcal": 57789662,
+   "repay_kcal": 16134683,
+   "repay_transfers": 16,
+   "share_groups": 678,
+   "need_cum": 51600780000,
+   "deficit_cum": 490168136
+  },
+  "A_integrity_300": {
+   "conservation_error": 0,
+   "state_hash": "2a3e1ca14a83d53c17973ded56f85776",
+   "population_identity_error": 0,
+   "share_ledger_error": 0,
+   "aid_ledger_error": 0,
+   "aid_memory_error": 0
+  },
+  "B_integrity_300": {
+   "conservation_error": 0,
+   "state_hash": "f80ebd6f1b7de72765cc3754ed227a74",
+   "population_identity_error": 0,
+   "share_ledger_error": 0,
+   "aid_ledger_error": 0,
+   "aid_memory_error": 0
+  }
+ },
+ "event_inventory": {
+  "A": {
+   "field_built": {
+    "count": 1783,
+    "first_year": 1,
+    "first_id": "t1-field_built-0"
+   },
+   "farm_harvest": {
+    "count": 3390,
+    "first_year": 2,
+    "first_id": "t2-farm_harvest-0"
+   },
+   "field_decay": {
+    "count": 1251,
+    "first_year": 4,
+    "first_id": "t4-field_decay-6"
+   },
+   "split": {
+    "count": 39,
+    "first_year": 52,
+    "first_id": "t52-split-0"
+   },
+   "migrate": {
+    "count": 28,
+    "first_year": 218,
+    "first_id": "t218-migrate-1"
+   },
+   "share": {
+    "count": 448,
+    "first_year": 219,
+    "first_id": "t219-share-1"
+   },
+   "aid": {
+    "count": 30,
+    "first_year": 267,
+    "first_id": "t267-aid-4"
+   },
+   "extinct": {
+    "count": 0,
+    "first_year": null,
+    "first_id": null
+   }
+  },
+  "B": {
+   "field_built": {
+    "count": 0,
+    "first_year": null,
+    "first_id": null
+   },
+   "farm_harvest": {
+    "count": 0,
+    "first_year": null,
+    "first_id": null
+   },
+   "field_decay": {
+    "count": 0,
+    "first_year": null,
+    "first_id": null
+   },
+   "split": {
+    "count": 9,
+    "first_year": 66,
+    "first_id": "t66-split-0"
+   },
+   "migrate": {
+    "count": 153,
+    "first_year": 26,
+    "first_id": "t26-migrate-0"
+   },
+   "share": {
+    "count": 1246,
+    "first_year": 44,
+    "first_id": "t44-share-0"
+   },
+   "aid": {
+    "count": 57,
+    "first_year": 73,
+    "first_id": "t73-aid-2"
+   },
+   "extinct": {
+    "count": 0,
+    "first_year": null,
+    "first_id": null
+   }
+  },
+  "C": {
+   "field_built": {
+    "count": 0,
+    "first_year": null,
+    "first_id": null
+   },
+   "farm_harvest": {
+    "count": 0,
+    "first_year": null,
+    "first_id": null
+   },
+   "field_decay": {
+    "count": 0,
+    "first_year": null,
+    "first_id": null
+   },
+   "split": {
+    "count": 9,
+    "first_year": 66,
+    "first_id": "t66-split-0"
+   },
+   "migrate": {
+    "count": 153,
+    "first_year": 26,
+    "first_id": "t26-migrate-0"
+   },
+   "share": {
+    "count": 1246,
+    "first_year": 44,
+    "first_id": "t44-share-0"
+   },
+   "aid": {
+    "count": 57,
+    "first_year": 73,
+    "first_id": "t73-aid-2"
+   },
+   "extinct": {
+    "count": 0,
+    "first_year": null,
+    "first_id": null
+   }
+  }
+ }
+}

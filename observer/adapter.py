@@ -455,47 +455,36 @@ class Recorder:
         flows_cum = {name: cum.get(key, 0) for key, name in FARM_FLOW_NAMES}
         trace = st.get("farm_effort_trace") or {}
         field_pre = st.get("field_pre") or {}
+        # 逐格明细的**唯一来源**是引擎的结算痕迹，不是事件日志：
+        # 事件只在实际量 > 0 时才记，"潜在产出一颗没人收"的格在日志里是空的，
+        # 照日志拼出来的逐格数会比 year 的总量少一截（少掉的正是没人收的那部分）。
+        cell_trace = st.get("farm_cell_trace") or {}
 
         # 本年**有劳动或有旧耕地**的格都要出现 —— 包括 FARM_M=0 时只有采集劳动的格。
         # 位置取**相位前**冻结下来的那一份，不拿年末位置倒推。
         by_cell_bands: Dict[int, set] = {}
         for bid, (_n, _fe, _foe, cell) in trace.items():
             by_cell_bands.setdefault(cell, set()).add(bid)
-        interesting = set(by_cell_bands) | {c for c, v in field_pre.items() if v > 0}
+        interesting = (set(by_cell_bands) | set(cell_trace)
+                       | {c for c, v in field_pre.items() if v > 0})
         cells = []
-        index = {}
         for c in sorted(interesting):
-            row = {"cell": c, "field_before_m": field_pre.get(c, 0),
-                   "field_after_m": st["field_m"].get(c, 0), "worked_m": 0,
-                   "built_m": 0, "decayed_m": 0, "weather_m": None,
-                   "potential_kcal": 0, "harvested_kcal": 0, "uncollected_kcal": 0,
-                   "participants": []}
-            cells.append(row)
-            index[c] = row
-        for e in st.get("farm_log", []):
-            if e["tick"] != t - 1:
-                continue                          # 只取**本年**那一批（记录是 step 之后写的）
-            row = index.get(e["cell"])
-            if row is None:
-                row = {"cell": e["cell"], "field_before_m": e["field_before_m"],
-                       "field_after_m": e["field_after_m"], "worked_m": 0,
+            got = cell_trace.get(c)
+            if got is None:
+                # 引擎根本没结算这一格（没地也没耕作劳动）：本年农业什么都没发生。
+                # weather_m 给 null —— 那一年这格**没有产量结算**，不是"天气等于 1000"。
+                row = {"cell": c, "field_before_m": field_pre.get(c, 0),
+                       "field_after_m": st["field_m"].get(c, 0), "worked_m": 0,
                        "built_m": 0, "decayed_m": 0, "weather_m": None,
-                       "potential_kcal": 0, "harvested_kcal": 0, "uncollected_kcal": 0,
-                       "participants": []}
-                cells.append(row)
-                index[e["cell"]] = row
-            row["field_before_m"] = e["field_before_m"]
-            row["field_after_m"] = e["field_after_m"]
-            if e["type"] == "field_built":
-                row["built_m"] = e["amount_m"]
-            elif e["type"] == "field_decay":
-                row["decayed_m"] = e["amount_m"]
-            elif e["type"] == "farm_harvest":
-                row["worked_m"] = e["worked_m"]
-                row["weather_m"] = e["weather_m"]
-                row["potential_kcal"] = e["potential_kcal"]
-                row["harvested_kcal"] = e["kcal"]
-                row["uncollected_kcal"] = e["uncollected_kcal"]
+                       "potential_kcal": 0, "harvested_kcal": 0, "uncollected_kcal": 0}
+            else:
+                before, after, worked, built, decayed, weather, pot, got_k, unc = got
+                row = {"cell": c, "field_before_m": before, "field_after_m": after,
+                       "worked_m": worked, "built_m": built, "decayed_m": decayed,
+                       "weather_m": weather, "potential_kcal": pot,
+                       "harvested_kcal": got_k, "uncollected_kcal": unc}
+            row["participants"] = []
+            cells.append(row)
         crop_by_band = {}
         for e in st.get("farm_log", []):
             if e["tick"] == t - 1 and e["type"] == "farm_harvest":

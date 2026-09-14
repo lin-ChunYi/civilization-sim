@@ -19,6 +19,7 @@
 1d3. [`docs/EXP-06-SPEC.md`](docs/EXP-06-SPEC.md) — EXP-06 规格与实测结果（援助记忆与优先回助）。**记忆与优先顺序都是写死的规则，不宣称互惠规范或联盟。**
 1e. [`observer/README.md`](observer/README.md) — OBS-01 文明观察台：怎么本地启动、页面上有什么、口径与限制。
 1f. [`docs/OBS-01-API-CONTRACT.md`](docs/OBS-01-API-CONTRACT.md) — 观察台接口约定（后台 ↔ UI 分支），**改接口前先改它**。
+1f2. [`docs/ANIME-REAL-CASES.md`](docs/ANIME-REAL-CASES.md) — 给前端的真实案例清单：十个有 `run_id` 与事件 id 的可回放案例、两组受控对照、**没有发生的事**与**模型里没有的东西**。前端要画什么先来这里对一遍。
 1g. [`docs/TODO-BACKLOG.md`](docs/TODO-BACKLOG.md) — 非阻塞待办登记。
 2. [`docs/EXP-01-CONFLICTS.md`](docs/EXP-01-CONFLICTS.md) — 旧文档哪些条款被取代、哪些冲突被推迟、七处过强结论的修正。
 3. [`docs/CONSTITUTION.md`](docs/CONSTITUTION.md) — 项目宪法。原则仍是最高约束，但若干表述已修正（文件内有"此处修正"标注）。

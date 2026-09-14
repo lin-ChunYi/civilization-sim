@@ -387,6 +387,7 @@ def make_world(seed: int, poison: str = "", sigma_m: int = 0, move_mort_m: int =
           'farm_effort_trace': {},    # 只读痕迹：{bid: (人数, 耕作刻度, 采集刻度)}，不进哈希
           'forage_trace': {},         # 只读痕迹：{bid: 本年野外采集实得 kcal}，不进哈希
           'field_pre': {},            # 只读痕迹：农业相位前各格耕地规模，不进哈希
+          'farm_cell_trace': {},      # 只读痕迹：逐格本年完整结算，不进哈希
           # 援助记忆与优先回助的账（EXP-06 新增）
           'recip_budget': 0,        # 走优先阶段的预算合计
           'recip_kcal': 0,          # 优先阶段实际转移的数量
@@ -736,6 +737,7 @@ def step(st, suppress_split_in=None):
     # 相位前的耕地快照：观察层要报"本年有劳动或有旧耕地的格"，
     # 即使那一格今年什么都没发生（FARM_M=0 时就是这样）也要能取到 field_before。
     st['field_pre'] = dict(st['field_m'])
+    st['farm_cell_trace'] = {}
     farm_cells = sorted(st['stock'])
     if 'cellrev' in P:
         farm_cells = list(reversed(farm_cells))
@@ -797,6 +799,11 @@ def step(st, suppress_split_in=None):
         st['farm_uncollected_cum'] += uncollected
         st['inflow'] += collected         # **只在这里把实际采收计入 inflow 一次**
         st['field_m'][c] = F - decayed + built
+        # 只读痕迹（每 tick 重写，不进哈希）：这一格本年的**完整结算**。
+        # 事件只在实际量 > 0 时才记 —— "潜在产出一颗没人收"的格在日志里什么都没有，
+        # 观察层要报逐格明细就只能靠这份痕迹。**不许拿 0 冒充未测量。**
+        st['farm_cell_trace'][c] = (F, st['field_m'][c], worked, built, decayed,
+                                    weather_m, potential, collected, uncollected)
 
         # 事件：同格同年同类型聚合成一条，保留参与者明细；只有实际量 > 0 才记。
         if built > 0:
