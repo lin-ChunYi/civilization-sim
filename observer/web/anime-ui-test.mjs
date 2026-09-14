@@ -135,7 +135,7 @@ const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--disable-http-cache",
   `--remote-debugging-port=${CDP}`, `--user-data-dir=${USER}`,
   "--window-size=1536,1024",
-  BASE + "/?v=f6#tab=world&run=" + SAMPLE + "&t=2",
+  BASE + "/?v=f7#tab=world&run=" + SAMPLE + "&t=2",
 ], { stdio: "ignore" });
 
 let ws;
@@ -686,14 +686,52 @@ try {
   const mobOpen = await ev(`(function(){
     var cont=document.getElementById('an-continue').getBoundingClientRect();
     var run=document.getElementById('an-run').getBoundingClientRect();
+    var people=document.querySelector('#an-menu-nav [data-tab="network"]');
+    var create=document.querySelector('#an-menu-nav [data-tab="runs"]');
+    var research=document.getElementById('an-research-m');
+    var access=document.querySelector('#an-menu-nav .an-access');
+    var pr=people && people.getBoundingClientRect();
+    var cr=create && create.getBoundingClientRect();
+    var rr=research && research.getBoundingClientRect();
+    var ar=access && access.getBoundingClientRect();
+    var inView=function(r){return r && r.width>8 && r.right<=390 && r.bottom<=844 && r.top>=0;};
     return {
       open: document.getElementById('an-top').classList.contains('open'),
       contOn: cont.width>8 && cont.right<=390 && cont.bottom<=844,
-      runOn: run.width>8 && run.right<=390
+      runOn: run.width>8 && run.right<=390,
+      peopleOn: inView(pr), createOn: inView(cr), researchOn: inView(rr), accessOn: inView(ar)
     };
   })()`);
-  ok("B11 mobile menu open: run/continue inside 390", mobOpen && mobOpen.open && mobOpen.contOn && mobOpen.runOn, JSON.stringify(mobOpen));
+  ok("B11 mobile menu open: run/continue/People/Create/Research/access inside 390",
+    mobOpen && mobOpen.open && mobOpen.contOn && mobOpen.runOn && mobOpen.peopleOn && mobOpen.createOn && mobOpen.researchOn && mobOpen.accessOn,
+    JSON.stringify(mobOpen));
   await shot("C-390-menu-open.png", 390, 844, true);
+  await click('#an-menu-nav [data-tab="runs"]');
+  await sleep(500);
+  const atRuns = await ev("({hash:location.hash, hidden:document.getElementById('tab-runs').hidden, anime:document.documentElement.classList.contains('anime')})");
+  ok("B11d mobile Create World reachable", atRuns && /tab=runs/.test(atRuns.hash) && atRuns.hidden === false, JSON.stringify(atRuns));
+  await click("#an-more");
+  await sleep(200);
+  await click('#an-menu-nav [data-tab="world"]');
+  await sleep(400);
+  const backWorld = await ev("({hash:location.hash, hidden:document.getElementById('tab-world').hidden})");
+  ok("B11e mobile return World from Create", backWorld && /tab=world/.test(backWorld.hash), JSON.stringify(backWorld));
+  await click("#an-more");
+  await sleep(300);
+  const resClick = await ev(`(function(){
+    var n=document.getElementById('an-research-m');
+    if(!n) return {ok:false};
+    n.scrollIntoView();
+    n.click();
+    return {ok:true};
+  })()`);
+  await sleep(500);
+  const atResearch = await ev("({anime:document.documentElement.classList.contains('anime'), metricsHidden:document.getElementById('tab-metrics').hidden, resClick:"+JSON.stringify(resClick)+"})");
+  ok("B11f mobile Research reachable", atResearch && atResearch.anime === false && atResearch.metricsHidden === false, JSON.stringify(atResearch));
+  await ev(`(function(){var n=document.querySelector('nav.an-nav [data-tab="world"]'); if(n) n.click();})()`);
+  await sleep(400);
+  const backAnime = await ev("({anime:document.documentElement.classList.contains('anime'), hash:location.hash})");
+  ok("B11g mobile return World from Research", backAnime && backAnime.anime === true && /tab=world/.test(backAnime.hash), JSON.stringify(backAnime));
   const dragScrub = await ev(`(function(){
     var n=document.getElementById('an-scrub'); var r=n.getBoundingClientRect();
     return {x:r.x+r.width*0.2,y:r.y+r.height/2};

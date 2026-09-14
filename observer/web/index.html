@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>文明观察台 · 动漫世界</title>
-<link rel="stylesheet" href="/static/style.css?v=f6">
-<link rel="stylesheet" href="/static/anime-ui.css?v=f6">
+<link rel="stylesheet" href="/static/style.css?v=f7">
+<link rel="stylesheet" href="/static/anime-ui.css?v=f7">
 </head>
 <body>
 <div class="tabletop" aria-hidden="true"></div>
@@ -64,6 +64,18 @@
         <option value="4">4×</option>
       </select>
       <button type="button" id="an-continue">继续演化</button>
+      <div class="an-menu-nav" id="an-menu-nav">
+        <button type="button" data-tab="world">世界</button>
+        <button type="button" data-tab="network">人群</button>
+        <button type="button" data-tab="metrics">历史</button>
+        <button type="button" data-tab="runs">创建世界</button>
+        <button type="button" id="an-research-m">研究模式</button>
+        <details class="an-access">
+          <summary>访问设置</summary>
+          <input id="an-token" type="password" placeholder="访问令牌（若已设置）" autocomplete="off">
+          <button type="button" id="an-tokbtn">保存令牌</button>
+        </details>
+      </div>
     </div>
     <div class="an-yearline">第 <b id="an-year">0</b> 年</div>
     <div class="an-top-meta"><span id="an-pop-top">—</span>人 · <span id="an-bands-top">—</span>个群体</div>
@@ -490,10 +502,10 @@
 </main>
 
 <footer id="footer"></footer>
-<script src="/static/motion.js?v=f6"></script>
-<script src="/static/farming.js?v=f6"></script>
-<script src="/static/anime-cases.js?v=f6"></script>
-<script src="/static/anime-scene.js?v=f6"></script>
-<script src="/static/app.js?v=f6"></script>
+<script src="/static/motion.js?v=f7"></script>
+<script src="/static/farming.js?v=f7"></script>
+<script src="/static/anime-cases.js?v=f7"></script>
+<script src="/static/anime-scene.js?v=f7"></script>
+<script src="/static/app.js?v=f7"></script>
 </body>
 </html>
