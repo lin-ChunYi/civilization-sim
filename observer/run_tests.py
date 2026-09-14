@@ -225,6 +225,35 @@ with client:
           len(pre) >= 1 and all(p["status"] == "done" for p in pre),
           str([p["run_id"] for p in pre]))
 
+    # O11b 预生成案例要把 **farm_m** 一起登记。漏了它，库里会写成 0，
+    # 界面与续演比对就会拿"参数 0"去对一份 FARM_M≠0 的历史。
+    # 用一个临时的 PRESET_DIR 现做一条 3 年的 EXP-07 案例，不碰仓库里的预置数据。
+    import tempfile  # noqa: E402
+    from observer import presets  # noqa: E402
+    _old_dir = presets.PRESET_DIR
+    with tempfile.TemporaryDirectory() as _tmp:
+        presets.PRESET_DIR = Path(_tmp)
+        try:
+            presets.build(seed=4242, years=3, sigma_m=0, move_mort_m=50, arm="memory",
+                          share_m=1000, aid_m=1000, recip_m=1000, farm_m=250,
+                          engine="exp07", run_id="preset-farmm-probe",
+                          label="临时探针：EXP-07 预置案例要带上 farm_m")
+            presets.install_presets()
+            row = store.get_run("preset-farmm-probe")
+            check("O11b 预生成的 EXP-07 案例登记时带着 farm_m（不是默认 0）",
+                  row is not None and row["engine"] == "exp07" and row["farm_m"] == 250,
+                  "engine=%s farm_m=%s" % (row["engine"], row["farm_m"]) if row else "没装上")
+            api = client.get("/api/runs/preset-farmm-probe").json()
+            check("O11c 接口上读到的 farm_m 也是 250，params_used 里有这一项",
+                  api["farm_m"] == 250
+                  and any(q["name"] == "farm_m" and q["value"] == 250
+                          for q in api.get("params_used", [])),
+                  "farm_m=%s" % api["farm_m"])
+        finally:
+            presets.PRESET_DIR = _old_dir
+            with store.connect() as _c:
+                _c.execute("DELETE FROM runs WHERE run_id='preset-farmm-probe'")
+
 # ---------------------------------------------------------------- 并发与状态转换
 print("\nO13 任务槽与状态转换")
 import threading  # noqa: E402

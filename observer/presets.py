@@ -60,27 +60,30 @@ def install_presets() -> int:
                 "INSERT INTO runs (run_id,label,kind,status,created_at,started_at,finished_at,"
                 "seed,years,sigma_m,move_mort_m,share_m,aid_m,recip_m,engine,arm,years_done,"
                 "engine_sha256,engine_path,baseline_commit,repo_commit,model_run_id,"
-                "full_digest) VALUES (?,?,'preset','done',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "full_digest,farm_m) VALUES (?,?,'preset','done',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (run_id, info["label"], info["created_at"], info["created_at"],
                  info["created_at"], info["seed"], info["years"], info["sigma_m"],
                  info["move_mort_m"], info.get("share_m", 0), info.get("aid_m", 0),
                  info.get("recip_m", 0), info.get("engine", "exp03"),
                  info["arm"], info["years"], info["engine_sha256"],
                  info["engine_path"], info["baseline_commit"], info.get("repo_commit", ""),
-                 info["model_run_id"], info["full_digest"]))
+                 info["model_run_id"], info["full_digest"],
+                 # EXP-07 的预置案例必须把 farm_m 一起登记：漏了它，库里会写成 0，
+                 # 界面与续演比对就会拿"参数 0"去对一份 FARM_M≠0 的历史。
+                 info.get("farm_m", 0)))
         n += 1
     return n
 
 
 def build(seed: int, years: int, sigma_m: int, move_mort_m: int, arm: str,
           label: str, run_id: str, engine: str = None, share_m: int = 0,
-          aid_m: int = 0, recip_m: int = 0) -> Path:
+          aid_m: int = 0, recip_m: int = 0, farm_m: int = 0) -> Path:
     """真跑一次，把结果写进 observer/preset/<run_id>/。"""
     from . import adapter
     out = PRESET_DIR / run_id
     out.mkdir(parents=True, exist_ok=True)
     st = adapter.make_world(seed, sigma_m, move_mort_m, arm, engine=engine,
-                            share_m=share_m, aid_m=aid_m, recip_m=recip_m)
+                            share_m=share_m, aid_m=aid_m, recip_m=recip_m, farm_m=farm_m)
     meta = adapter.static_run_meta(st)
     meta["engine"] = adapter.engine_info(engine)   # 必须带上引擎名：
     # 漏了它，预置案例会把**默认引擎**的代码版本记成自己的（本轮修）
@@ -99,7 +102,7 @@ def build(seed: int, years: int, sigma_m: int, move_mort_m: int, arm: str,
     info = {"run_id": run_id, "label": label, "seed": seed, "years": years,
             "sigma_m": sigma_m, "move_mort_m": move_mort_m, "arm": arm,
             "engine": engine or config.DEFAULT_ENGINE, "share_m": share_m,
-            "aid_m": aid_m, "recip_m": recip_m,
+            "aid_m": aid_m, "recip_m": recip_m, "farm_m": farm_m,
             "created_at": time.time(),
             "engine_sha256": meta["engine"]["engine_sha256"],
             "engine_path": meta["engine"]["engine_path"],

@@ -18,3 +18,7 @@ observer/tests/web/_poison_app.js
 
 # Cockpit 薄接力的运行期状态（队列、日志、STATUS），不进版本库
 .dispatch/
+
+# 动漫案例的预置数据：由 python3 -m observer.make_anime_cases 现做（确定性重算，几秒钟），
+# 四条 300 年的逐年记录二十多兆，不进版本库；清单与核验脚本在 docs/ 里跟着走。
+observer/preset/preset-anime-*/

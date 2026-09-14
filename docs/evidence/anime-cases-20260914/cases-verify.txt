@@ -139,6 +139,54 @@
   PASS  第12年 agg 相同                                          记录={'pop': 129, 'bands': 6, 'stock_total': 3227753274, 'store_total': 71175000}
   PASS  第12年 事件 id 相同                                        记录=['t12-farm_harvest-0', 't12-farm_harvest-1', 't12-field_decay-2', 't12-field_built-3']
   PASS  第12年 状态摘要相同                                          记录='4b404b4450a5776a6afa2e45dcb3e34a'
+== 交接清单 anime-cases-1 与整段历史一致 ==
+  PASS  契约名                                                  记录='anime-cases-1'
+  PASS  清单覆盖 A/B/C/D 四条                                      记录=['A', 'B', 'C', 'D']
+  PASS  A 清单的模型哈希与已核验的运行一致                                   记录=('8d6281d91c14c3697d4390e8baca5fb9', '8d6281d91c14c3697d4390e8baca5fb9/2a3e1ca14a83d53c17973ded56f85776', '6c18ed20b1e94035f08ea77847fa1ac7739e50fe768…（共 173 字符）
+  PASS  A 清单的配置与已核验的运行一致                                     记录={'seed': 4242, 'years': 300, 'sigma_m': 400, 'move_mort_m': 50, 'share_m': 1000, 'aid_m': 1000, 'recip_m': 1000, 'arm': 'memory', 'farm_m': 250}
+  PASS  A 清单的 sample_id 是固定值，不是随机 uuid                       记录=True
+  PASS  A 开垦：首次/末次/次数与记录一致                                   记录=(True, 1, 't1-field_built-0', 300, 't300-field_built-111', 1783)
+  PASS  A 收获：首次/末次/次数与记录一致                                   记录=(True, 2, 't2-farm_harvest-0', 300, 't300-farm_harvest-112', 3390)
+  PASS  A 迁移：首次/末次/次数与记录一致                                   记录=(True, 218, 't218-migrate-1', 300, 't300-migrate-53', 28)
+  PASS  A 援助：首次/末次/次数与记录一致                                   记录=(True, 267, 't267-aid-4', 300, 't300-aid-48', 30)
+  PASS  A 回助：首次/末次/次数与记录一致                                   记录=(True, 295, 't295-aid-24', 295, 't295-aid-24', 1)
+  PASS  A 清单的末年读数与记录一致                                       记录=(300, 1549, 45, 522080652, 454083)
+  PASS  A 清单的事件总数与 farm 段有无与记录一致                             记录=(6969, True)
+  PASS  B 清单的模型哈希与已核验的运行一致                                   记录=('df1a9f4798463f545288f85ac096169b', 'df1a9f4798463f545288f85ac096169b/f80ebd6f1b7de72765cc3754ed227a74', '43c9338551a23d6d7065f657394a25d5be041e63724…（共 173 字符）
+  PASS  B 清单的配置与已核验的运行一致                                     记录={'seed': 4242, 'years': 300, 'sigma_m': 400, 'move_mort_m': 50, 'share_m': 1000, 'aid_m': 1000, 'recip_m': 1000, 'arm': 'memory'}
+  PASS  B 清单的 sample_id 是固定值，不是随机 uuid                       记录=True
+  PASS  B 开垦：确实没有，且缺项理由是 engine_lacks_mechanism              记录=(False, 0, 'engine_lacks_mechanism')
+  PASS  B 收获：确实没有，且缺项理由是 engine_lacks_mechanism              记录=(False, 0, 'engine_lacks_mechanism')
+  PASS  B 迁移：首次/末次/次数与记录一致                                   记录=(True, 26, 't26-migrate-0', 298, 't298-migrate-14', 153)
+  PASS  B 援助：首次/末次/次数与记录一致                                   记录=(True, 73, 't73-aid-2', 300, 't300-aid-9', 57)
+  PASS  B 回助：首次/末次/次数与记录一致                                   记录=(True, 128, 't128-aid-2', 292, 't292-aid-9', 16)
+  PASS  B 清单的末年读数与记录一致                                       记录=(300, 282, 15, 129103117, None)
+  PASS  B 清单的事件总数与 farm 段有无与记录一致                             记录=(1465, False)
+  PASS  C 清单的模型哈希与已核验的运行一致                                   记录=('112c9e1f580ac47710e8dc0c5ae0da17', '112c9e1f580ac47710e8dc0c5ae0da17/ff6070addaae8847cf1e61dfa33a6c75', '6c18ed20b1e94035f08ea77847fa1ac7739e50fe768…（共 173 字符）
+  PASS  C 清单的配置与已核验的运行一致                                     记录={'seed': 4242, 'years': 300, 'sigma_m': 400, 'move_mort_m': 50, 'share_m': 1000, 'aid_m': 1000, 'recip_m': 1000, 'arm': 'memory', 'farm_m': 0}
+  PASS  C 清单的 sample_id 是固定值，不是随机 uuid                       记录=True
+  PASS  C 开垦：确实没有，且缺项理由是 param_zero                          记录=(False, 0, 'param_zero')
+  PASS  C 收获：确实没有，且缺项理由是 param_zero                          记录=(False, 0, 'param_zero')
+  PASS  C 迁移：首次/末次/次数与记录一致                                   记录=(True, 26, 't26-migrate-0', 298, 't298-migrate-14', 153)
+  PASS  C 援助：首次/末次/次数与记录一致                                   记录=(True, 73, 't73-aid-2', 300, 't300-aid-9', 57)
+  PASS  C 回助：首次/末次/次数与记录一致                                   记录=(True, 128, 't128-aid-2', 292, 't292-aid-9', 16)
+  PASS  C 清单的末年读数与记录一致                                       记录=(300, 282, 15, 129103117, 0)
+  PASS  C 清单的事件总数与 farm 段有无与记录一致                             记录=(1465, True)
+  PASS  D 清单的模型哈希与已核验的运行一致                                   记录=('940cca8853e07c07c61dd4d1b1f77868', '940cca8853e07c07c61dd4d1b1f77868/b1d6db9717a083d46e26526373cffb8e', '6c18ed20b1e94035f08ea77847fa1ac7739e50fe768…（共 173 字符）
+  PASS  D 清单的配置与已核验的运行一致                                     记录={'seed': 4242, 'years': 300, 'sigma_m': 400, 'move_mort_m': 50, 'share_m': 1000, 'aid_m': 1000, 'recip_m': 1000, 'arm': 'memory', 'farm_m': 1000}
+  PASS  D 清单的 sample_id 是固定值，不是随机 uuid                       记录=True
+  PASS  D 开垦：首次/末次/次数与记录一致                                   记录=(True, 1, 't1-field_built-3', 300, 't300-field_built-41', 776)
+  PASS  D 收获：首次/末次/次数与记录一致                                   记录=(True, 2, 't2-farm_harvest-4', 300, 't300-farm_harvest-42', 2589)
+  PASS  D 迁移：首次/末次/次数与记录一致                                   记录=(True, 1, 't1-migrate-0', 291, 't291-migrate-16', 13)
+  PASS  D 援助：确实没有，且缺项理由是 not_observed                        记录=(False, 0, 'not_observed')
+  PASS  D 回助：确实没有，且缺项理由是 not_observed                        记录=(False, 0, 'not_observed')
+  PASS  D 清单的末年读数与记录一致                                       记录=(300, 683, 25, 370657500, 647530)
+  PASS  D 清单的事件总数与 farm 段有无与记录一致                             记录=(5680, True)
+  PASS  B/C 分裂首次与次数（清单文档 §3 末）                               记录=[((66, 't66-split-0'), 9), ((66, 't66-split-0'), 9)]
+  PASS  D 分裂首次与次数                                            记录=((116, 't116-split-0'), 19)
+  PASS  D 耕地退化首次与次数                                          记录=((2, 't2-field_decay-5'), 1055)
+  PASS  A 耕地退化次数                                             记录=1251
+  PASS  四条都没有群体消失                                            记录=[0, 0, 0, 0]
 
-  通过 123 / 失败 0（共 123 项）
+  通过 170 / 失败 0（共 170 项）
 exit=0

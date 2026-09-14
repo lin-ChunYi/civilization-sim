@@ -440,6 +440,76 @@ if SAMPLE.exists():
 else:
     print("  未覆盖  sample-year.json 不在（跨实例回放这一组没跑）")
 
+print("== 交接清单 anime-cases-1 与整段历史一致 ==")
+MAN = HERE / "anime-cases-manifest.json"
+if not MAN.exists():
+    print("  未覆盖  anime-cases-manifest.json 不在，交接清单这一组没跑")
+else:
+    man = json.loads(MAN.read_text(encoding="utf-8"))
+    check("契约名", man["contract"], "anime-cases-1")
+    by_tag = {s["tag"]: s for s in man["samples"]}
+    check("清单覆盖 A/B/C/D 四条", sorted(by_tag), ["A", "B", "C", "D"])
+    PRED = {"clearing": lambda e: e["type"] == "field_built",
+            "harvest": lambda e: e["type"] == "farm_harvest",
+            "migrate": lambda e: e["type"] == "migrate",
+            "aid": lambda e: e["type"] == "aid",
+            "repay": lambda e: e["type"] == "aid" and e.get("repay") is True}
+    for tag in ("A", "B", "C", "D"):
+        s_ = by_tag[tag]
+        rows = REPLAY[tag]
+        meta = committed(f"run{tag}-meta.json")
+        check(f"{tag} 清单的模型哈希与已核验的运行一致",
+              (s_["model_run_id"], s_["full_digest"], s_["engine_sha256"]),
+              (meta["model_run_id"], meta["full_digest"], meta["engine_sha256"]))
+        check(f"{tag} 清单的配置与已核验的运行一致",
+              {k: v for k, v in s_["config"].items() if v is not None},
+              {k: RUNS[tag][k] for k in ("seed", "years", "sigma_m", "move_mort_m",
+                                         "share_m", "aid_m", "recip_m", "arm")}
+              | ({"farm_m": RUNS[tag]["farm_m"]} if s_["engine"] == "exp07" else {}))
+        check(f"{tag} 清单的 sample_id 是固定值，不是随机 uuid",
+              s_["sample_id"].startswith("preset-anime-"), True)
+        for key, pred in PRED.items():
+            hits = [(r["t"], e["id"]) for r in rows for e in r["events"] if pred(e)]
+            got = s_["events"][key]
+            if hits:
+                check(f"{tag} {got['label']}：首次/末次/次数与记录一致",
+                      (got["present"], got["first_year"], got["first_event_id"],
+                       got["last_year"], got["last_event_id"], got["count"]),
+                      (True, hits[0][0], hits[0][1], hits[-1][0], hits[-1][1], len(hits)))
+            else:
+                farm_side = key in ("clearing", "harvest")
+                want = ("engine_lacks_mechanism" if farm_side and s_["engine"] != "exp07"
+                        else "param_zero" if farm_side and s_["config"]["farm_m"] == 0
+                        else "not_observed")
+                check(f"{tag} {got['label']}：确实没有，且缺项理由是 {want}",
+                      (got["present"], got["count"], got["reason_code"]),
+                      (False, 0, want))
+        check(f"{tag} 清单的末年读数与记录一致",
+              (s_["final_year"]["year"], s_["final_year"]["pop"], s_["final_year"]["bands"],
+               s_["final_year"]["store_total_kcal"], s_["final_year"]["field_total_m"]),
+              (rows[-1]["t"], rows[-1]["agg"]["pop"], rows[-1]["agg"]["bands"],
+               rows[-1]["agg"]["store_total"],
+               rows[-1]["farm"]["field_total_m"] if "farm" in rows[-1] else None))
+        check(f"{tag} 清单的事件总数与 farm 段有无与记录一致",
+              (s_["total_events"], s_["has_farm_section"]),
+              (sum(len(r["events"]) for r in rows), "farm" in rows[-1]))
+    # 清单文档里另外点名的几类
+    check("B/C 分裂首次与次数（清单文档 §3 末）",
+          [(next((r["t"], e["id"]) for r in rb for e in r["events"] if e["type"] == "split"),
+            count(rb, "split")),
+           (next((r["t"], e["id"]) for r in rc for e in r["events"] if e["type"] == "split"),
+            count(rc, "split"))],
+          [((66, "t66-split-0"), 9), ((66, "t66-split-0"), 9)])
+    check("D 分裂首次与次数",
+          (next((r["t"], e["id"]) for r in rd for e in r["events"] if e["type"] == "split"),
+           count(rd, "split")), ((116, "t116-split-0"), 19))
+    check("D 耕地退化首次与次数",
+          (next((r["t"], e["id"]) for r in rd for e in r["events"]
+                if e["type"] == "field_decay"), count(rd, "field_decay")),
+          ((2, "t2-field_decay-5"), 1055))
+    check("A 耕地退化次数", count(ra, "field_decay"), 1251)
+    check("四条都没有群体消失", [count(x, "extinct") for x in (ra, rb, rc, rd)], [0, 0, 0, 0])
+
 print()
 print(f"  通过 {ok} / 失败 {bad}（共 {ok + bad} 项）")
 sys.exit(1 if bad else 0)

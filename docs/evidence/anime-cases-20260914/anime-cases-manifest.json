@@ -1,0 +1,336 @@
+{
+ "contract": "anime-cases-1",
+ "what": "交给前端的四条真实案例：固定 sample_id、固定模型哈希、五类事件的真实年份与事件 id。",
+ "id_note": "sample_id 是**预置案例的固定 run_id**，不是随机 uuid；model_run_id / full_digest 由种子 + 全部规则参数 + 引擎常量决定，同一版引擎在任何机器上重算都一样。",
+ "absence_codes": {
+  "engine_lacks_mechanism": "这台引擎没有这套机制，字段整段缺席，界面显示未记录，不要填 0",
+  "param_zero": "机制在、字段在，值确实是 0",
+  "not_observed": "机制开着、参数非 0，但这段历史里没有发生"
+ },
+ "endpoints": {
+  "run": "GET /api/runs/{sample_id}",
+  "year": "GET /api/runs/{sample_id}/year/{t}",
+  "series": "GET /api/runs/{sample_id}/series",
+  "band": "GET /api/runs/{sample_id}/band/{band_id}?at_year=N",
+  "relations": "GET /api/runs/{sample_id}/relations?at_year=N",
+  "config": "GET /api/config"
+ },
+ "install": [
+  "python3 -m observer.make_anime_cases",
+  "OBSERVER_DATA_DIR=<空目录> python3 -m uvicorn observer.app:app --host 127.0.0.1 --port <空闲端口>"
+ ],
+ "samples": [
+  {
+   "sample_id": "preset-anime-farm250",
+   "tag": "A",
+   "label": "动漫案例 A · EXP-07 耕作（FARM_M=250）· seed 4242 · 300 年",
+   "engine": "exp07",
+   "engine_label": "EXP-07 原始耕作与弃耕",
+   "engine_sha256": "6c18ed20b1e94035f08ea77847fa1ac7739e50fe76866872cc55a59bbe1e6a20",
+   "engine_path": "exp07/verify7.py",
+   "config": {
+    "seed": 4242,
+    "years": 300,
+    "sigma_m": 400,
+    "move_mort_m": 50,
+    "share_m": 1000,
+    "aid_m": 1000,
+    "recip_m": 1000,
+    "arm": "memory",
+    "farm_m": 250
+   },
+   "model_run_id": "8d6281d91c14c3697d4390e8baca5fb9",
+   "full_digest": "8d6281d91c14c3697d4390e8baca5fb9/2a3e1ca14a83d53c17973ded56f85776",
+   "has_farm_section": true,
+   "final_year": {
+    "year": 300,
+    "pop": 1549,
+    "bands": 45,
+    "store_total_kcal": 522080652,
+    "field_total_m": 454083
+   },
+   "total_events": 6969,
+   "events": {
+    "clearing": {
+     "label": "开垦",
+     "present": true,
+     "count": 1783,
+     "first_year": 1,
+     "first_event_id": "t1-field_built-0",
+     "last_year": 300,
+     "last_event_id": "t300-field_built-111"
+    },
+    "harvest": {
+     "label": "收获",
+     "present": true,
+     "count": 3390,
+     "first_year": 2,
+     "first_event_id": "t2-farm_harvest-0",
+     "last_year": 300,
+     "last_event_id": "t300-farm_harvest-112"
+    },
+    "migrate": {
+     "label": "迁移",
+     "present": true,
+     "count": 28,
+     "first_year": 218,
+     "first_event_id": "t218-migrate-1",
+     "last_year": 300,
+     "last_event_id": "t300-migrate-53"
+    },
+    "aid": {
+     "label": "援助",
+     "present": true,
+     "count": 30,
+     "first_year": 267,
+     "first_event_id": "t267-aid-4",
+     "last_year": 300,
+     "last_event_id": "t300-aid-48"
+    },
+    "repay": {
+     "label": "回助",
+     "present": true,
+     "count": 1,
+     "first_year": 295,
+     "first_event_id": "t295-aid-24",
+     "last_year": 295,
+     "last_event_id": "t295-aid-24"
+    }
+   }
+  },
+  {
+   "sample_id": "preset-anime-exp06",
+   "tag": "B",
+   "label": "动漫案例 B · EXP-06 旧引擎（没有农业）· seed 4242 · 300 年",
+   "engine": "exp06",
+   "engine_label": "EXP-06 援助记忆与优先回助",
+   "engine_sha256": "43c9338551a23d6d7065f657394a25d5be041e63724ab12a23350bde53e5d186",
+   "engine_path": "exp06/verify6.py",
+   "config": {
+    "seed": 4242,
+    "years": 300,
+    "sigma_m": 400,
+    "move_mort_m": 50,
+    "share_m": 1000,
+    "aid_m": 1000,
+    "recip_m": 1000,
+    "arm": "memory",
+    "farm_m": null
+   },
+   "model_run_id": "df1a9f4798463f545288f85ac096169b",
+   "full_digest": "df1a9f4798463f545288f85ac096169b/f80ebd6f1b7de72765cc3754ed227a74",
+   "has_farm_section": false,
+   "final_year": {
+    "year": 300,
+    "pop": 282,
+    "bands": 15,
+    "store_total_kcal": 129103117,
+    "field_total_m": null
+   },
+   "total_events": 1465,
+   "events": {
+    "clearing": {
+     "label": "开垦",
+     "present": false,
+     "count": 0,
+     "first_year": null,
+     "first_event_id": null,
+     "reason_code": "engine_lacks_mechanism",
+     "reason": "这台引擎没有农业机制，年度记录里整个 farm 段都缺席（不是 0）"
+    },
+    "harvest": {
+     "label": "收获",
+     "present": false,
+     "count": 0,
+     "first_year": null,
+     "first_event_id": null,
+     "reason_code": "engine_lacks_mechanism",
+     "reason": "这台引擎没有农业机制，年度记录里整个 farm 段都缺席（不是 0）"
+    },
+    "migrate": {
+     "label": "迁移",
+     "present": true,
+     "count": 153,
+     "first_year": 26,
+     "first_event_id": "t26-migrate-0",
+     "last_year": 298,
+     "last_event_id": "t298-migrate-14"
+    },
+    "aid": {
+     "label": "援助",
+     "present": true,
+     "count": 57,
+     "first_year": 73,
+     "first_event_id": "t73-aid-2",
+     "last_year": 300,
+     "last_event_id": "t300-aid-9"
+    },
+    "repay": {
+     "label": "回助",
+     "present": true,
+     "count": 16,
+     "first_year": 128,
+     "first_event_id": "t128-aid-2",
+     "last_year": 292,
+     "last_event_id": "t292-aid-9"
+    }
+   }
+  },
+  {
+   "sample_id": "preset-anime-farm0",
+   "tag": "C",
+   "label": "动漫案例 C · EXP-07 受控对照（FARM_M=0）· seed 4242 · 300 年",
+   "engine": "exp07",
+   "engine_label": "EXP-07 原始耕作与弃耕",
+   "engine_sha256": "6c18ed20b1e94035f08ea77847fa1ac7739e50fe76866872cc55a59bbe1e6a20",
+   "engine_path": "exp07/verify7.py",
+   "config": {
+    "seed": 4242,
+    "years": 300,
+    "sigma_m": 400,
+    "move_mort_m": 50,
+    "share_m": 1000,
+    "aid_m": 1000,
+    "recip_m": 1000,
+    "arm": "memory",
+    "farm_m": 0
+   },
+   "model_run_id": "112c9e1f580ac47710e8dc0c5ae0da17",
+   "full_digest": "112c9e1f580ac47710e8dc0c5ae0da17/ff6070addaae8847cf1e61dfa33a6c75",
+   "has_farm_section": true,
+   "final_year": {
+    "year": 300,
+    "pop": 282,
+    "bands": 15,
+    "store_total_kcal": 129103117,
+    "field_total_m": 0
+   },
+   "total_events": 1465,
+   "events": {
+    "clearing": {
+     "label": "开垦",
+     "present": false,
+     "count": 0,
+     "first_year": null,
+     "first_event_id": null,
+     "reason_code": "param_zero",
+     "reason": "FARM_M=0：机制在、farm 段也在，但一分劳动都没投到耕作，所以没有这类事件"
+    },
+    "harvest": {
+     "label": "收获",
+     "present": false,
+     "count": 0,
+     "first_year": null,
+     "first_event_id": null,
+     "reason_code": "param_zero",
+     "reason": "FARM_M=0：机制在、farm 段也在，但一分劳动都没投到耕作，所以没有这类事件"
+    },
+    "migrate": {
+     "label": "迁移",
+     "present": true,
+     "count": 153,
+     "first_year": 26,
+     "first_event_id": "t26-migrate-0",
+     "last_year": 298,
+     "last_event_id": "t298-migrate-14"
+    },
+    "aid": {
+     "label": "援助",
+     "present": true,
+     "count": 57,
+     "first_year": 73,
+     "first_event_id": "t73-aid-2",
+     "last_year": 300,
+     "last_event_id": "t300-aid-9"
+    },
+    "repay": {
+     "label": "回助",
+     "present": true,
+     "count": 16,
+     "first_year": 128,
+     "first_event_id": "t128-aid-2",
+     "last_year": 292,
+     "last_event_id": "t292-aid-9"
+    }
+   }
+  },
+  {
+   "sample_id": "preset-anime-farm1000",
+   "tag": "D",
+   "label": "动漫案例 D · EXP-07 全员耕作（FARM_M=1000，出现弃耕）· seed 4242 · 300 年",
+   "engine": "exp07",
+   "engine_label": "EXP-07 原始耕作与弃耕",
+   "engine_sha256": "6c18ed20b1e94035f08ea77847fa1ac7739e50fe76866872cc55a59bbe1e6a20",
+   "engine_path": "exp07/verify7.py",
+   "config": {
+    "seed": 4242,
+    "years": 300,
+    "sigma_m": 400,
+    "move_mort_m": 50,
+    "share_m": 1000,
+    "aid_m": 1000,
+    "recip_m": 1000,
+    "arm": "memory",
+    "farm_m": 1000
+   },
+   "model_run_id": "940cca8853e07c07c61dd4d1b1f77868",
+   "full_digest": "940cca8853e07c07c61dd4d1b1f77868/b1d6db9717a083d46e26526373cffb8e",
+   "has_farm_section": true,
+   "final_year": {
+    "year": 300,
+    "pop": 683,
+    "bands": 25,
+    "store_total_kcal": 370657500,
+    "field_total_m": 647530
+   },
+   "total_events": 5680,
+   "events": {
+    "clearing": {
+     "label": "开垦",
+     "present": true,
+     "count": 776,
+     "first_year": 1,
+     "first_event_id": "t1-field_built-3",
+     "last_year": 300,
+     "last_event_id": "t300-field_built-41"
+    },
+    "harvest": {
+     "label": "收获",
+     "present": true,
+     "count": 2589,
+     "first_year": 2,
+     "first_event_id": "t2-farm_harvest-4",
+     "last_year": 300,
+     "last_event_id": "t300-farm_harvest-42"
+    },
+    "migrate": {
+     "label": "迁移",
+     "present": true,
+     "count": 13,
+     "first_year": 1,
+     "first_event_id": "t1-migrate-0",
+     "last_year": 291,
+     "last_event_id": "t291-migrate-16"
+    },
+    "aid": {
+     "label": "援助",
+     "present": false,
+     "count": 0,
+     "first_year": null,
+     "first_event_id": null,
+     "reason_code": "not_observed",
+     "reason": "机制开着、参数非 0，但这 300 年里一次都没有发生"
+    },
+    "repay": {
+     "label": "回助",
+     "present": false,
+     "count": 0,
+     "first_year": null,
+     "first_event_id": null,
+     "reason_code": "not_observed",
+     "reason": "机制开着、参数非 0，但这 300 年里一次都没有发生"
+    }
+   }
+  }
+ ]
+}
