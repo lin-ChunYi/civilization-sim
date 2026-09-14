@@ -16,7 +16,7 @@ const BASE = (flag("base-url", "http://127.0.0.1:8913") || "").replace(/\/$/, ""
 const ART = flag("artifact-dir", join(here, "screenshots", "anime-record"));
 const USER = flag("user-data-dir", "/tmp/g-anime-record");
 const CDP = Number(flag("cdp-port", "9411"));
-const PAGE = BASE + "/?v=f5#tab=world&run=preset-anime-farm250&t=0";
+const PAGE = BASE + "/?v=f6#tab=world&run=preset-anime-farm250&t=0";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const FRAMES = join(ART, "rec-frames-real");
 const SAMPLE = "preset-anime-farm250";
@@ -150,6 +150,31 @@ try {
     await send("Input.dispatchKeyEvent", { type: "keyDown", key: name, windowsVirtualKeyCode: name === "ArrowDown" ? 40 : (name === "ArrowUp" ? 38 : 13) });
     await send("Input.dispatchKeyEvent", { type: "keyUp", key: name, windowsVirtualKeyCode: name === "ArrowDown" ? 40 : (name === "ArrowUp" ? 38 : 13) });
   };
+  const observe = async () => inspect(`(function(){
+    return {
+      year: document.getElementById('an-year') && document.getElementById('an-year').textContent,
+      run: document.getElementById('an-run') && document.getElementById('an-run').value,
+      eid: (document.getElementById('map-event-chip') && document.getElementById('map-event-chip').getAttribute('data-eid'))
+        || (window.__obs && window.__obs.S && window.__obs.S.selEvent),
+      badge: document.getElementById('an-badge') && document.getElementById('an-badge').textContent,
+      continueReason: document.getElementById('continue-reason') && document.getElementById('continue-reason').textContent
+    };
+  })()`);
+  const requireYear = async (want) => {
+    const o = await observe();
+    logAct("observe", { wantYear: want, observed: o });
+    if (String(o && o.year) !== String(want)) throw new Error("year want " + want + " got " + (o && o.year));
+  };
+  const requireRun = async (id) => {
+    const o = await observe();
+    logAct("observe", { wantRun: id, observed: o });
+    if ((o && o.run) !== id) throw new Error("run want " + id + " got " + (o && o.run));
+  };
+  const requireEvent = async (eid) => {
+    const o = await observe();
+    logAct("observe", { wantEid: eid, observed: o });
+    if (String(o && o.eid) !== String(eid)) throw new Error("event want " + eid + " got " + (o && o.eid));
+  };
   const waitYear = async (want, ms) => {
     const tEnd = Date.now() + ms;
     while (Date.now() < tEnd) {
@@ -166,13 +191,48 @@ try {
       var r=n.getBoundingClientRect();
       var max=Math.max(1, +n.max || 300);
       var t=Math.max(0, Math.min(max, ${Number(year)}));
-      return {x:r.x + (t/max)*Math.max(r.width-2,1), y:r.y+r.height/2, max:max, w:r.width};
+      return {x:r.x + (t/max)*Math.max(r.width-2,1), y:r.y+r.height/2, max:max, w:r.width, left:r.x};
     })()`);
-    if (!info || info.x == null) { logAct("scrub-miss", { year }); return false; }
-    await clickAt(info.x, info.y);
-    logAct("scrub", { year, x: info.x, y: info.y, max: info.max });
-    await waitYear(year, 8000);
-    return true;
+    if (!info || info.x == null) throw new Error("scrub control missing for year " + year);
+    let x = info.x;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await clickAt(x, info.y);
+      logAct("scrub", { year, x, attempt });
+      if (await waitYear(year, 2500)) { await requireYear(year); return; }
+      const got = +(await inspect("document.getElementById('an-year') && document.getElementById('an-year').textContent"));
+      if (got === year + 1 && await clickSel("#an-prev", "correct year-1")) {
+        if (await waitYear(year, 2500)) { await requireYear(year); return; }
+      }
+      if (got === year - 1 && await clickSel("#an-next", "correct year+1")) {
+        if (await waitYear(year, 2500)) { await requireYear(year); return; }
+      }
+      x += (got > year ? -8 : 8);
+    }
+    throw new Error("failed to reach year " + year + " via scrub");
+  };
+  const openFullList = async (note) => {
+    if (!await clickSel("#an-ev-open", note || "view all")) throw new Error("view-all failed: " + note);
+    await sleep(400);
+    const filt = await inspect("document.getElementById('an-ev-filter') && document.getElementById('an-ev-filter').value");
+    if (filt && filt !== "all") {
+      const idx = await inspect("document.getElementById('an-ev-filter') && document.getElementById('an-ev-filter').selectedIndex");
+      await clickSel("#an-ev-filter", "focus filter to 全部");
+      for (let i = 0; i < (idx || 0); i++) await key("ArrowUp");
+      logAct("key", { key: "ArrowUp", note: "reset filter to all" });
+      await sleep(400);
+    }
+  };
+  const clickEventId = async (eid, note) => {
+    const compact = "#an-events .an-ev[data-eid=\"" + eid + "\"]";
+    if (await boxOf(compact)) {
+      if (!await clickSel(compact, note || eid)) throw new Error("event button missing " + eid);
+    } else {
+      await openFullList("view all for " + eid);
+      const sel = "#an-ev-all .an-ev[data-eid=\"" + eid + "\"]";
+      if (!await clickSel(sel, note || eid)) throw new Error("event button missing " + eid);
+    }
+    await sleep(600);
+    await requireEvent(eid);
   };
 
   await send("Page.startScreencast", {
@@ -181,120 +241,84 @@ try {
   const recStart = Date.now();
   logAct("screencast-start", { wall: recStart, url: PAGE });
 
-  await sleep(6000);
+  await sleep(5000);
+  await requireYear(0);
   if (!await clickSel("#an-play", "play")) throw new Error("play button failed");
-  await sleep(24000);
+  await sleep(32000);
   if (!await clickSel("#an-play", "pause")) throw new Error("pause button failed");
-  await sleep(2000);
+  await sleep(1000);
+  await scrubTo(0);
+  await requireYear(0);
 
   if (!await clickSel("#an-next", "next to year 1")) throw new Error("next failed");
-  await waitYear(1, 6000);
-  await sleep(3000);
-  if (!await clickSel("#an-ev-open", "view all at year 1")) throw new Error("view-all failed");
-  await sleep(1500);
+  if (!await waitYear(1, 6000)) throw new Error("did not reach year 1");
+  await requireYear(1);
+  await sleep(2000);
+  await openFullList("view all at year 1");
   if (!await clickSel("#an-ev-all .an-ev-src summary", "open 来源")) throw new Error("source summary failed");
-  await sleep(4000);
-  if (!await clickSel("#an-ev-close", "close view all")) throw new Error("close view-all failed");
-  await sleep(1500);
-  if (!await clickSel("#an-next", "next to year 2 harvest")) throw new Error("next2 failed");
-  await waitYear(2, 6000);
   await sleep(8000);
+  if (!await clickSel("#an-ev-close", "close view all")) throw new Error("close view-all failed");
+  await sleep(1000);
+  if (!await clickSel("#an-next", "next to year 2 harvest")) throw new Error("next2 failed");
+  if (!await waitYear(2, 6000)) throw new Error("did not reach year 2");
+  await requireYear(2);
+  await clickEventId("t2-farm_harvest-0", "year-2 harvest");
+  await sleep(12000);
 
   const chibi = await boxOf("#map .an-chibi .an-chibi-zoom") || await boxOf("#map .an-chibi");
   if (chibi && chibi.x != null) {
     await clickAt(chibi.x, chibi.y);
     logAct("click", { sel: "#map .an-chibi", note: "select group representative" });
-  } else logAct("click-miss", { sel: "#map .an-chibi" });
-  await sleep(10000);
-
-  const evBtn = await boxOf("#an-events .an-ev");
-  if (evBtn && evBtn.x != null) {
-    await clickAt(evBtn.x, evBtn.y);
-    logAct("click", { sel: "#an-events .an-ev", note: "year-2 event in list" });
-    await sleep(10000);
-  }
+  } else throw new Error("no chibi to click");
+  await sleep(6000);
 
   await scrubTo(52);
-  await sleep(4000);
-  if (!await clickSel("#an-ev-open", "view all events")) {
-    await scrubTo(300);
-    await sleep(2000);
-    if (!await clickSel("#an-ev-open", "view all events at 300")) throw new Error("view-all button failed");
-  }
-  await sleep(14000);
-  const filt = await boxOf("#an-ev-filter");
-  if (filt) {
-    await clickAt(filt.x, filt.y);
-    logAct("click", { sel: "#an-ev-filter", note: "focus filter" });
-    await key("ArrowDown");
-    await key("ArrowDown");
-    logAct("key", { key: "ArrowDown", note: "change event filter" });
-    await sleep(3000);
-  }
+  await requireYear(52);
+  await openFullList("view all at year 52");
+  await sleep(12000);
   if (!await clickSel("#an-ev-close", "close view all")) throw new Error("close view-all failed");
-  await sleep(1500);
 
   await scrubTo(218);
-  await sleep(3000);
-  const mig = await boxOf("#an-events .an-ev");
-  if (mig && mig.x != null) {
-    await clickAt(mig.x, mig.y);
-    logAct("click", { sel: "#an-events .an-ev", note: "migrate-year event" });
-  }
-  await sleep(16000);
+  await requireYear(218);
+  await clickEventId("t218-migrate-1", "migrate t218-migrate-1");
+  await sleep(20000);
 
   await scrubTo(267);
-  await sleep(3000);
-  const aid = await boxOf("#an-events .an-ev");
-  if (aid && aid.x != null) {
-    await clickAt(aid.x, aid.y);
-    logAct("click", { sel: "#an-events .an-ev", note: "aid-year event" });
-  }
-  await sleep(16000);
+  await requireYear(267);
+  await clickEventId("t267-aid-4", "aid t267-aid-4");
+  await sleep(20000);
 
   await scrubTo(0);
-  await sleep(4000);
+  await requireYear(0);
   if (!await clickSel('.an-nav button[data-tab="network"]', "People tab")) throw new Error("people nav failed");
-  await sleep(5000);
+  await sleep(7000);
   if (!await clickSel("#net-svg .net-node", "select band in People")) throw new Error("people node failed");
-  await sleep(5000);
+  await sleep(7000);
 
   if (!await clickSel("#an-continue", "continue on sample")) throw new Error("continue button failed");
-  await sleep(12000);
+  await sleep(8000);
   const reason = await inspect("document.getElementById('continue-reason') && document.getElementById('continue-reason').textContent");
-  logAct("inspect", { sel: "#continue-reason", text: reason });
+  logAct("observe", { want: "missing_checkpoint", continueReason: reason });
+  if (!reason || String(reason).indexOf("missing_checkpoint") < 0) throw new Error("sample continue want missing_checkpoint got " + reason);
   if (!await clickSel("#b-continue-cancel", "cancel sample continue")) throw new Error("continue cancel failed");
-  await sleep(2000);
+  await sleep(1500);
 
-  if (!await clickSel("#an-run", "focus world switch")) throw new Error("run select failed");
-  const opt = await inspect(`(function(){
-    var s=document.getElementById('an-run');
-    if(!s) return null;
-    var cur=s.selectedIndex, want=-1;
-    for (var i=0;i<s.options.length;i++) if(s.options[i].value===${JSON.stringify(parentId)}) want=i;
-    return {cur:cur, want:want, n:s.options.length};
-  })()`);
-  if (!opt || opt.want < 0) logAct("select-miss", { parentId, opt });
-  else {
-    const dir = opt.want > opt.cur ? "ArrowDown" : "ArrowUp";
-    const steps = Math.abs(opt.want - opt.cur);
-    for (let i = 0; i < steps; i++) await key(dir);
-    logAct("key", { key: dir, steps, parentId, note: "select user world with keyboard on focused select" });
-  }
-  await sleep(2000);
-  const runNow = await inspect("document.getElementById('an-run') && document.getElementById('an-run').value");
-  if (runNow !== parentId) {
-    logAct("inspect", { note: "select did not land on user run, open via 创建世界 list", runNow });
-    if (!await clickSel('.an-nav button[data-tab="runs"]', "open 创建世界")) throw new Error("runs tab failed");
-    await sleep(1500);
-    if (!await clickSel('[data-open="' + parentId + '"]', "open user parent from list")) throw new Error("user run row failed");
-    await sleep(4000);
-  } else await sleep(8000);
+  if (!await clickSel('.an-nav button[data-tab="runs"]', "open 创建世界")) throw new Error("runs tab failed");
+  await sleep(1500);
+  if (!await clickSel('[data-open="' + parentId + '"]', "open user parent from list")) throw new Error("user run row failed");
+  await sleep(4000);
+  await requireRun(parentId);
+  const badge = await inspect("document.getElementById('an-badge') && document.getElementById('an-badge').textContent");
+  logAct("observe", { badge, want: "not sample" });
+  if (badge && /示例世界/.test(badge)) throw new Error("user run still showing sample badge: " + badge);
 
   if (!await clickSel("#an-continue", "continue on user run")) throw new Error("user continue button failed");
-  await sleep(14000);
+  await sleep(8000);
   const reason2 = await inspect("document.getElementById('continue-reason') && document.getElementById('continue-reason').textContent");
-  logAct("inspect", { sel: "#continue-reason", text: reason2 });
+  logAct("observe", { want: "eligible ready", continueReason: reason2 });
+  if (!reason2 || /missing_checkpoint/.test(reason2) || !/继续/.test(reason2)) {
+    throw new Error("user continue not eligible, got " + reason2);
+  }
   if (!await clickSel("#b-continue-cancel", "cancel user continue")) throw new Error("user continue cancel failed");
   await sleep(8000);
 
@@ -348,7 +372,10 @@ try {
   process.stdout.write("elapsedMs=" + log.elapsedMs + " fileDuration=" + fileDuration + " frames=" + frames.length + "\n");
   if (ff.status !== 0) process.stdout.write((ff.stderr || "").slice(-800) + "\n");
   if (ws) ws.close();
-  if (ff.status !== 0 || frames.length < 80 || !(fileDuration >= 150)) process.exit(1);
+  if (ff.status !== 0 || frames.length < 80 || !(fileDuration >= 180)) {
+    process.stdout.write("duration too short or encode failed\n");
+    process.exit(1);
+  }
 } catch (e) {
   process.stdout.write("RECORD FAIL " + (e && e.stack ? e.stack : e) + "\n");
   process.exit(1);

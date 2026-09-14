@@ -135,7 +135,7 @@ const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--disable-http-cache",
   `--remote-debugging-port=${CDP}`, `--user-data-dir=${USER}`,
   "--window-size=1536,1024",
-  BASE + "/?v=f5#tab=world&run=" + SAMPLE + "&t=2",
+  BASE + "/?v=f6#tab=world&run=" + SAMPLE + "&t=2",
 ], { stdio: "ignore" });
 
 let ws;
@@ -444,6 +444,18 @@ try {
       card: document.getElementById('an-card') && document.getElementById('an-card').innerText
     };
   })()`);
+  await ev("window.__obs.openRun('preset-anime-farm250',{initialYear:218})");
+  await sleep(1000);
+  const compact = await ev(`(function(){
+    var tags=Array.prototype.map.call(document.querySelectorAll('#map .an-chibi'), function(g){
+      return {id:g.getAttribute('data-band'), alias:g.getAttribute('data-alias')};
+    });
+    var long=tags.filter(function(t){ return /\d{8,}/.test(t.alias||''); });
+    return {n:tags.length, long:long, sample:tags.slice(0,6)};
+  })()`);
+  ok("B-alias busy-year display is compact, no 8+ digit suffix",
+    compact && compact.n > 6 && compact.long.length === 0, JSON.stringify(compact).slice(0, 360));
+
   ok("World→People→select→World keeps full ID and name",
     back && back.tab === "world" && back.sel === String(people.id) && back.card && back.card.indexOf(String(people.id)) >= 0
       && (!mapIdent || back.sel !== mapIdent.id || back.card.indexOf(mapIdent.alias) >= 0),
