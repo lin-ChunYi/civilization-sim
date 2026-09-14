@@ -29,16 +29,9 @@
     if (sa > sb) return 1;
     return 0;
   }
-  function takeAlias(used, id) {
-    const h = hashId(id);
-    const sid = String(id);
-    for (let k = 0; k < ALIAS.length; k++) {
-      const name = ALIAS[(h + k) % ALIAS.length];
-      if (!used[name]) { used[name] = sid; return name; }
-    }
-    const name = ALIAS[h % ALIAS.length] + "·" + sid;
-    used[name] = sid;
-    return name;
+  function displayAlias(base, k) {
+    if (k <= 0) return base;
+    return base + String(k + 1);
   }
   function palOf(id) { return PAL[hashId(id) % PAL.length]; }
   const WORLD = { x: -80, y: -90, w: 720, h: 480 };
@@ -88,11 +81,16 @@
       });
       tab.used = {};
       tab.order = [];
+      const baseCount = {};
       ids.forEach((id) => {
         const rec = tab.byId[id];
-        rec.alias = takeAlias(tab.used, id);
+        const base = ALIAS[hashId(id) % ALIAS.length];
+        const k = baseCount[base] || 0;
+        baseCount[base] = k + 1;
+        rec.alias = displayAlias(base, k);
         rec.pal = palOf(id);
         rec.variant = hashId(id) % 6;
+        tab.used[rec.alias] = id;
         tab.order.push(id);
       });
     },
@@ -364,10 +362,12 @@
     const sc = opts.scale != null ? opts.scale : (n >= 6 ? 1.15 : (n >= 3 ? 1.4 : (n >= 2 ? 1.7 : (on ? 2.35 : 2.15))));
     const title = alias + " · " + (b.size != null ? b.size : "?") + "人。群体代表，不是独立个人。";
     const ring = on ? "<circle cx=\"0\" cy=\"18\" r=\"16\" fill=\"none\" stroke=\"#fff4c8\" stroke-width=\"2.2\" opacity=\"0.95\"/>" : "";
+    const tagText = alias + " · " + (b.size != null ? b.size : "?") + "人";
+    const tagW = Math.max(56, Math.min(92, 18 + tagText.length * 7.2));
     const tag = opts.noTag ? "" : ("<g class=\"an-tag\" transform=\"translate(0," + (n > 2 ? -48 : -56) + ")\">" +
-      "<rect x=\"-42\" y=\"-11\" width=\"84\" height=\"20\" rx=\"10\" fill=\"" + pal.tag + "\" stroke=\"#fff\" stroke-width=\"1.6\"/>" +
+      "<rect x=\"" + (-tagW / 2) + "\" y=\"-11\" width=\"" + tagW + "\" height=\"20\" rx=\"10\" fill=\"" + pal.tag + "\" stroke=\"#fff\" stroke-width=\"1.6\"/>" +
       "<text x=\"0\" y=\"3.2\" text-anchor=\"middle\" font-size=\"9\" fill=\"#fff\" font-weight=\"700\">" +
-      esc(alias) + " · " + (b.size != null ? b.size : "?") + "人</text></g>");
+      esc(tagText) + "</text></g>");
     return "<g class=\"an-chibi band unit" + (on ? " selected" : "") + "\" data-band=\"" + esc(String(b.id)) +
       "\" data-alias=\"" + esc(alias) + "\" data-cloth=\"" + esc(pal.cloth) + "\" data-hair=\"" + esc(pal.hair) +
       "\" data-tool=\"" + esc(pal.tool) + "\" data-cell=\"" + esc(String(b.cell != null ? b.cell : "")) +
@@ -739,11 +739,17 @@
       all.innerHTML = filtered.map((e) => {
         const qty = e.kcal != null ? " · " + e.kcal + " kcal" : (e.labour_m != null ? " · " + (e.labour_m / 1000) + " 单位劳动" : "");
         const where = e.cell != null ? "第 " + e.cell + " 格" : (e.from != null ? e.from + "→" + e.to : "地点未记录");
-        return "<button type=\"button\" class=\"an-ev an-ev-full\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\">" +
+        const ek = String((run && run.run_id) || "") + "|" + t + "|" + String(e.id || "");
+        const opened = !!(root.AnimeScene && root.AnimeScene.sourceOpen && root.AnimeScene.sourceOpen[ek]);
+        return "<div class=\"an-ev-row\">" +
+          "<button type=\"button\" class=\"an-ev an-ev-full\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\">" +
           "<b>" + esc(speech(e, alias)) + "</b>" +
-          "<span class=\"muted\">" + where + qty + " · id " + esc(String(e.id || "")) + "</span>" +
-          "<details><summary>来源</summary><div class=\"muted\">" + esc(e.source || "未标注") +
-          (e.unrecorded ? " · 未记录：" + esc(e.unrecorded) : "") + "</div></details></button>";
+          "<span class=\"muted\">" + where + qty + " · id " + esc(String(e.id || "")) + "</span></button>" +
+          "<details class=\"an-ev-src\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\"" +
+          (opened ? " open" : "") + "><summary>来源</summary><div class=\"muted an-ev-src-body\">" +
+          esc(e.source || "未标注") +
+          (e.unrecorded ? " · 未记录：" + esc(e.unrecorded) : "") +
+          "</div></details></div>";
       }).join("") || "<p class=\"muted\">没有这一类事件。</p>";
     }
     if (st.$("an-ev-count")) st.$("an-ev-count").textContent = String(items.length);
@@ -812,6 +818,7 @@
   root.AnimeScene = {
     palOf: palOf, daysOfStore: daysOfStore, speech: speech,
     paint: paint, fillChrome: fillChrome, portraitSvg: portraitSvg, chibi: chibi,
+    sourceOpen: {},
     Identity: Identity, slotBands: slotBands, viewBoxFor: viewBoxFor, WORLD: WORLD,
     WORLD_MOBILE: WORLD_MOBILE, worldBase: worldBase, bubbleSpeech: bubbleSpeech,
     poseJoints: poseJoints, chibiBody: chibiBody, cmpId: cmpId,
