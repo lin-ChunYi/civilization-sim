@@ -1288,6 +1288,95 @@ function camViewBox() {
   const x = (W - w) / 2 - S.cam.x, y = (H - h) / 2 - S.cam.y;
   return x + " " + y + " " + w + " " + h;
 }
+function rootAnimeScene() {
+  return (typeof AnimeScene !== "undefined") ? AnimeScene : (typeof window !== "undefined" ? window.AnimeScene : null);
+}
+function isAnimeMode() {
+  return !!(document.documentElement && document.documentElement.classList.contains("anime") && rootAnimeScene());
+}
+function matchAnimeSample(run) {
+  const pack = (typeof window !== "undefined") ? window.ANIME_CASES : null;
+  if (!run || !pack || run.kind !== "preset") return null;
+  const s = (pack.samples || []).find((x) => x.sample_id === run.run_id);
+  if (!s) return null;
+  if (s.engine && run.engine && s.engine !== run.engine) return { sample: s, mismatch: true, reason: "engine" };
+  if (s.model_run_id && run.model_run_id && s.model_run_id !== run.model_run_id)
+    return { sample: s, mismatch: true, reason: "model_run_id" };
+  if (s.full_digest && run.full_digest && s.full_digest !== run.full_digest)
+    return { sample: s, mismatch: true, reason: "full_digest" };
+  return { sample: s, mismatch: false };
+}
+function pickDefaultRun(runs, hp) {
+  const list = runs || [];
+  if (hp && hp.run) {
+    const hit = list.find((r) => r.run_id === hp.run);
+    if (hit) return hit;
+  }
+  const pack = (typeof window !== "undefined") ? window.ANIME_CASES : null;
+  const want = pack && pack.default_sample_id;
+  if (want) {
+    const hit = list.find((r) => r.run_id === want);
+    const m = matchAnimeSample(hit);
+    if (m && !m.mismatch) return hit;
+  }
+  const matched = list.find((r) => {
+    const m = matchAnimeSample(r);
+    return m && !m.mismatch;
+  });
+  if (matched) return matched;
+  return null;
+}
+function sampleSetupHtml() {
+  const pack = (typeof window !== "undefined") ? window.ANIME_CASES : null;
+  const cmds = (pack && pack.install) || [
+    "python3 -m observer.make_anime_cases",
+    "OBSERVER_DATA_DIR=<空目录> python3 -m uvicorn observer.app:app --host 127.0.0.1 --port <空闲端口>",
+  ];
+  return "<h3>还没有可分发的真实案例</h3>" +
+    "<p>不要用名字相近的自建运行顶替。请在观察台数据目录生成固定 preset id：</p>" +
+    "<pre>" + cmds.map((c) => esc(c)).join("\n") + "</pre>" +
+    "<p>装好后应出现 <code>preset-anime-farm250</code> 等四个 <code>kind=preset</code> 运行，且 model_run_id / full_digest 与清单一致。</p>" +
+    "<p>也可以到「创建世界」用真实参数新算一次，那是自建世界，不会标成示例。</p>" +
+    "<button type=\"button\" class=\"an-ev-more\" data-tab=\"runs\">创建世界</button>";
+}
+function fillAnimeChrome(rec) {
+  const sc = rootAnimeScene();
+  if (!sc || !isAnimeMode()) return;
+  const run = (rec && rec.constructed && S.constructedRun) ? S.constructedRun : S.run;
+  const m = matchAnimeSample(run);
+  sc.fillChrome({
+    map: S.map, rec: rec, run: run, t: rec && rec.constructed ? rec.t : S.t, selBand: S.selBand,
+    cellCenter: cellCenter, needPc: NEED(), $: $, runs: S.runs,
+    sampleMatch: (m && !m.mismatch) ? m.sample : null,
+    sampleMismatch: m && m.mismatch ? m : null,
+    continueNote: ($("continue-prep") && !$("continue-prep").hidden) ? $("continue-prep").textContent : "",
+    evFilter: ($("an-ev-filter") && $("an-ev-filter").value) || "all",
+  });
+  if ($("an-play")) $("an-play").textContent = S.playing ? "暂停" : "播放";
+  const setup = $("an-setup");
+  if (setup) {
+    if (!S.run && !(S.runs && S.runs.some((r) => matchAnimeSample(r) && !matchAnimeSample(r).mismatch))) {
+      setup.hidden = false;
+      setup.innerHTML = sampleSetupHtml();
+    } else if (m && m.mismatch) {
+      setup.hidden = false;
+      setup.innerHTML = "<h3>案例版本对不上</h3><p>id 是 " + esc(S.run.run_id) +
+        "，但 " + esc(m.reason) + " 与清单不一致，不要将就着用。</p>";
+    } else setup.hidden = true;
+  }
+  bindAnimeChrome();
+}
+function bindAnimeChrome() {
+  const jump = (eid, y) => { if (eid) jumpToRecordedEvent(eid, y); };
+  document.querySelectorAll(".an-ev").forEach((n) => {
+    n.onclick = () => jump(n.dataset.eid, n.dataset.year);
+  });
+  const open = $("an-ev-open");
+  if (open) open.onclick = () => { if ($("an-ev-drawer")) $("an-ev-drawer").hidden = false; };
+  document.querySelectorAll(".an-setup [data-tab]").forEach((n) => {
+    n.onclick = () => showTab(n.dataset.tab);
+  });
+}
 function setLayer(name) {
   if (name === "mem") { setView("mem"); S.layer = "mem"; }
   else {
@@ -1304,11 +1393,30 @@ function setLayer(name) {
 function renderMap() {
   const svg = $("map");
   if (!svg) return;
+  if (S.constructedRec && isAnimeMode()) {
+    if (S.constructedRec.constructedKind === "colocated") {
+      paintConstructedColocated(S.constructedRec.bands.length, { keepSel: S.selBand });
+      return;
+    }
+    const sc = rootAnimeScene();
+    const svg = $("map");
+    sc.paint(svg, {
+      map: S.map, rec: S.constructedRec, run: S.constructedRun, t: S.constructedRec.t,
+      selBand: S.selBand, cellCenter: cellCenter, cam: S.cam || { x: 0, y: 0, k: 1 }, needPc: NEED(), $: $,
+    });
+    fillAnimeChrome(S.constructedRec);
+    return;
+  }
   svg.setAttribute("viewBox", camViewBox());
-  if (!S.map || !S.run) { svg.innerHTML = ""; return; }
+  if (!S.map || !S.run) {
+    svg.innerHTML = "";
+    if (isAnimeMode()) fillAnimeChrome(null);
+    return;
+  }
   const rec = recNow();
   if (!rec) {
     svg.innerHTML = `<text x="24" y="40" fill="#d4b06a">${esc(yearWaitMessage())}</text>`;
+    if (isAnimeMode()) fillAnimeChrome(null);
     return;
   }
   const cap = S.meta ? S.meta.cap : null;
@@ -1495,6 +1603,34 @@ function renderMap() {
   svg.innerHTML = out;
   S._mapYear = S.t;
   S._mapRun = S.run ? S.run.run_id : null;
+  if (isAnimeMode()) {
+    rootAnimeScene().paint(svg, {
+      map: S.map, rec: rec, run: S.run, t: S.t, selBand: S.selBand, selCell: S.selCell,
+      cellCenter: cellCenter, needPc: NEED(), $: $, cam: S.cam,
+    });
+    fillAnimeChrome(rec);
+    svg.querySelectorAll(".an-cell-stack").forEach((n) => {
+      n.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const cell = +n.dataset.cell;
+        const bands = rec.bands.filter((b) => +b.cell === cell);
+        const box = $("an-cell-roster");
+        if (!box) return;
+        const sc = rootAnimeScene();
+        const rootId = sc.Identity.rootOf(S.run);
+        box.hidden = false;
+        box.innerHTML = "<div>第 " + cell + " 格 · " + bands.length + " 个群体（同格，不是迁走）</div>" +
+          bands.map((b) => "<button type=\"button\" data-band=\"" + esc(String(b.id)) + "\">" +
+            esc(sc.Identity.alias(rootId, b.id)) + " · " + b.size + "人</button>").join("") +
+          "<button type=\"button\" data-close=\"1\">关闭</button>";
+        box.querySelectorAll("[data-band]").forEach((btn) => btn.addEventListener("click", () => {
+          box.hidden = true; selectBand(btn.dataset.band, { force: true, skipPan: true });
+        }));
+        const c = box.querySelector("[data-close]");
+        if (c) c.onclick = () => { box.hidden = true; };
+      });
+    });
+  }
   paintDirectorFx();
   svg.querySelectorAll(".band").forEach((n) =>
     n.addEventListener("click", (e) => {
@@ -2093,6 +2229,12 @@ function showRail(name) {
 }
 function selectBand(id, opts) {
   opts = opts || {};
+  if (S.constructedRec) {
+    if (!opts.force && S.selBand === id) S.selBand = null;
+    else S.selBand = id || null;
+    fillAnimeChrome(S.constructedRec);
+    return;
+  }
   bump();
   S.band = null;
   if (!opts.force && S.selBand === id) S.selBand = null;
@@ -2104,7 +2246,7 @@ function selectBand(id, opts) {
   if (!opts.skipMap) renderMap();
   renderSide();
   fillSelSheet();
-  if (S.selBand && !opts.skipPan && !DirectorLogic.prefersReducedMotion()) {
+  if (S.selBand && !opts.skipPan && !isAnimeMode() && !DirectorLogic.prefersReducedMotion()) {
     const rec = recNow();
     const b = rec && rec.bands.find((x) => String(x.id) === String(S.selBand));
     if (b && Number.isFinite(+b.cell) && S.map && S.map.cells[+b.cell]) {
@@ -2144,17 +2286,18 @@ function setYearLoadOverlay(t, on) {
 }
 function renderYearFailBar() {
   const bar = $("year-fail");
-  if (!bar) return;
+  const an = $("an-year-fail");
   const w = S.yearWait;
-  if (w && !w.pending) {
-    bar.hidden = false;
-    if ($("year-fail-text")) {
-      $("year-fail-text").textContent = "第 " + w.t + " 年读取失败" +
-        (w.message ? "：" + w.message : "") +
-        "。可重试。不把其他年份的数字标到这一年。";
-    }
-  } else {
-    bar.hidden = true;
+  const msg = (w && !w.pending)
+    ? ("第 " + w.t + " 年读取失败" + (w.message ? "：" + w.message : "") + "。可重试。不把其他年份的数字标到这一年。")
+    : "";
+  if (bar) {
+    if (msg) { bar.hidden = false; if ($("year-fail-text")) $("year-fail-text").textContent = msg; }
+    else bar.hidden = true;
+  }
+  if (an) {
+    if (msg) { an.hidden = false; an.textContent = msg; }
+    else an.hidden = true;
   }
 }
 function commitYear(t, wait) {
@@ -2887,10 +3030,20 @@ function paintMigrateAction(overlay, ev, plan, reduced) {
   const xy = UnitArt.lerp(a, b, u0);
   const walker = svgEl("g", { id: "fx-walker", "data-fx": "migrate-walk", "data-path": "endpoints-only", "data-stage": UnitArt.migrateStage(u0) });
   walker.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
-  walker.innerHTML = UnitArt.markup(band, 0, 0, {
-    pose: reduced ? "idle" : "walk", selected: true, hit: false, skin: S.skin, showPop: false,
-    face: dir, phase: u0, rig: true, scale: 1.9,
-  });
+  if (isAnimeMode()) {
+    const sc = rootAnimeScene();
+    const rootId = sc.Identity.rootOf(S.run);
+    walker.innerHTML = sc.chibi(band, 0, 0, {
+      pose: reduced ? "idle" : "walk", selected: true, noTag: true, scale: 2.0,
+      alias: sc.Identity.alias(rootId, ev.band), pal: sc.Identity.pal(rootId, ev.band),
+      phase: u0, dir: dir, role: "solo",
+    });
+  } else {
+    walker.innerHTML = UnitArt.markup(band, 0, 0, {
+      pose: reduced ? "idle" : "walk", selected: true, hit: false, skin: S.skin, showPop: false,
+      face: dir, phase: u0, rig: true, scale: 1.9,
+    });
+  }
   overlay.appendChild(walker);
   fxCaption(overlay, (a[0] + b[0]) / 2, Math.min(a[1], b[1]) - 22,
     reduced ? "端点动作 · 路线未记录 · 到达" : "端点动作 · 路线未记录 · 离开");
@@ -2912,6 +3065,24 @@ function paintMigrateAction(overlay, ev, plan, reduced) {
     startFxLoop();
   }
 }
+function paintFarmAction(overlay, ev, reduced) {
+  if (ev.cell == null || !S.map.cells[ev.cell]) return;
+  const xy = cellCenter(S.map.cells[ev.cell]);
+  const sc = rootAnimeScene();
+  const rootId = sc.Identity.rootOf(S.run);
+  const pid = (ev.participants && ev.participants[0]) || ev.band;
+  const rec = recNow();
+  const living = rec && rec.bands.find((b) => String(b.id) === String(pid));
+  const band = living || { id: pid || "farm", size: 1, cell: ev.cell };
+  const wrap = svgEl("g", { id: "fx-farm", "data-fx": ev.type, "data-event-cell": String(ev.cell) });
+  wrap.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
+  wrap.innerHTML = sc.chibi(band, 0, 0, {
+    pose: reduced ? "idle" : "give", noTag: true, scale: 2.0, phase: 0.35, role: "solo", dir: "e",
+    alias: sc.Identity.alias(rootId, pid), pal: sc.Identity.pal(rootId, pid),
+  });
+  overlay.appendChild(wrap);
+  fxCaption(overlay, xy[0], xy[1] - 28, ev.type === "field_built" ? "开垦（事件格）" : "收成（事件格，不是年末位置）");
+}
 function paintPairAction(overlay, ev, plan, reduced) {
   if (plan.cell == null || !S.map.cells[plan.cell]) return;
   const xy = cellCenter(S.map.cells[plan.cell]);
@@ -2932,11 +3103,23 @@ function paintPairAction(overlay, ev, plan, reduced) {
   }
   const donorPose = plan.kind === "share" ? "talk" : "give";
   const recvPose = plan.kind === "share" ? "listen" : "receive";
-  wrap.innerHTML = UnitArt.markup(donor, -14, -2, {
-    pose: donorPose, hit: false, showPop: false, phase: u0, role: "donor", rig: true, facing: "right", scale: 1.7,
-  }) + UnitArt.markup(recv, 14, -2, {
-    pose: recvPose, hit: false, showPop: false, phase: u0, role: "receiver", rig: true, facing: "left", scale: 1.7,
-  }) + (plan.kind === "share" ? shareGlyphMarkup(0, 0) : aidGlyphMarkup(0, 0, plan.repay));
+  if (isAnimeMode()) {
+    const sc = rootAnimeScene();
+    const rootId = sc.Identity.rootOf(S.run);
+    wrap.innerHTML = sc.chibi(donor, -28, -2, {
+      pose: donorPose, noTag: true, scale: 1.85, phase: u0, role: "donor", dir: "e",
+      alias: sc.Identity.alias(rootId, ev.donor), pal: sc.Identity.pal(rootId, ev.donor),
+    }) + sc.chibi(recv, 28, -2, {
+      pose: recvPose, noTag: true, scale: 1.85, phase: u0, role: "receiver", dir: "w",
+      alias: sc.Identity.alias(rootId, ev.receiver), pal: sc.Identity.pal(rootId, ev.receiver),
+    }) + (plan.kind === "share" ? shareGlyphMarkup(0, 0) : aidGlyphMarkup(0, 0, plan.repay));
+  } else {
+    wrap.innerHTML = UnitArt.markup(donor, -14, -2, {
+      pose: donorPose, hit: false, showPop: false, phase: u0, role: "donor", rig: true, facing: "right", scale: 1.7,
+    }) + UnitArt.markup(recv, 14, -2, {
+      pose: recvPose, hit: false, showPop: false, phase: u0, role: "receiver", rig: true, facing: "left", scale: 1.7,
+    }) + (plan.kind === "share" ? shareGlyphMarkup(0, 0) : aidGlyphMarkup(0, 0, plan.repay));
+  }
   const donorRig = wrap.querySelectorAll(".motion-rig")[0];
   const recvRig = wrap.querySelectorAll(".motion-rig")[1];
   if (donorRig) donorRig.setAttribute("data-role", "donor");
@@ -3047,6 +3230,8 @@ function paintDirectorFx(opts) {
     const plan = UnitArt.actionPlan(ev, focus);
     if (plan.kind === "migrate") paintMigrateAction(overlay, ev, plan, reduced);
     else if (plan.kind === "share" || plan.kind === "aid") paintPairAction(overlay, ev, plan, reduced);
+    else if (isAnimeMode() && (ev.type === "farm_harvest" || ev.type === "field_built") && ev.cell != null)
+      paintFarmAction(overlay, ev, reduced);
     svg.appendChild(overlay);
     return;
   }
@@ -3539,6 +3724,10 @@ async function openRun(id, opts) {
     }
     ser = await api(`/api/runs/${id}/series`);
     if (S.epoch !== myEpoch || !opAlive(myOp)) return { ok: false, reason: "stale" };
+    if (isAnimeMode() && rootAnimeScene() && rootAnimeScene().Identity) {
+      try { await rootAnimeScene().Identity.ensure(run, { api: api, series: ser.series }); }
+      catch (e) { /* identity fills from the opened year if history fetch fails */ }
+    }
   } catch (e) {
     if (S.epoch === myEpoch) flash("打开运行失败：" + e.message, true);
     return { ok: false, reason: e.message };
@@ -3943,6 +4132,53 @@ async function boot() {
     const b = e.target.closest("button[data-type]"); if (!b) return;
     S.evFilter = b.dataset.type; renderEvents();
   });
+  if ($("an-nav")) $("an-nav").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-tab]");
+    if (!b) return;
+    document.documentElement.classList.add("anime");
+    showTab(b.dataset.tab);
+  });
+  if ($("an-research")) $("an-research").addEventListener("click", () => {
+    document.documentElement.classList.remove("anime");
+    showTab("metrics");
+  });
+  if ($("an-play")) $("an-play").addEventListener("click", () => setPlaying(!S.playing));
+  if ($("an-prev")) $("an-prev").addEventListener("click", () => { if ($("b-prev")) $("b-prev").click(); });
+  if ($("an-next")) $("an-next").addEventListener("click", () => { if ($("b-next")) $("b-next").click(); });
+  if ($("an-continue")) $("an-continue").addEventListener("click", () => openContinueDialog());
+  if ($("an-scrub")) $("an-scrub").addEventListener("input", (e) => {
+    setPlaying(false); bumpOp(); gotoYear(+e.target.value, { opGen: S.opGen });
+  });
+  if ($("an-run")) $("an-run").addEventListener("change", (e) => { if (e.target.value) openRun(e.target.value); });
+  if ($("an-speed")) $("an-speed").addEventListener("change", (e) => {
+    S.speed = +e.target.value;
+    if ($("speed")) $("speed").value = e.target.value;
+  });
+  if ($("an-more")) $("an-more").addEventListener("click", () => {
+    const top = $("an-top");
+    if (!top) return;
+    const on = top.classList.toggle("open");
+    $("an-more").setAttribute("aria-expanded", on ? "true" : "false");
+  });
+  if ($("an-bottom-toggle")) $("an-bottom-toggle").addEventListener("click", () => {
+    const box = $("an-bottom");
+    if (!box) return;
+    const on = box.classList.toggle("expanded");
+    $("an-bottom-toggle").textContent = on ? "收起档案" : "展开档案";
+  });
+  if ($("an-ev-close")) $("an-ev-close").addEventListener("click", () => {
+    if ($("an-ev-drawer")) $("an-ev-drawer").hidden = true;
+  });
+  if ($("an-ev-filter")) $("an-ev-filter").addEventListener("change", () => fillAnimeChrome(recNow()));
+  if ($("an-events")) $("an-events").addEventListener("click", (e) => {
+    const b = e.target.closest(".an-ev");
+    if (!b) return;
+    const eid = b.dataset.eid, y = +b.dataset.year;
+    if (eid) jumpToRecordedEvent(eid, y);
+  });
+  if ($("farm-off")) $("farm-off").addEventListener("click", () => { if ($("f-farm")) $("f-farm").value = "0"; });
+  if ($("farm-25")) $("farm-25").addEventListener("click", () => { if ($("f-farm")) $("f-farm").value = "250"; });
+  if ($("farm-50")) $("farm-50").addEventListener("click", () => { if ($("f-farm")) $("f-farm").value = "500"; });
 
   try {
     S.cfg = await api("/api/config");
@@ -3974,14 +4210,13 @@ async function boot() {
 
   await refresh();
   const hp = hashParams();
-  const wanted = hp.run && S.runs.find((r) => r.run_id === hp.run);
-  const first = wanted || S.runs.find((r) => r.status === "running") ||
-    S.runs.find((r) => r.years_recorded > 0);
+  const first = pickDefaultRun(S.runs, hp);
   if (hp.mode === "events") S.playMode = "events";
   if (hp.archive === "full") S.bandScope = "full";
   if (first) {
     const parsedT = hp.t ? OverviewLogic.parseStrictInt(hp.t, { name: "年份", min: 0 }) : { ok: false };
-    await openRun(first.run_id, { initialYear: parsedT.ok ? parsedT.value : 0 });
+    const startY = parsedT.ok ? parsedT.value : 0;
+    await openRun(first.run_id, { initialYear: startY });
     if (hp.mode === "events") setPlayMode("events", { silent: true, force: true });
     if (parsedT.ok && S.t !== parsedT.value) await gotoYear(parsedT.value);
     if (hp.event) {
@@ -3991,7 +4226,8 @@ async function boot() {
     if (hp.b) selectBand(hp.b, { force: true, keepCell: !!S.selEvent });
     if (hp.view === "mem") setView("mem");
   } else {
-    $("side-empty").textContent = "还没有任何运行记录。到“运行记录”页发起一次模拟。";
+    if ($("side-empty")) $("side-empty").textContent = "还没有任何运行记录。到“运行记录”页发起一次模拟。";
+    if (isAnimeMode()) fillAnimeChrome(null);
     renderOverview();
   }
   if (hp.tab) showTab(hp.tab);
@@ -4000,7 +4236,131 @@ async function boot() {
 
 function applyCam() {
   const svg = $("map");
-  if (svg) svg.setAttribute("viewBox", camViewBox());
+  if (!svg) return;
+  if (isAnimeMode() && rootAnimeScene().viewBoxFor) {
+    const base = rootAnimeScene().worldBase ? rootAnimeScene().worldBase() : rootAnimeScene().WORLD;
+    svg.setAttribute("viewBox", rootAnimeScene().viewBoxFor(S.cam, base));
+  } else svg.setAttribute("viewBox", camViewBox());
+}
+function openConstructedRoster(rec) {
+  const sc = rootAnimeScene();
+  const box = $("an-cell-roster");
+  if (!box || !rec || !rec.bands) return false;
+  const n = rec.bands.length;
+  box.hidden = false;
+  box.innerHTML = "<div>构造用例 · 同格 " + n + "（不是自然历史）</div>" +
+    rec.bands.map((b) => "<button type=\"button\" data-band=\"" + esc(String(b.id)) + "\">" +
+      esc(sc.Identity.alias("constructed-colocated", b.id)) + " · " + b.size + "人</button>").join("") +
+    "<button type=\"button\" data-close=\"1\">关闭</button>";
+  box.querySelectorAll("[data-band]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      selectBand(btn.dataset.band, { force: true });
+    });
+  });
+  const c = box.querySelector("[data-close]");
+  if (c) c.onclick = () => { box.hidden = true; };
+  return true;
+}
+function paintConstructedColocated(n, opts) {
+  opts = opts || {};
+  const sc = rootAnimeScene();
+  const svg = $("map");
+  if (!sc || !svg || !S.map) return { ok: false };
+  const keepSel = opts.keepSel;
+  const bands = (S.constructedRec && S.constructedRec.bands && S.constructedRec.bands.length === n)
+    ? S.constructedRec.bands
+    : [];
+  if (!bands.length) {
+    for (let i = 0; i < n; i++) {
+      bands.push({
+        id: "constructed-colocated-" + (i + 1),
+        cell: 0, size: 10 + i, store: 7300000,
+      });
+    }
+  }
+  const rec = {
+    t: 0, constructed: true, constructedKind: "colocated", bands: bands, events: [],
+    agg: { pop: bands.reduce((s, b) => s + b.size, 0), bands: n },
+  };
+  const run = {
+    run_id: "constructed-colocated", kind: "user",
+    lineage: { kind: "origin", root_run_id: "constructed-colocated" },
+    years_recorded: 0, status: "done",
+  };
+  sc.Identity.reset("constructed-colocated");
+  sc.Identity.ingest("constructed-colocated", bands.map((b) => ({ id: b.id, t: 0, snap: b })));
+  S.constructedRec = rec;
+  S.constructedRun = run;
+  if (keepSel) S.selBand = keepSel;
+  else if (!opts.keepSel) S.selBand = null;
+  sc.paint(svg, {
+    map: S.map, rec: rec, run: run, t: 0, selBand: S.selBand,
+    cellCenter: cellCenter, cam: S.cam || { x: 0, y: 0, k: 1 }, needPc: NEED(), $: $,
+  });
+  fillAnimeChrome(rec);
+  svg.querySelectorAll(".an-chibi").forEach((node) => {
+    node.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectBand(node.getAttribute("data-band"), { force: true });
+    }, true);
+  });
+  svg.querySelectorAll(".an-cell-stack").forEach((node) => {
+    node.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openConstructedRoster(rec);
+    }, true);
+  });
+  if (n > 1) openConstructedRoster(rec);
+  return {
+    ok: true,
+    ids: bands.map((b) => String(b.id)),
+    fixture: true,
+    roster: n > 1,
+  };
+}
+function clearConstructed() {
+  S.constructedRec = null;
+  S.constructedRun = null;
+  if ($("an-cell-roster")) $("an-cell-roster").hidden = true;
+  if (S.run) renderMap();
+}
+function paintControlledAbsentHistory() {
+  const sc = rootAnimeScene();
+  const gone = {
+    id: "controlled-history-gone",
+    cell: 0, size: 17, store: 7300000,
+  };
+  const living = [
+    { id: "controlled-history-live-a", cell: 6, size: 11, store: 7300000 },
+    { id: "controlled-history-live-b", cell: 14, size: 12, store: 7300000 },
+  ];
+  const early = { t: 0, constructed: true, constructedKind: "history", bands: [gone].concat(living), events: [], agg: { pop: 40, bands: 3 } };
+  const later = { t: 1, constructed: true, constructedKind: "history", bands: living.slice(), events: [], agg: { pop: 23, bands: 2 } };
+  const run = {
+    run_id: "controlled-history", kind: "user",
+    lineage: { kind: "origin", root_run_id: "controlled-history" },
+    years_recorded: 1, status: "done",
+  };
+  sc.Identity.reset("controlled-history");
+  sc.Identity.ingest("controlled-history", early.bands.map((b) => ({ id: b.id, t: 0, snap: b })));
+  S.constructedRec = later;
+  S.constructedRun = run;
+  S.selBand = gone.id;
+  const svg = $("map");
+  if (svg && S.map) {
+    sc.paint(svg, {
+      map: S.map, rec: later, run: run, t: 1, selBand: gone.id,
+      cellCenter: cellCenter, cam: S.cam || { x: 0, y: 0, k: 1 }, needPc: NEED(), $: $,
+    });
+  }
+  fillAnimeChrome(later);
+  const rec = sc.Identity.record("controlled-history", gone.id);
+  return {
+    goneId: gone.id,
+    livingId: living[0].id,
+    record: rec,
+    labeled: "构造历史，不是自然 extinct",
+  };
 }
 function mapHitAt(clientX, clientY) {
   const el = document.elementFromPoint(clientX, clientY);
@@ -4062,6 +4422,11 @@ function bindMapCam() {
       S._ignoreClickUntil = performance.now() + 80;
       return;
     }
+    if (S.constructedRec) {
+      const hitC = mapHitAt(e.clientX, e.clientY);
+      if (hitC && hitC.kind === "band") selectBand(hitC.id, { force: true });
+      return;
+    }
     const hit = mapHitAt(e.clientX, e.clientY);
     if (hit && hit.kind === "band") selectBand(hit.id, { force: true });
     else if (hit && hit.kind === "cell") {
@@ -4103,6 +4468,8 @@ function syncEngineForm() {
   if (shareWrap) shareWrap.hidden = !engineHasParam(name, "share_m");
   if (aidWrap) aidWrap.hidden = !engineHasParam(name, "aid_m");
   if (recipWrap) recipWrap.hidden = !engineHasParam(name, "recip_m");
+  if ($("f-farm-wrap")) $("f-farm-wrap").hidden = !engineHasParam(name, "farm_m");
+  applyParamChrome(name, "farm_m", "f-farm-title", "f-farm-hint", "f-farm");
   applyParamChrome(name, "share_m", "f-share-title", "f-share-hint", "f-share");
   applyParamChrome(name, "aid_m", "f-aid-title", "f-aid-hint", "f-aid");
   applyParamChrome(name, "recip_m", "f-recip-title", null, "f-recip");
@@ -4166,6 +4533,14 @@ function collectRunDraft() {
       notes.push("优先回助需要 AID_M>0 才有预算。当前 AID_M=0，优先机制不会发生。未暗改 AID_M。");
     }
   }
+  if (engineHasParam(engine, "farm_m")) {
+    const spec = engineParamMeta(engine, "farm_m") || { min: 0, max: 1000 };
+    const farm = OverviewLogic.parseStrictInt($("f-farm") ? $("f-farm").value : "0", {
+      name: (spec.label || "FARM_M"), min: spec.min != null ? spec.min : 0,
+      max: spec.max != null ? spec.max : 1000 });
+    if (!farm.ok) return { ok: false, error: farm.error };
+    body.farm_m = farm.value;
+  }
   const lines = [
     "引擎 " + engine,
     "seed " + body.seed,
@@ -4175,6 +4550,7 @@ function collectRunDraft() {
     body.share_m != null ? ("SHARE_M " + body.share_m + "‰") : "SHARE_M 此引擎无此参数",
     body.aid_m != null ? ("AID_M " + body.aid_m + "‰") : "AID_M 此引擎无此参数（缺指标不填 0）",
     body.recip_m != null ? ("RECIP_M " + body.recip_m + "‰") : "RECIP_M 此引擎无此参数",
+    body.farm_m != null ? ("FARM_M " + body.farm_m + "‰") : "FARM_M 此引擎无此参数",
     "信息条件 " + body.arm,
   ];
   return { ok: true, body: body, notes: notes, summary: lines.join(" · ") };
@@ -4227,6 +4603,8 @@ async function confirmStartRun() {
 }
 
 window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, renderRuns, boot, startRun, setLayer,
+  cellCenter, matchAnimeSample, pickDefaultRun, fillAnimeChrome, isAnimeMode, applyCam,
+  paintConstructedColocated, clearConstructed, openConstructedRoster, paintControlledAbsentHistory,
   setPlayMode, focusEvent, cancelFx, loadBand, gotoEventYear, stepEventYear, findEventByKey,
   bumpOp, opAlive, bandAccept, bandCacheKey, applyBandDossier, setPlaying, tickEvents, tick,
   navResult, beginYearLoad, endYearLoad, afterPlayStep, retryYear, reapNavUi, renderYearFailBar,

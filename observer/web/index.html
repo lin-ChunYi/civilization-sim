@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="zh-CN" class="game">
+<html lang="zh-CN" class="game anime">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>文明观察台 · CHRONICLE</title>
-<link rel="stylesheet" href="/static/style.css">
+<title>文明观察台 · 动漫世界</title>
+<link rel="stylesheet" href="/static/style.css?v=f4">
+<link rel="stylesheet" href="/static/anime-ui.css?v=f4">
 </head>
 <body>
 <div class="tabletop" aria-hidden="true"></div>
@@ -43,6 +44,75 @@
 </nav>
 
 <div id="toast" class="toast" hidden></div>
+<nav class="an-nav" id="an-nav" aria-label="主导航">
+  <div class="an-brand">青空观察</div>
+  <div class="an-sub">动漫世界</div>
+  <button type="button" data-tab="world" class="on">世界</button>
+  <button type="button" data-tab="network">人群</button>
+  <button type="button" data-tab="metrics">历史</button>
+  <button type="button" data-tab="runs">创建世界</button>
+  <button type="button" id="an-research">研究模式</button>
+</nav>
+<div class="an-top" id="an-top">
+  <div class="an-top-main">
+    <div class="an-menu" id="an-menu">
+      <select id="an-run" class="an-run" aria-label="切换世界"></select>
+      <select id="an-speed" aria-label="速率">
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+      </select>
+      <button type="button" id="an-continue">继续演化</button>
+    </div>
+    <div class="an-yearline">第 <b id="an-year">0</b> 年</div>
+    <div class="an-top-meta"><span id="an-pop-top">—</span>人 · <span id="an-bands-top">—</span>个群体</div>
+    <button type="button" id="an-prev" title="上一年">◀</button>
+    <button type="button" id="an-play" class="primary">播放</button>
+    <button type="button" id="an-next" title="下一年">▶</button>
+    <button type="button" id="an-more" aria-expanded="false">菜单</button>
+  </div>
+  <input id="an-scrub" type="range" min="0" max="300" value="0" aria-label="年份">
+  <div class="an-status" id="an-status">正在看第 — 年 · 已计算到第 — 年</div>
+</div>
+<div class="an-badge" id="an-badge"></div>
+<div class="an-year-fail" id="an-year-fail" hidden></div>
+<div class="an-setup" id="an-setup" hidden></div>
+<div class="an-ev-drawer" id="an-ev-drawer" hidden>
+  <div class="an-ev-drawer-h">
+    <strong>本年事件 <span id="an-ev-count">0</span></strong>
+    <select id="an-ev-filter" aria-label="事件类别">
+      <option value="all">全部</option>
+      <option value="field_built">开垦</option>
+      <option value="farm_harvest">收成</option>
+      <option value="migrate">迁移</option>
+      <option value="aid">援助</option>
+      <option value="repay">回助</option>
+      <option value="share">信息</option>
+      <option value="split">分裂</option>
+      <option value="field_decay">退化</option>
+    </select>
+    <button type="button" id="an-ev-close">关闭</button>
+  </div>
+  <div id="an-ev-all"></div>
+</div>
+<div class="an-cell-roster" id="an-cell-roster" hidden></div>
+<aside class="an-stats" id="an-stats">
+  <h3>世界概览</h3>
+  <div class="an-kv"><span>人口</span><b id="an-pop">—</b></div>
+  <div class="an-kv"><span>群体</span><b id="an-bands">—</b></div>
+  <div class="an-kv"><span>耕地</span><b id="an-fields">—</b></div>
+  <div class="an-kv"><span>本年作物</span><b id="an-food">—</b></div>
+  <div class="an-kv"><span>本年迁移</span><b id="an-mig">—</b></div>
+  <div class="an-kv"><span>本年援助</span><b id="an-aid">—</b></div>
+  <div class="an-layers" id="an-layers"></div>
+</aside>
+<div class="an-bottom" id="an-bottom">
+  <button type="button" class="an-bottom-toggle" id="an-bottom-toggle">展开档案</button>
+  <div class="an-panel" id="an-events"></div>
+  <div class="an-panel" id="an-card"></div>
+  <div class="an-panel" id="an-mini"></div>
+</div>
 
 <main>
 <section id="tab-world" class="world-shell">
@@ -88,6 +158,7 @@
           <button class="btn small" data-layer="store">储粮</button>
           <button id="v-mem" class="btn small" data-layer="mem">记忆</button>
           <button class="btn small" data-layer="event">事件</button>
+          <button class="btn small" data-layer="fields">耕地</button>
           <button class="btn small" data-layer="flow">流向</button>
         </div>
         <div class="map-tools">
@@ -178,6 +249,9 @@
               <button type="button" data-type="share">信息</button>
               <button type="button" data-type="aid">援助</button>
               <button type="button" data-type="repay">回助</button>
+              <button type="button" data-type="field_built">开垦</button>
+              <button type="button" data-type="farm_harvest">采收</button>
+              <button type="button" data-type="field_decay">弃耕</button>
             </div>
           </div>
           <p class="muted" id="ev-load-note"></p>
@@ -305,6 +379,16 @@
       <button type="button" class="btn primary" id="cmp-go">对照</button>
     </div>
     <p class="muted" id="cmp-cfg">配置差异会列在这里。</p>
+    <div id="cmp-farm-maps" class="cmp-farm-maps" hidden>
+      <div>
+        <h4 class="subh">同年耕地图 A</h4>
+        <div id="cmp-farm-a"></div>
+      </div>
+      <div>
+        <h4 class="subh">同年耕地图 B</h4>
+        <div id="cmp-farm-b"></div>
+      </div>
+    </div>
     <div class="tablewrap"><table id="cmp-table"></table></div>
     <h4 class="subh">同年事件对照（不是因果）</h4>
     <div class="tablewrap compact"><table id="cmp-events"></table></div>
@@ -348,6 +432,16 @@
         <label id="f-aid-wrap" hidden><span id="f-aid-title">食物援助比例 AID_M</span>
           <input id="f-aid" type="text" inputmode="numeric" value="0" autocomplete="off">
           <span class="field-hint muted" id="f-aid-hint"></span></label>
+        <label id="f-farm-wrap" hidden>
+          <span id="f-farm-title">FARM_M 投到耕作上的折算劳动比例</span>
+          <input id="f-farm" type="text" inputmode="numeric" value="0" autocomplete="off">
+          <span class="field-hint muted" id="f-farm-hint">默认 0 = 不耕作。25% = 250‰，50% = 500‰。不会暗改其他参数。耕地规模不是 kcal。</span>
+          <span class="recip-presets">
+            <button type="button" class="btn small" id="farm-off">不耕作（0）</button>
+            <button type="button" class="btn small" id="farm-25">25% 耕作（250）</button>
+            <button type="button" class="btn small" id="farm-50">50% 耕作（500）</button>
+          </span>
+        </label>
         <label id="f-recip-wrap" hidden>
           <span id="f-recip-title">优先回助 RECIP_M</span>
           <input id="f-recip" type="text" inputmode="numeric" value="0" autocomplete="off">
@@ -364,7 +458,7 @@
           <button type="button" class="btn small" data-preset="aid">预设：仅援助</button>
           <button type="button" class="btn small" data-preset="recip">预设：援助+优先回助</button>
         </div>
-        <p class="muted" id="forge-engine-note">引擎列表来自后台能力，现含 EXP-01 至 EXP-06。缺指标写「未记录」，不填 0，也不用 EXP-03 冒充 EXP-01/02。默认引擎仍是 EXP-03。</p>
+        <p class="muted" id="forge-engine-note">引擎列表来自后台能力。EXP-07 才有 FARM_M。缺指标写「未记录」或「不支持耕作」，不填 0 冒充。默认引擎仍是 EXP-03。不为旧 EXP-06 提供升级农业按钮。</p>
         <button id="b-start" class="btn primary forge-go">核对并创生</button>
         <div id="forge-confirm" class="director-card" hidden>
           <div class="dir-title">确认提交</div>
@@ -396,7 +490,10 @@
 </main>
 
 <footer id="footer"></footer>
-<script src="/static/motion.js"></script>
-<script src="/static/app.js"></script>
+<script src="/static/motion.js?v=f4"></script>
+<script src="/static/farming.js?v=f4"></script>
+<script src="/static/anime-cases.js?v=f4"></script>
+<script src="/static/anime-scene.js?v=f4"></script>
+<script src="/static/app.js?v=f4"></script>
 </body>
 </html>
