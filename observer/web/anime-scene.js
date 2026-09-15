@@ -115,49 +115,40 @@
         cloth: rec.pal.cloth, hair: rec.pal.hair, sash: rec.pal.sash, tag: rec.pal.tag,
       };
     },
+    ingestPlan(root, plan) {
+      if (!plan || !Array.isArray(plan.identities)) return this.table(root);
+      this.ingest(root, plan.identities.map((it) => ({
+        id: it.id, t: it.first_year, parent: it.parent_id || null,
+      })));
+      const through = (plan.source && plan.source.identity_complete_through != null)
+        ? plan.source.identity_complete_through : null;
+      this.ready[root] = { ok: true, through: through };
+      return this.table(root);
+    },
     async ensure(run, opts) {
       opts = opts || {};
       const root = this.rootOf(run);
-      if (this.ready[root]) {
+      const recorded = (run && run.years_recorded != null) ? run.years_recorded : 0;
+      const already = this.ready[root];
+      if (already && already.ok && (already.through == null || already.through >= recorded)) {
         if (opts.rec && opts.rec.bands) this.ingest(root, opts.rec.bands.map((b) => ({ id: b.id, t: opts.rec.t, snap: b })));
         return this.table(root);
       }
-      const appearances = [];
       const api = opts.api;
-      const from = (run && run.lineage && run.lineage.from_year != null) ? run.lineage.from_year : 0;
+      let complete = false;
       if (typeof api === "function") {
         try {
-          const y0 = await api("/api/runs/" + run.run_id + "/year/" + from);
-          (y0.bands || []).forEach((b) => appearances.push({ id: b.id, t: y0.t != null ? y0.t : from, snap: b }));
-        } catch (e) { /* year 0 may be pending */ }
-        const ser = opts.series || [];
-        let prev = null;
-        const extra = [];
-        ser.forEach((row) => {
-          const n = row && row.agg ? row.agg.bands : null;
-          if (prev != null && n != null && n > prev) extra.push(row.t);
-          prev = n;
-        });
-        for (let i = 0; i < extra.length; i++) {
-          const t = extra[i];
-          if (t === from) continue;
-          try {
-            const rec = await api("/api/runs/" + run.run_id + "/year/" + t);
-            (rec.events || []).forEach((ev) => {
-              if (ev.type === "split") {
-                const child = ev.band || ev.child;
-                if (child) appearances.push({ id: child, t: rec.t, parent: ev.parent });
-              }
-            });
-            (rec.bands || []).forEach((b) => appearances.push({ id: b.id, t: rec.t, snap: b }));
-          } catch (e) { /* skip */ }
-        }
+          const plan = await api("/api/runs/" + run.run_id + "/watch-plan");
+          if (plan && plan.schema === "watch-plan-1" && Array.isArray(plan.identities)) {
+            this.ingestPlan(root, plan);
+            complete = !!(this.ready[root] && this.ready[root].ok);
+          }
+        } catch (e) { complete = false; }
       }
       if (opts.rec && opts.rec.bands) {
-        opts.rec.bands.forEach((b) => appearances.push({ id: b.id, t: opts.rec.t, snap: b }));
+        this.ingest(root, opts.rec.bands.map((b) => ({ id: b.id, t: opts.rec.t, snap: b })));
       }
-      this.ingest(root, appearances);
-      this.ready[root] = true;
+      if (!complete) delete this.ready[root];
       return this.table(root);
     },
   };
@@ -296,7 +287,7 @@
     const dir = (opts && opts.dir) || "e";
     const Motion = (typeof root !== "undefined" && root.Motion) || (typeof globalThis !== "undefined" ? globalThis.Motion : null);
     if (Motion && typeof Motion.samplePose === "function") {
-      const action = pose === "select" ? "idle" : (pose === "farm" ? "give" : pose);
+      const action = pose === "select" ? "idle" : (pose === "farm" ? "till" : pose);
       return Motion.samplePose({
         id: opts && opts.id, action: action, phase: phase, dir: dir, role: (opts && opts.role) || "solo",
       });
@@ -306,6 +297,27 @@
       joints: { hipY: 0, lThigh: 5, rThigh: -5, lShin: 6, rShin: 8, lArm: -14, rArm: 12, lFore: 0, rFore: 0, torso: 0 },
     };
   }
+  const ANIME_JOINT = { shinY: 12, foreX: 10, foreY: 15 };
+  function applyPose(rootEl, sample) {
+    if (!rootEl || !sample || !sample.joints) return;
+    const j = sample.joints;
+    rootEl.setAttribute("data-phase", Number(sample.phase || 0).toFixed(4));
+    rootEl.setAttribute("data-dir", sample.dir || "e");
+    rootEl.setAttribute("data-action", sample.action || "idle");
+    rootEl.setAttribute("data-lthigh", j.lThigh.toFixed(2));
+    rootEl.setAttribute("data-rthigh", j.rThigh.toFixed(2));
+    const set = (sel, tr) => { const n = rootEl.querySelector(sel); if (n) n.setAttribute("transform", tr); };
+    set(".m-hip", "translate(0," + j.hipY.toFixed(2) + ")");
+    set(".m-leg-l", "rotate(" + j.lThigh.toFixed(2) + ")");
+    set(".m-shin-l", "translate(0," + ANIME_JOINT.shinY + ") rotate(" + j.lShin.toFixed(2) + ")");
+    set(".m-leg-r", "rotate(" + j.rThigh.toFixed(2) + ")");
+    set(".m-shin-r", "translate(0," + ANIME_JOINT.shinY + ") rotate(" + j.rShin.toFixed(2) + ")");
+    set(".m-torso", "rotate(" + j.torso.toFixed(2) + ")");
+    set(".m-arm-l", "rotate(" + j.lArm.toFixed(2) + ")");
+    set(".m-fore-l", "translate(-" + ANIME_JOINT.foreX + "," + ANIME_JOINT.foreY + ") rotate(" + j.lFore.toFixed(2) + ")");
+    set(".m-arm-r", "rotate(" + j.rArm.toFixed(2) + ")");
+    set(".m-fore-r", "translate(" + ANIME_JOINT.foreX + "," + ANIME_JOINT.foreY + ") rotate(" + j.rFore.toFixed(2) + ")");
+  }
   function chibiBody(b, opts) {
     opts = opts || {};
     const pal = opts.pal || palOf(b && b.id);
@@ -313,7 +325,7 @@
       pose: opts.pose || "idle", phase: opts.phase, dir: opts.dir, id: b && b.id, role: opts.role,
     });
     const j = sample.joints;
-    const gift = sample.action === "give"
+    const gift = (sample.action === "give" || sample.action === "harvest")
       ? "<circle class=\"m-gift\" cx=\"12\" cy=\"-6\" r=\"2.4\" fill=\"" + pal.sash + "\"/>" : "";
     return "<g class=\"an-body motion-rig\" data-art=\"chibi-rig\" data-skin=\"chibi\" data-action=\"" +
       esc(sample.action || "idle") + "\" data-dir=\"" + esc(sample.dir || "e") +
@@ -779,7 +791,12 @@
             "<li>第 " + b.cell + " 格</li></ul></div></div>";
         } else {
           const known = !!(ident && ident.pal && ident.alias);
-          if (!known) {
+          const firstT = ident && ident.firstT;
+          if (known && Number.isFinite(firstT) && rec.t < firstT) {
+            card.innerHTML = "<p>" + esc(al) + " 当时尚未在记录中出现。</p>" +
+              "<p class=\"muted\">来源 ID " + esc(String(st.selBand)) +
+              " 第一次可核实出现是第 " + firstT + " 年。不是已经消失，也不把别的在世群体当成当前选中者。</p>";
+          } else if (!known) {
             card.innerHTML = "<p>找不到这个群体。</p>" +
               "<p class=\"muted\">来源 ID " + esc(String(st.selBand)) +
               " 从未在本世界身份表里出现。不是历史消失，也不把别的在世群体当成当前选中者。</p>";
@@ -822,6 +839,7 @@
     Identity: Identity, slotBands: slotBands, viewBoxFor: viewBoxFor, WORLD: WORLD,
     WORLD_MOBILE: WORLD_MOBILE, worldBase: worldBase, bubbleSpeech: bubbleSpeech,
     poseJoints: poseJoints, chibiBody: chibiBody, cmpId: cmpId,
+    applyPose: applyPose, ANIME_JOINT: ANIME_JOINT,
   };
   if (typeof globalThis !== "undefined") globalThis.AnimeScene = root.AnimeScene;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -97,6 +97,30 @@ html:not(.anime) .an-ev-drawer,
 html:not(.anime) .an-cell-roster,
 html:not(.anime) .an-year-fail,
 html:not(.anime) .an-setup{display:none !important}
+html.anime #an-watch-start,html.anime #an-watch-start-m{
+  background:#fff8e4;border:1px solid #e2d08a;color:#4a3a12;font-weight:700
+}
+html.anime .an-watch-bar{
+  position:fixed;left:112px;right:186px;top:unset !important;bottom:116px !important;z-index:80;
+  background:rgba(255,255,255,.96);color:#2c3a28;border:1px solid #cfe0b8;
+  border-radius:14px;padding:10px 14px;box-shadow:0 12px 28px rgba(40,70,30,.18);
+  max-width:520px;
+}
+html.anime .an-watch-bar[hidden]{display:none !important}
+html.anime .an-watch-kicker{font-size:11px;letter-spacing:.08em;color:#6a7a50;text-transform:uppercase}
+html.anime #an-watch-title{font-weight:800;font-size:16px;margin:2px 0 6px}
+html.anime #an-watch-gap{margin:0 0 6px;color:#6a4a18;background:#fff4d6;border-radius:8px;padding:4px 8px;font-size:13px}
+html.anime #an-watch-copy{margin:0 0 6px;font-size:14px;line-height:1.4}
+html.anime .an-watch-ctl{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+html.anime .an-watch-ctl button{
+  border:1px solid #cfe0b8;background:#eef6e4;border-radius:10px;padding:6px 10px;cursor:pointer;font-weight:700
+}
+html.anime #an-watch-exit{background:#5ea34a;color:#fff;border-color:#4d8a3c}
+html.anime .an-watch-actors{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0}
+html.anime .an-watch-actor{border:0;background:#e8f2d8;border-radius:999px;padding:3px 8px;cursor:pointer;font-size:12px}
+@media (max-width:900px){
+  html.anime .an-watch-bar{left:6px;right:6px;top:auto;bottom:108px;max-width:none}
+}
 html.anime #continue-dialog{
   background:rgba(255,255,255,.98);color:#2c3a28;border:1px solid #cfe0b8;
   bottom:auto;top:88px;z-index:90;
