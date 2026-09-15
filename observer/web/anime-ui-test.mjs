@@ -135,7 +135,7 @@ const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--disable-http-cache",
   `--remote-debugging-port=${CDP}`, `--user-data-dir=${USER}`,
   "--window-size=1536,1024",
-  BASE + "/?v=f9#tab=world&run=" + SAMPLE + "&t=2",
+  BASE + "/?v=w5#tab=world&run=" + SAMPLE + "&t=0",
 ], { stdio: "ignore" });
 
 let ws;
@@ -188,6 +188,56 @@ try {
     if (await ev("!!(window.__obs && window.__obs.S && window.__obs.S.run && document.querySelector('#map .an-chibi'))")) break;
   }
   ok("B0 opened stable preset", (await ev("window.__obs.S.run && window.__obs.S.run.run_id")) === SAMPLE);
+
+  const CEDAR = "7567856178022945294";
+  await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  await ev("window.__obs.gotoYear(0,{opGen:window.__obs.S.opGen})");
+  await sleep(700);
+  const cedarHit = await click('#map .an-chibi[data-band="' + CEDAR + '"] .an-chibi-zoom')
+    || await click('#map .an-chibi[data-band="' + CEDAR + '"]');
+  ok("B-card-src click 云杉2 chibi", !!(cedarHit && cedarHit.w > 8), JSON.stringify(cedarHit));
+  await sleep(500);
+  const cardSrcHit = await click("#an-card details.an-card-src > summary");
+  ok("B-card-src Source summary is a real click target", !!(cardSrcHit && cardSrcHit.w > 8), JSON.stringify(cardSrcHit));
+  await sleep(250);
+  const srcNow = await ev(`(function(){
+    var d=document.querySelector('#an-card details.an-card-src');
+    var body=d && d.querySelector('.an-card-src-body');
+    var r=body && body.getBoundingClientRect();
+    return {
+      sel: window.__obs.S.selBand && String(window.__obs.S.selBand),
+      open: !!(d && d.open),
+      text: d && d.innerText,
+      hasId: !!(d && d.innerText && d.innerText.indexOf("${CEDAR}")>=0),
+      bodyH: r && r.height,
+      bodyTop: r && r.top,
+      bodyBottom: r && r.bottom
+    };
+  })()`);
+  ok("B-card-src opens with ID/cell after real click",
+    srcNow && srcNow.sel === CEDAR && srcNow.open && srcNow.hasId, JSON.stringify(srcNow));
+  await sleep(2000);
+  const srcStay = await ev(`(function(){
+    var d=document.querySelector('#an-card details.an-card-src');
+    var body=d && d.querySelector('.an-card-src-body');
+    var r=body && body.getBoundingClientRect();
+    var kv=document.querySelector('#an-card .an-card-kv');
+    return {
+      sel: window.__obs.S.selBand && String(window.__obs.S.selBand),
+      open: !!(d && d.open),
+      text: d && d.innerText,
+      hasId: !!(d && d.open && d.innerText && d.innerText.indexOf("${CEDAR}")>=0),
+      kvHasId: !!(kv && kv.innerText && kv.innerText.indexOf("${CEDAR}")>=0),
+      readable: !!(r && r.height>8 && r.bottom>0 && r.top<720)
+    };
+  })()`);
+  ok("B-card-src stays open after >1.5s refresh poll",
+    srcStay && srcStay.sel === CEDAR && srcStay.open && srcStay.hasId && !srcStay.kvHasId && srcStay.readable,
+    JSON.stringify(srcStay));
+  await shot("card-source-persist-1280x720.png", 1280, 720, false);
+  await send("Emulation.setDeviceMetricsOverride", { width: 1536, height: 1024, deviceScaleFactor: 1, mobile: false });
+  await ev("window.__obs.gotoYear(2,{opGen:window.__obs.S.opGen})");
+  await sleep(500);
 
   const namesT2 = await ev(`(function(){
     var A=window.AnimeScene, r=A.Identity.rootOf(window.__obs.S.run);
