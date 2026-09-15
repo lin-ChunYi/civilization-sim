@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>文明观察台 · 动漫世界</title>
-<link rel="stylesheet" href="/static/style.css?v=f9">
-<link rel="stylesheet" href="/static/anime-ui.css?v=f9">
+<link rel="stylesheet" href="/static/style.css?v=w2">
+<link rel="stylesheet" href="/static/anime-ui.css?v=w2">
 </head>
 <body>
 <div class="tabletop" aria-hidden="true"></div>
@@ -64,11 +64,13 @@
         <option value="4">4×</option>
       </select>
       <button type="button" id="an-continue">继续演化</button>
+      <button type="button" id="an-watch-start">看这段历史</button>
       <div class="an-menu-nav" id="an-menu-nav">
         <button type="button" data-tab="world">世界</button>
         <button type="button" data-tab="network">人群</button>
         <button type="button" data-tab="metrics">历史</button>
         <button type="button" data-tab="runs">创建世界</button>
+        <button type="button" id="an-watch-start-m">看这段历史</button>
         <button type="button" id="an-research-m">研究模式</button>
         <details class="an-access">
           <summary>访问设置</summary>
@@ -86,6 +88,24 @@
   </div>
   <input id="an-scrub" type="range" min="0" max="300" value="0" aria-label="年份">
   <div class="an-status" id="an-status">正在看第 — 年 · 已计算到第 — 年</div>
+</div>
+<div class="an-watch-bar" id="an-watch-bar" hidden>
+  <div class="an-watch-kicker">看这段历史</div>
+  <div id="an-watch-title"></div>
+  <p id="an-watch-gap" hidden></p>
+  <p id="an-watch-copy"></p>
+  <p id="an-watch-facts" class="muted"></p>
+  <p id="an-watch-missing" class="muted" hidden></p>
+  <p id="an-watch-status" class="muted"></p>
+  <div class="an-watch-actors" id="an-watch-actors"></div>
+  <div class="an-watch-ctl">
+    <button type="button" id="an-watch-prev">上一章</button>
+    <button type="button" id="an-watch-pause">暂停</button>
+    <button type="button" id="an-watch-next">下一章</button>
+    <button type="button" id="an-watch-exit">自由观察</button>
+    <button type="button" id="an-watch-source">来源</button>
+    <button type="button" id="an-watch-retry" hidden>重试</button>
+  </div>
 </div>
 <div class="an-badge" id="an-badge"></div>
 <div class="an-year-fail" id="an-year-fail" hidden></div>
@@ -502,10 +522,11 @@
 </main>
 
 <footer id="footer"></footer>
-<script src="/static/motion.js?v=f9"></script>
-<script src="/static/farming.js?v=f9"></script>
-<script src="/static/anime-cases.js?v=f9"></script>
-<script src="/static/anime-scene.js?v=f9"></script>
-<script src="/static/app.js?v=f9"></script>
+<script src="/static/motion.js?v=w2"></script>
+<script src="/static/farming.js?v=w2"></script>
+<script src="/static/anime-cases.js?v=w2"></script>
+<script src="/static/anime-scene.js?v=w2"></script>
+<script src="/static/watch-player.js?v=w2"></script>
+<script src="/static/app.js?v=w2"></script>
 </body>
 </html>

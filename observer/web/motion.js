@@ -101,6 +101,30 @@
     if (u < 0.7) return lean;
     return mixPose(lean, idle, (u - 0.7) / 0.3);
   }
+  function tillAt(phase) {
+    const u = clamp01(phase);
+    const idle = IDLE;
+    const raise = { hipY: 0.2, lThigh: 6, rThigh: -4, lShin: 8, rShin: 6, lArm: 10, rArm: -82, lFore: 4, rFore: -18, torso: -6 };
+    const bend = { hipY: 2.4, lThigh: 16, rThigh: 8, lShin: 10, rShin: 12, lArm: 14, rArm: -38, lFore: 8, rFore: 22, torso: 18 };
+    const plant = { hipY: 3.0, lThigh: 18, rThigh: 10, lShin: 12, rShin: 14, lArm: 16, rArm: 8, lFore: 10, rFore: 28, torso: 22 };
+    if (u <= 0) return Object.assign({}, idle);
+    if (u < 0.22) return mixPose(idle, raise, u / 0.22);
+    if (u < 0.45) return mixPose(raise, bend, (u - 0.22) / 0.23);
+    if (u < 0.7) return mixPose(bend, plant, (u - 0.45) / 0.25);
+    return mixPose(plant, idle, (u - 0.7) / 0.3);
+  }
+  function harvestAt(phase) {
+    const u = clamp01(phase);
+    const idle = IDLE;
+    const reach = { hipY: 1.2, lThigh: 10, rThigh: 4, lShin: 8, rShin: 8, lArm: -18, rArm: -58, lFore: -8, rFore: -12, torso: 12 };
+    const pick = { hipY: 2.2, lThigh: 14, rThigh: 6, lShin: 10, rShin: 10, lArm: -22, rArm: -36, lFore: -6, rFore: 16, torso: 16 };
+    const basket = { hipY: 0.6, lThigh: 6, rThigh: -2, lShin: 8, rShin: 6, lArm: -48, rArm: 36, lFore: -16, rFore: -28, torso: 4 };
+    if (u <= 0) return Object.assign({}, idle);
+    if (u < 0.25) return mixPose(idle, reach, u / 0.25);
+    if (u < 0.5) return mixPose(reach, pick, (u - 0.25) / 0.25);
+    if (u < 0.75) return mixPose(pick, basket, (u - 0.5) / 0.25);
+    return mixPose(basket, idle, (u - 0.75) / 0.25);
+  }
   function foot(thigh, shin, squash) {
     const t = thigh * Math.PI / 180;
     const s = (thigh + shin) * Math.PI / 180;
@@ -136,6 +160,8 @@
     else if (action === "receive") joints = aidRecvAt(phase);
     else if (action === "talk") joints = talkAt(phase);
     else if (action === "listen") joints = listenAt(phase);
+    else if (action === "till" || action === "farm") joints = tillAt(phase);
+    else if (action === "harvest") joints = harvestAt(phase);
     else joints = Object.assign({}, IDLE);
     const lFoot = foot(joints.lThigh, joints.lShin, xform.squash);
     const rFoot = foot(joints.rThigh, joints.rShin, xform.squash);
@@ -350,7 +376,7 @@
     wrapPhase: wrapPhase, clamp01: clamp01, skinOf: skinOf,
     samplePose: samplePose, rigMarkup: rigMarkup, applyPose: applyPose,
     aggregate: aggregate, aidMark: aidMark, contactRows: contactRows,
-    gaitAt: gaitAt,
+    gaitAt: gaitAt, tillAt: tillAt, harvestAt: harvestAt, IDLE: IDLE,
   };
   root.Motion = Motion;
   if (typeof globalThis !== "undefined") globalThis.Motion = Motion;

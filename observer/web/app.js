@@ -2253,6 +2253,9 @@ function showRail(name) {
 }
 function selectBand(id, opts) {
   opts = opts || {};
+  if (!opts.fromWatch && typeof WatchPlayer !== "undefined" && WatchPlayer.active && WatchPlayer.active()) {
+    WatchPlayer.exit({ reason: "select-band" });
+  }
   if (S.constructedRec) {
     if (!opts.force && S.selBand === id) S.selBand = null;
     else S.selBand = id || null;
@@ -2470,6 +2473,18 @@ function playDelay() {
 function walkDuration() {
   return Math.max(80, 1100 / Math.max(S.speed || 1, 0.25));
 }
+function farmDuration() {
+  return Math.max(120, 2000 / Math.max(S.speed || 1, 0.25));
+}
+function poseTheRig(rig, sample) {
+  if (!rig || !sample) return;
+  const sc = rootAnimeScene();
+  if (rig.getAttribute("data-art") === "chibi-rig" && sc && typeof sc.applyPose === "function") {
+    sc.applyPose(rig, sample);
+  } else if (typeof Motion !== "undefined") {
+    Motion.applyPose(rig, sample);
+  }
+}
 function tick() {
   if (!S.playing) return;
   const myOp = S.opGen;
@@ -2506,6 +2521,9 @@ function tick() {
   });
 }
 function setPlaying(v) {
+  if (v && typeof WatchPlayer !== "undefined" && WatchPlayer.active && WatchPlayer.active()) {
+    WatchPlayer.exit({ reason: "free-play" });
+  }
   const was = S.playing;
   if (!v && was) bumpOp();
   S.playing = v;
@@ -2975,7 +2993,7 @@ function applyMotionTick(u) {
       w.setAttribute("data-stage", UnitArt.migrateStage(u));
       const rig = w.querySelector(".motion-rig");
       if (rig && typeof Motion !== "undefined") {
-        Motion.applyPose(rig, Motion.samplePose({
+        poseTheRig(rig, Motion.samplePose({
           id: anim.bandId, skin: anim.skin, action: "walk", dir: anim.dir, phase: u,
         }));
       }
@@ -2999,15 +3017,25 @@ function applyMotionTick(u) {
     const donor = wrap.querySelector(".motion-rig[data-role='donor']");
     const recv = wrap.querySelector(".motion-rig[data-role='receiver']");
     if (donor) {
-      Motion.applyPose(donor, Motion.samplePose({
+      poseTheRig(donor, Motion.samplePose({
         id: anim.donorId, skin: anim.donorSkin,
         action: anim.kind === "aid" ? "give" : "talk", dir: "e", phase: u, role: "donor",
       }));
     }
     if (recv) {
-      Motion.applyPose(recv, Motion.samplePose({
+      poseTheRig(recv, Motion.samplePose({
         id: anim.recvId, skin: anim.recvSkin,
         action: anim.kind === "aid" ? "receive" : "listen", dir: "w", phase: u, role: "receiver",
+      }));
+    }
+    return;
+  }
+  if (anim.kind === "till" || anim.kind === "harvest") {
+    const wrap = document.getElementById("fx-farm");
+    const rig = wrap && wrap.querySelector(".motion-rig");
+    if (rig && typeof Motion !== "undefined") {
+      poseTheRig(rig, Motion.samplePose({
+        id: anim.bandId, action: anim.kind, dir: "e", phase: u, role: "solo",
       }));
     }
   }
@@ -3094,18 +3122,41 @@ function paintFarmAction(overlay, ev, reduced) {
   const xy = cellCenter(S.map.cells[ev.cell]);
   const sc = rootAnimeScene();
   const rootId = sc.Identity.rootOf(S.run);
-  const pid = (ev.participants && ev.participants[0]) || ev.band;
+  const parts = (ev.participants && ev.participants.length) ? ev.participants.slice() : (ev.band ? [ev.band] : []);
+  const pid = parts[0];
   const rec = recNow();
   const living = rec && rec.bands.find((b) => String(b.id) === String(pid));
   const band = living || { id: pid || "farm", size: 1, cell: ev.cell };
-  const wrap = svgEl("g", { id: "fx-farm", "data-fx": ev.type, "data-event-cell": String(ev.cell) });
+  const pose = ev.type === "field_built" ? "till" : "harvest";
+  const ctx = motionCtx();
+  let u0 = reduced ? 1 : 0;
+  if (!reduced && S.fxAnim && sameMotionCtx(S.fxAnim.ctx, ctx) && (S.fxAnim.kind === pose)) {
+    u0 = Math.min(1, S.fxAnim.phase || 0);
+  }
+  const wrap = svgEl("g", { id: "fx-farm", "data-fx": ev.type, "data-event-cell": String(ev.cell), "data-action": pose });
   wrap.setAttribute("transform", "translate(" + xy[0].toFixed(1) + "," + xy[1].toFixed(1) + ")");
   wrap.innerHTML = sc.chibi(band, 0, 0, {
-    pose: reduced ? "idle" : "give", noTag: true, scale: 2.0, phase: 0.35, role: "solo", dir: "e",
+    pose: reduced ? "idle" : pose, noTag: true, scale: 2.0, phase: u0, role: "solo", dir: "e",
     alias: sc.Identity.alias(rootId, pid), pal: sc.Identity.pal(rootId, pid),
   });
   overlay.appendChild(wrap);
-  fxCaption(overlay, xy[0], xy[1] - 28, ev.type === "field_built" ? "开垦（事件格）" : "收成（事件格，不是年末位置）");
+  const who = parts.map((id) => sc.Identity.alias(rootId, id)).join("、");
+  const cap = ev.type === "field_built"
+    ? ((who || "有人") + "开垦（事件格，示意动作；新地当年没有收成）")
+    : ((who || "有人") + "收成（事件格，不是年末位置）");
+  fxCaption(overlay, xy[0], xy[1] - 28, cap);
+  if (!reduced) {
+    const gen = S.fxGen;
+    if (!(S.fxAnim && sameMotionCtx(S.fxAnim.ctx, ctx) && S.fxAnim.kind === pose)) {
+      S.fxAnim = {
+        gen: gen, t0: performance.now() - u0 * farmDuration(), dur: farmDuration(),
+        kind: pose, ctx: ctx, phase: u0, bandId: String(pid || ""),
+      };
+    } else {
+      S.fxAnim.gen = gen;
+    }
+    startFxLoop();
+  }
 }
 function paintPairAction(overlay, ev, plan, reduced) {
   if (plan.cell == null || !S.map.cells[plan.cell]) return;
@@ -3752,9 +3803,14 @@ async function openRun(id, opts) {
       try { await rootAnimeScene().Identity.ensure(run, { api: api, series: ser.series }); }
       catch (e) { /* identity fills from the opened year if history fetch fails */ }
     }
+    if (S.epoch !== myEpoch || !opAlive(myOp)) return { ok: false, reason: "stale" };
   } catch (e) {
     if (S.epoch === myEpoch) flash("打开运行失败：" + e.message, true);
     return { ok: false, reason: e.message };
+  }
+  if (S.epoch !== myEpoch || !opAlive(myOp)) return { ok: false, reason: "stale" };
+  if (typeof WatchPlayer !== "undefined" && WatchPlayer.active && WatchPlayer.active()) {
+    WatchPlayer.exit({ reason: "open-run" });
   }
   S.run = run;
   S.meta = run.meta || null;
@@ -4115,6 +4171,11 @@ async function boot() {
   });
   $("speed").addEventListener("change", (e) => { S.speed = +e.target.value; });
   $("scrub").addEventListener("input", (e) => {
+    if (typeof WatchPlayer !== "undefined" && WatchPlayer.active && WatchPlayer.active()) {
+      const ch = WatchPlayer.state && WatchPlayer.state().chapter;
+      if (ch && Number(e.target.value) === Number(ch.year)) return;
+      WatchPlayer.exit({ reason: "scrub" });
+    }
     setPlaying(false);
     bumpOp();
     gotoYear(+e.target.value, { opGen: S.opGen });
@@ -4200,6 +4261,11 @@ async function boot() {
   if ($("an-next")) $("an-next").addEventListener("click", () => { if ($("b-next")) $("b-next").click(); });
   if ($("an-continue")) $("an-continue").addEventListener("click", () => openContinueDialog());
   if ($("an-scrub")) $("an-scrub").addEventListener("input", (e) => {
+    if (typeof WatchPlayer !== "undefined" && WatchPlayer.active && WatchPlayer.active()) {
+      const ch = WatchPlayer.state && WatchPlayer.state().chapter;
+      if (ch && Number(e.target.value) === Number(ch.year)) return;
+      WatchPlayer.exit({ reason: "scrub" });
+    }
     setPlaying(false); bumpOp(); gotoYear(+e.target.value, { opGen: S.opGen });
   });
   if ($("an-run")) $("an-run").addEventListener("change", (e) => { if (e.target.value) openRun(e.target.value); });
@@ -4261,6 +4327,31 @@ async function boot() {
     (si.ui_build ? " · UI 标签 " + si.ui_build : "") +
     " · 本页只显示本服务自己的数据库。当前回放用该次运行自己的引擎哈希，不是默认引擎。" +
     "页脚不是浏览器已加载网页的哈希。";
+
+  if (typeof WatchPlayer !== "undefined" && WatchPlayer.init) {
+    WatchPlayer.init({
+      api: api, $: $,
+      gotoYear: (t, o) => gotoYear(t, Object.assign({ opGen: S.opGen }, o || {})),
+      focusEvent: (ev, o) => focusEvent(ev, o),
+      cancelFx: cancelFx, setPlaying: setPlaying, showTab: showTab,
+      selectBand: selectBand, recNow: recNow, flash: flash,
+      getState: () => ({ run: S.run, t: S.t, speed: S.speed, reduceMotion: S.reduceMotion }),
+      alias: (id) => {
+        const sc = rootAnimeScene();
+        if (!sc || !S.run) return String(id);
+        return sc.Identity.alias(sc.Identity.rootOf(S.run), id);
+      },
+      ingestPlan: (plan) => {
+        const sc = rootAnimeScene();
+        if (sc && S.run) sc.Identity.ingestPlan(sc.Identity.rootOf(S.run), plan);
+      },
+      openEventSource: (eid) => {
+        if ($("an-ev-drawer")) $("an-ev-drawer").hidden = false;
+        const d = document.querySelector('#an-ev-all .an-ev-src[data-eid="' + eid + '"]');
+        if (d) d.open = true;
+      },
+    });
+  }
 
   await refresh();
   const hp = hashParams();
@@ -4669,7 +4760,10 @@ window.__obs = { S, api, esc, ykey, openRun, gotoYear, selectBand, refresh, rend
   clearRelEdgeCard, fillRelEdgeCard, UnitArt, paintDirectorFx, OverviewLogic, DirectorLogic,
   syncEngineForm, engineHasParam, layoutPlayDock, compactPlay, Motion: typeof Motion !== "undefined" ? Motion : null,
   motionCtx, sameMotionCtx, applyMotionTick, startFxLoop, fillMotionGroups,
-  ContinuationLogic, openContinueDialog, hideContinueDialog, confirmContinue, maybeOpenContinuedRun };
+  ContinuationLogic, openContinueDialog, hideContinueDialog, confirmContinue, maybeOpenContinuedRun,
+  WatchPlayer: typeof WatchPlayer !== "undefined" ? WatchPlayer : null,
+  WatchLogic: typeof WatchLogic !== "undefined" ? WatchLogic : null,
+  poseTheRig: poseTheRig, farmDuration: farmDuration };
 
 if (!window.__OBS_MANUAL_BOOT__) {
   boot().catch((e) => {
