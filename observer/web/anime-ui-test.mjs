@@ -436,12 +436,21 @@ try {
     JSON.stringify({ mapIdent, people }));
   await click('#net-svg .net-node[data-b="' + (people && people.id) + '"]');
   await sleep(800);
+  const peopleSrcHit = await click("#an-card details.an-card-src > summary");
+  await sleep(200);
   const back = await ev(`(function(){
+    var d=document.querySelector('#an-card details.an-card-src');
+    var main=document.getElementById('an-card');
+    var kv=main && main.querySelector('.an-card-kv');
     return {
       hash: location.hash,
       tab: (location.hash.match(/tab=([^&]*)/)||[])[1],
       sel: window.__obs.S.selBand && String(window.__obs.S.selBand),
-      card: document.getElementById('an-card') && document.getElementById('an-card').innerText
+      card: main && main.innerText,
+      kv: kv && kv.innerText,
+      srcOpen: !!(d && d.open),
+      srcText: d && d.innerText,
+      srcHasId: !!(d && d.open && d.innerText && d.innerText.indexOf(String(window.__obs.S.selBand))>=0)
     };
   })()`);
   await ev("window.__obs.openRun('preset-anime-farm250',{initialYear:218})");
@@ -457,9 +466,11 @@ try {
     compact && compact.n > 6 && compact.long.length === 0, JSON.stringify(compact).slice(0, 360));
 
   ok("World→People→select→World keeps full ID and name",
-    back && back.tab === "world" && back.sel === String(people.id) && back.card && back.card.indexOf(String(people.id)) >= 0
-      && (!mapIdent || back.sel !== mapIdent.id || back.card.indexOf(mapIdent.alias) >= 0),
-    JSON.stringify(back).slice(0, 280));
+    back && back.tab === "world" && back.sel === String(people.id)
+      && peopleSrcHit && back.srcOpen && back.srcHasId
+      && (!mapIdent || back.sel !== mapIdent.id || (back.card && back.card.indexOf(mapIdent.alias) >= 0))
+      && !(back.kv && back.kv.indexOf(String(people.id)) >= 0),
+    JSON.stringify({ hit: peopleSrcHit, back }).slice(0, 360));
 
   const failYear = await ev(`(function(){
     var rec=window.__obs.S.years.get(window.__obs.S.run.run_id+'|300');
@@ -504,14 +515,32 @@ try {
         return {clicked:true, target:'#an-cell-roster button[data-band=${id}]'};
       })()`);
       await sleep(120);
+      let srcHit = await click("#an-card details.an-card-src > summary");
+      await sleep(120);
+      const opened = await ev("!!(document.querySelector('#an-card details.an-card-src') && document.querySelector('#an-card details.an-card-src').open)");
+      if (!opened) {
+        srcHit = await ev(`(function(){
+          var s=document.querySelector('#an-card details.an-card-src > summary');
+          if(!s) return null;
+          s.scrollIntoView({block:'end', inline:'nearest'});
+          s.click();
+          return {via:'summary.click', w:s.getBoundingClientRect().width, h:s.getBoundingClientRect().height};
+        })()`);
+        await sleep(120);
+      }
       const after = await ev(`(function(){
         var c=document.getElementById('an-card');
         var p=c && c.querySelector('.an-portrait');
+        var d=c && c.querySelector('details.an-card-src');
+        var kv=c && c.querySelector('.an-card-kv');
         return {
           sel: window.__obs.S.selBand,
           pid: p && p.getAttribute('data-band'),
           cloth: p && p.getAttribute('data-cloth'),
           text: c && c.innerText,
+          kv: kv && kv.innerText,
+          srcOpen: !!(d && d.open),
+          srcText: d && d.innerText,
           fixtureAlive: !!(window.__obs.S.constructedRec && window.__obs.S.constructedRec.constructed),
           nChibi: document.querySelectorAll('#map .an-chibi').length
         };
@@ -524,20 +553,24 @@ try {
         portraitId: after && after.pid,
         fixtureBefore: before,
         fixtureAfter: { fixtureAlive: after && after.fixtureAlive, nChibi: after && after.nChibi },
-        textHasId: !!(after && after.text && after.text.indexOf(id) >= 0),
+        srcHit: !!srcHit,
+        srcOpen: !!(after && after.srcOpen),
+        textHasId: !!(after && after.srcOpen && after.srcText && after.srcText.indexOf(id) >= 0),
+        idInMainKv: !!(after && after.kv && after.kv.indexOf(id) >= 0),
       });
     }
     await ev("window.__obs.clearConstructed && window.__obs.clearConstructed()");
     return { painted: painted, results: results };
   };
-  const cardOk = (r) => r.clicked && r.selectedId === r.id && r.portraitId === r.id && r.textHasId
+  const cardOk = (r) => r.clicked && r.selectedId === r.id && r.portraitId === r.id
+    && r.srcHit && r.srcOpen && r.textHasId && !r.idInMainKv
     && r.fixtureBefore && r.fixtureBefore.fixtureAlive && r.fixtureAfter && r.fixtureAfter.fixtureAlive;
   const c2 = await clickN(2);
   ok("B15 click 2 colocated IDs+portraits", c2.results.every(cardOk), JSON.stringify(c2.results));
   const c3 = await clickN(3);
   ok("B15 click 3 colocated IDs+portraits", c3.results.every(cardOk), JSON.stringify(c3.results.map((r) => ({ id: r.id, clicked: r.clicked, sel: r.selectedId, pid: r.portraitId, alive: r.fixtureAfter && r.fixtureAfter.fixtureAlive }))));
   const c6 = await clickN(6);
-  ok("B15 click 6 colocated via same-cell list", c6.results.every(cardOk), JSON.stringify(c6.results.map((r) => ({ id: r.id, clicked: r.clicked, sel: r.selectedId, pid: r.portraitId, alive: r.fixtureAfter && r.fixtureAfter.fixtureAlive }))));
+  ok("B15 click 6 colocated via same-cell list", c6.results.every(cardOk), JSON.stringify(c6.results.map((r) => ({ id: r.id, clicked: r.clicked, sel: r.selectedId, pid: r.portraitId, srcOpen: r.srcOpen, textHasId: r.textHasId, idInMainKv: r.idInMainKv, alive: r.fixtureAfter && r.fixtureAfter.fixtureAlive }))));
 
   await ev("window.__obs.openRun('preset-anime-farm250',{initialYear:218})");
   await sleep(1000);
