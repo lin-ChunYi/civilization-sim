@@ -111,6 +111,11 @@ html.anime .an-watch-kicker{font-size:11px;letter-spacing:.08em;color:#6a7a50;te
 html.anime #an-watch-title{font-weight:800;font-size:16px;margin:2px 0 6px}
 html.anime #an-watch-gap{margin:0 0 6px;color:#6a4a18;background:#fff4d6;border-radius:8px;padding:4px 8px;font-size:13px}
 html.anime #an-watch-copy{margin:0 0 6px;font-size:14px;line-height:1.4}
+html.anime .an-watch-src{
+  white-space:pre-wrap;font:12px/1.35 ui-monospace,Menlo,monospace;margin:6px 0 0;
+  background:#f4f7ee;border-radius:8px;padding:6px 8px;max-height:28vh;overflow:auto
+}
+html.anime .an-watch-src[hidden]{display:none !important}
 html.anime .an-watch-ctl{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 html.anime .an-watch-ctl button{
   border:1px solid #cfe0b8;background:#eef6e4;border-radius:10px;padding:6px 10px;cursor:pointer;font-weight:700

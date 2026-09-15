@@ -53,9 +53,51 @@
     if (Math.abs(x) >= 10) return String(Math.round(x));
     return x.toFixed(1).replace(/\.0$/, "");
   }
+  function fieldUnits(m) {
+    const n = Number(m);
+    if (!Number.isFinite(n)) return null;
+    const u = n / 1000;
+    if (Math.abs(u - Math.round(u)) < 1e-6) return String(Math.round(u));
+    return u.toFixed(1).replace(/\.0$/, "");
+  }
+  const RAW_MAIN = /\b(built_m|field_before_m|field_after_m|labour_m|harvested_kcal(?:_here_this_year)?|potential_kcal|uncollected_kcal|worked_m|weather_m|per_band_kcal|person_years|field_total_m|store_total|stock_total|aid_kcal_cum|births_cum|deaths_cum|migration_deaths|mig_deaths|remembered_kcal|remembered_last_year|field_m（|amount_m)\b/;
+  function rawInMain(text) {
+    return RAW_MAIN.test(String(text || ""));
+  }
+  function formatSourceFacts(ch) {
+    if (!ch) return "";
+    const lines = [];
+    if (ch.event_id) lines.push("event_id " + ch.event_id);
+    if (ch.cell != null) lines.push("cell " + ch.cell);
+    if (ch.from != null || ch.to != null) lines.push("from " + ch.from + " to " + ch.to);
+    const facts = ch.facts || {};
+    Object.keys(facts).forEach((k) => {
+      const f = facts[k];
+      if (!f) return;
+      let val = f.value;
+      if (val != null && typeof val === "object") {
+        try { val = JSON.stringify(val); } catch (e) { val = String(val); }
+      }
+      lines.push(k + " = " + (val == null ? "" : val)
+        + (f.unit ? " " + f.unit : "")
+        + (f.source ? " · " + f.source : "")
+        + (f.basis ? " · " + f.basis : "")
+        + (f.year != null ? " · year " + f.year : "")
+        + (f.note ? " · " + f.note : ""));
+    });
+    if (ch.basis_event_ids && ch.basis_event_ids.length) {
+      lines.push("basis_event_ids " + ch.basis_event_ids.join(", "));
+    }
+    return lines.join("\n");
+  }
+  function sharePhrase(facts) {
+    const py = factVal(facts, "person_years");
+    const share = py ? roundPy(py.value) : null;
+    return share ? ("按模型口粮约相当于 " + share + " 人一年的份额") : "";
+  }
   function narrate(ch, aliasFn, opts) {
     opts = opts || {};
-    if (!ch) return { title: "", copy: "", facts: "", banned: false };
+    if (!ch) return { title: "", copy: "", facts: "", source: "", banned: false };
     const facts = ch.facts || {};
     const who = names(ch.actor_ids, aliasFn);
     const title = ch.title || "";
@@ -64,28 +106,34 @@
       const pop = factVal(facts, "pop");
       const nb = factVal(facts, "bands");
       copy = "这是有完整记录的开局。"
-        + (pop ? ("当时一共 " + pop.value + " " + (pop.unit || "人") + "。") : "")
+        + (pop ? ("当时一共 " + pop.value + " 人。") : "")
         + (nb ? (nb.value + " 个群体住在这里。") : "")
         + "画面上的人物是群体代表，不是独立的个人。";
     } else if (ch.kind === "clearing") {
-      copy = (who || "有人") + "一行在这里开垦了土地。新开的地要到以后年份才可能有收成。";
+      const built = factVal(facts, "built_m") || factVal(facts, "amount_m");
+      const units = built ? fieldUnits(built.value) : null;
+      copy = (who || "有人") + "一行在这里开垦了土地"
+        + (units ? ("，按记录折合约 " + units + " 个耕作规模单位") : "")
+        + "。新开的地要到以后年份才可能有收成。";
     } else if (ch.kind === "harvest") {
-      const py = factVal(facts, "person_years");
-      const kcal = factVal(facts, "harvested_kcal");
-      const share = py ? roundPy(py.value) : null;
-      copy = (who || "有人") + "一行收获了食物"
-        + (share ? ("，按模型口粮约相当于 " + share + " 人一年的份额") : "")
-        + "。";
-      if (kcal && share == null) copy = (who || "有人") + "一行收获了食物。";
+      const share = sharePhrase(facts);
+      copy = (who || "有人") + "一行收获了食物" + (share ? ("，" + share) : "") + "。";
     } else if (ch.kind === "migrate") {
-      copy = (who || "有人") + "迁到了另一处。这是群体代表的位置变化，不是某个人走完了整段人生。";
+      const place = (ch.from != null && ch.to != null)
+        ? ("从第 " + ch.from + " 格迁到第 " + ch.to + " 格。")
+        : "迁到了另一处。";
+      copy = (who || "有人") + place + "这是群体代表的位置变化，不是某个人走完了整段人生。";
     } else if (ch.kind === "aid") {
       const a = (ch.actor_ids || [])[0], b = (ch.actor_ids || [])[1];
-      copy = aliasOf(a, aliasFn) + "把一部分粮食交给" + aliasOf(b, aliasFn) + "。";
+      const share = sharePhrase(facts);
+      copy = aliasOf(a, aliasFn) + "把一部分粮食交给" + aliasOf(b, aliasFn)
+        + (share ? ("，" + share) : "") + "。";
     } else if (ch.kind === "repay") {
       const a = (ch.actor_ids || [])[0], b = (ch.actor_ids || [])[1];
+      const share = sharePhrase(facts);
       copy = "这次接收帮助的群体，以前也帮助过对方。"
-        + (a && b ? (aliasOf(a, aliasFn) + "把粮食交给了" + aliasOf(b, aliasFn) + "。") : "");
+        + (a && b ? (aliasOf(a, aliasFn) + "把粮食交给了" + aliasOf(b, aliasFn)
+          + (share ? ("，" + share) : "") + "。") : "");
     } else if (ch.kind === "final") {
       const pop = factVal(facts, "pop");
       copy = "看到这里，已记录历史到第 " + ch.year + " 年。"
@@ -94,18 +142,9 @@
     } else copy = title || "这一段记录。";
     const extra = [];
     (ch.actor_ids || []).forEach((id) => extra.push(aliasOf(id, aliasFn)));
-    const factLines = [];
-    if (ch.kind !== "origin" && ch.kind !== "final") {
-      Object.keys(facts).forEach((k) => {
-        const f = facts[k];
-        if (!f || f.value == null || typeof f.value === "object") return;
-        if (f.basis === "year_end" || f.basis === "cumulative") return;
-        if (k === "stock_total" || k === "store_total") return;
-        factLines.push(k + " " + f.value + (f.unit ? " " + f.unit : ""));
-      });
-    }
-    const banned = /因此没有人饿死|为了感恩|明年一定丰收|保证能活/.test(copy);
-    return { title: title, copy: copy, facts: factLines.join(" · "), actors: extra, banned: banned };
+    const source = formatSourceFacts(ch);
+    const banned = /因此没有人饿死|为了感恩|明年一定丰收|保证能活/.test(copy) || rawInMain(copy);
+    return { title: title, copy: copy, facts: "", source: source, actors: extra, banned: banned };
   }
   function chapterAction(kind) {
     if (kind === "clearing") return "till";
@@ -123,6 +162,7 @@
   const WatchLogic = {
     cmpId: cmpId, gapText: gapText, narrate: narrate, missingLabel: missingLabel,
     chapterAction: chapterAction, pinPath: pinPath, names: names, factVal: factVal,
+    formatSourceFacts: formatSourceFacts, rawInMain: rawInMain, fieldUnits: fieldUnits,
   };
 
   const Player = {
@@ -178,7 +218,12 @@
     if (title) title.textContent = (Player.idx + 1) + "/" + Player.plan.chapters.length + " · " + said.title;
     if (copy) copy.textContent = said.copy;
     if (gapEl) { gapEl.hidden = !gap; gapEl.textContent = gap; }
-    if (facts) facts.textContent = said.facts || "";
+    if (facts) {
+      facts.textContent = "";
+      facts.hidden = true;
+    }
+    const srcBody = $("an-watch-src-body");
+    if (srcBody) srcBody.textContent = said.source || "";
     if (actors) {
       const ids = ch.actor_ids || [];
       actors.innerHTML = ids.map((id) => {
@@ -322,6 +367,8 @@
     const src = $("an-watch-source");
     if (src) src.addEventListener("click", (e) => {
       e.preventDefault();
+      const body = $("an-watch-src-body");
+      if (body) body.hidden = !body.hidden;
       const ch = Player.plan && Player.plan.chapters[Player.idx];
       if (ch && ch.event_id && Player.host && Player.host.openEventSource) Player.host.openEventSource(ch.event_id);
     });
