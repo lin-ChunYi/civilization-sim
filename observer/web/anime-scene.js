@@ -836,15 +836,21 @@
           const farmCell = farm && farm.cells && farm.cells.find((c) => +c.cell === +b.cell);
           const fu = farmCell ? (farmCell.field_after_m / 1000) : null;
           const storeLine = b.store == null ? "储粮未记录" : ((b.store / need).toFixed(1) + " 人年" + (days == null ? "" : "，约 " + days + " 天"));
+          const ck = String((run && run.run_id) || "") + "|" + String(b.id);
+          const cardOpen = !!(root.AnimeScene && root.AnimeScene.cardSourceOpen && root.AnimeScene.cardSourceOpen[ck]);
           card.innerHTML = "<div class=\"an-card-h\">" + portraitSvg(b, al, pal) +
             "<div><strong>" + esc(al) + "</strong>" +
             "<ul class=\"an-card-kv\">" +
             "<li>人口 " + b.size + " 人</li>" +
             "<li>" + storeLine + "</li>" +
             "<li>耕地 " + (fu == null ? (farm ? "这里没有田" : "未记录") : fu.toFixed(1) + " 单位") + "</li></ul>" +
-            "<details class=\"an-card-src\"><summary>来源</summary>" +
-            "<div class=\"muted\">ID " + esc(String(b.id)) +
+            "<details class=\"an-card-src\" data-band=\"" + esc(String(b.id)) + "\"" + (cardOpen ? " open" : "") + "><summary>来源</summary>" +
+            "<div class=\"muted an-card-src-body\">ID " + esc(String(b.id)) +
             (b.cell != null ? " · cell " + b.cell : "") + "</div></details></div></div>";
+          if (cardOpen) {
+            const d = card.querySelector("details.an-card-src");
+            if (d && typeof d.scrollIntoView === "function") d.scrollIntoView({ block: "nearest" });
+          }
         } else {
           const known = !!(ident && ident.pal && ident.alias);
           const firstT = ident && ident.firstT;
@@ -892,6 +898,7 @@
     palOf: palOf, daysOfStore: daysOfStore, speech: speech,
     paint: paint, fillChrome: fillChrome, portraitSvg: portraitSvg, chibi: chibi,
     sourceOpen: {},
+    cardSourceOpen: {},
     Identity: Identity, slotBands: slotBands, viewBoxFor: viewBoxFor, WORLD: WORLD,
     WORLD_MOBILE: WORLD_MOBILE, worldBase: worldBase, bubbleSpeech: bubbleSpeech,
     poseJoints: poseJoints, chibiBody: chibiBody, cmpId: cmpId,

@@ -1384,6 +1384,18 @@ function bindAnimeChrome() {
       else delete sc.sourceOpen[k];
     });
   });
+  document.querySelectorAll(".an-card-src").forEach((d) => {
+    d.addEventListener("toggle", () => {
+      const sc = rootAnimeScene();
+      if (!sc.cardSourceOpen) sc.cardSourceOpen = {};
+      const band = d.dataset.band || (S.selBand != null ? String(S.selBand) : "");
+      const k = String(S.run && S.run.run_id || "") + "|" + band;
+      if (d.open) {
+        sc.cardSourceOpen[k] = true;
+        if (typeof d.scrollIntoView === "function") d.scrollIntoView({ block: "nearest" });
+      } else delete sc.cardSourceOpen[k];
+    });
+  });
   const open = $("an-ev-open");
   if (open) open.onclick = () => { if ($("an-ev-drawer")) $("an-ev-drawer").hidden = false; };
   document.querySelectorAll(".an-setup [data-tab]").forEach((n) => {
