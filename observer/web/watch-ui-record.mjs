@@ -13,7 +13,7 @@ const BASE = (flag("base-url", "http://127.0.0.1:8918") || "").replace(/\/$/, ""
 const ART = flag("artifact-dir", join(here, "screenshots", "watch-record"));
 const USER = flag("user-data-dir", "/tmp/g-watch-record");
 const CDP = Number(flag("cdp-port", "9435"));
-const PAGE = BASE + "/?v=w2#tab=world&run=preset-anime-farm250&t=0";
+const PAGE = BASE + "/?v=w3#tab=world&run=preset-anime-farm250&t=0";
 const chromeCands = [
   process.env.CHROME,
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",

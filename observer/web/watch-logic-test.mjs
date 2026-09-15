@@ -113,7 +113,28 @@ const said = L.narrate(harvestCh, alias);
 ok("L7 harvest copy uses alias and person-years, not invented motive",
   /云杉2/.test(said.copy) && /5\.3|5 人一年/.test(said.copy)
   && !said.banned && !/感恩|饿死|明年一定/.test(said.copy), said.copy);
-ok("L7b year_end facts are not in causal fact line", !/120/.test(said.facts), said.facts);
+ok("L7b main scene has no raw fact keys", !L.rawInMain(said.copy) && !L.rawInMain(said.facts) && said.facts === "", said.copy + " || " + said.facts);
+ok("L7c exact harvest facts live in Source", /harvested_kcal = 3849598/.test(said.source) && /person_years/.test(said.source), said.source.slice(0, 180));
+
+const clearCh = {
+  kind: "clearing", title: "第一次开垦", year: 1, actor_ids: ["7567856178022945294"],
+  facts: {
+    built_m: { value: 5000, unit: "field_m（1000 = 1 个耕作规模单位）", source: "events[].amount_m" },
+    field_before_m: { value: 0, unit: "field_m", source: "events[].field_before_m" },
+    field_after_m: { value: 5000, unit: "field_m", source: "events[].field_after_m" },
+    labour_m: { value: 5000, unit: "劳动刻度（人数 × 1000）", source: "events[].labour_m" },
+    harvested_kcal_here_this_year: { value: 0, unit: "kcal", source: "模型规则" },
+  },
+};
+const cleared = L.narrate(clearCh, alias);
+ok("L7d clearing copy is ordinary wording plus readable units",
+  /云杉2/.test(cleared.copy) && /5 个耕作规模单位/.test(cleared.copy)
+  && /以后年份才可能有收成/.test(cleared.copy)
+  && !L.rawInMain(cleared.copy) && !L.rawInMain(cleared.facts) && cleared.facts === "",
+  cleared.copy);
+ok("L7e clearing Source keeps exact built_m/labour_m",
+  /built_m = 5000/.test(cleared.source) && /labour_m = 5000/.test(cleared.source)
+  && /harvested_kcal_here_this_year = 0/.test(cleared.source), cleared.source.slice(0, 240));
 
 const aidCh = { kind: "aid", title: "第一次援助", actor_ids: ["a", "b"] };
 const aidSaid = L.narrate(aidCh, (id) => id === "a" ? "青禾2" : "芦花");

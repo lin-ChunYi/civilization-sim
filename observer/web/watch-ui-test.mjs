@@ -43,7 +43,7 @@ const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--disable-http-cache",
   `--remote-debugging-port=${CDP}`, `--user-data-dir=${USER}`,
   "--window-size=1536,1024",
-  BASE + "/?v=w2#tab=world&run=" + SAMPLE + "&t=0",
+  BASE + "/?v=w3#tab=world&run=" + SAMPLE + "&t=0",
 ], { stdio: "ignore" });
 
 let ws;
@@ -128,7 +128,30 @@ try {
   ok("B3 next chapter matches plan year/event",
     ch1 && ch1.chapter && ch1.chapter.year === plan.chapters[1].year
     && String(ch1.chapter.event_id || "") === String(plan.chapters[1].event_id || ""),
-    JSON.stringify({ got: ch1 && ch1.chapter, want: plan.chapters[1] }));
+    JSON.stringify({ got: ch1 && ch1.chapter && { year: ch1.chapter.year, kind: ch1.chapter.kind, event_id: ch1.chapter.event_id }, want: { year: plan.chapters[1].year, kind: plan.chapters[1].kind, event_id: plan.chapters[1].event_id } }));
+  await click("#an-watch-pause");
+  await sleep(250);
+  const mainCopy = await ev(`(function(){
+    var copy=document.getElementById('an-watch-copy') && document.getElementById('an-watch-copy').textContent;
+    var facts=document.getElementById('an-watch-facts') && document.getElementById('an-watch-facts').textContent;
+    var hidden=document.getElementById('an-watch-facts') && document.getElementById('an-watch-facts').hidden;
+    var raw=/built_m|field_before_m|field_after_m|labour_m|harvested_kcal_here_this_year|field_m（/;
+    return {copy:copy, facts:facts, factsHidden:hidden, raw: raw.test(copy||'') || raw.test(facts||'')};
+  })()`);
+  ok("B3c clearing main copy has no raw fact keys",
+    mainCopy && mainCopy.raw === false && /开垦|耕作规模单位/.test(mainCopy.copy || ""),
+    JSON.stringify(mainCopy));
+  await shot("watch-clearing-paused-1536.png", 1536, 1024, false);
+  await click("#an-watch-source");
+  await sleep(300);
+  const srcBody = await ev("document.getElementById('an-watch-src-body') && document.getElementById('an-watch-src-body').textContent");
+  const srcOpen = await ev("document.getElementById('an-watch-src-body') && !document.getElementById('an-watch-src-body').hidden");
+  ok("B3d Source keeps exact built_m and labour_m",
+    srcOpen && /built_m = 5000/.test(srcBody || "") && /labour_m = 5000/.test(srcBody || ""),
+    String(srcBody).slice(0, 280));
+  await shot("watch-clearing-source-1536.png", 1536, 1024, false);
+  await click("#an-watch-pause");
+  await sleep(200);
   const farm = await ev(`(function(){
     var n=document.getElementById('fx-farm');
     var rig=n && n.querySelector('.motion-rig');
