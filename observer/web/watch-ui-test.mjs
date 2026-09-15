@@ -43,7 +43,7 @@ const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--disable-http-cache",
   `--remote-debugging-port=${CDP}`, `--user-data-dir=${USER}`,
   "--window-size=1536,1024",
-  BASE + "/?v=w3#tab=world&run=" + SAMPLE + "&t=0",
+  BASE + "/?v=w4#tab=world&run=" + SAMPLE + "&t=0",
 ], { stdio: "ignore" });
 
 let ws;
@@ -99,6 +99,31 @@ try {
     JSON.stringify({ n: (plan.chapters || []).length, kinds: (plan.chapters || []).map((c) => c.kind) }));
 
   ok("B0 opened sample", (await ev("window.__obs.S.run && window.__obs.S.run.run_id")) === SAMPLE);
+  await ev("window.__obs.gotoYear(2)");
+  await sleep(700);
+  const home = await ev(`(function(){
+    var evs=document.getElementById('an-events');
+    var text=evs && evs.innerText;
+    var opts=[].map.call(document.querySelectorAll('#an-run option'), function(o){return {value:o.value,label:o.textContent};});
+    var sample=opts.find(function(o){return o.value==='preset-anime-farm250';});
+    return {
+      text:text,
+      hasCell:/第\\s*\\d+\\s*格/.test(text||''),
+      hasKcal:/kcal/i.test(text||''),
+      sample:sample
+    };
+  })()`);
+  ok("B-home compact events have no cell/kcal",
+    home && home.hasCell === false && home.hasKcal === false && /收成了作物|人一年口粮/.test(home.text || ""),
+    JSON.stringify({ text: (home && home.text || "").slice(0, 220), hasCell: home && home.hasCell, hasKcal: home && home.hasKcal }));
+  ok("B-home an-run values stay ids, labels have no EXP/FARM_M/seed",
+    home && home.sample && home.sample.value === SAMPLE
+    && !/EXP|FARM_M|seed/i.test(home.sample.label || "")
+    && /示例世界/.test(home.sample.label || ""),
+    JSON.stringify(home && home.sample));
+  await shot("watch-home-year2-1536.png", 1536, 1024, false);
+  await ev("window.__obs.gotoYear(0)");
+  await sleep(500);
   const startHit = await click("#an-watch-start");
   ok("B1 看这段历史 is clickable", !!(startHit && startHit.w > 8), JSON.stringify(startHit));
   await sleep(1800);
