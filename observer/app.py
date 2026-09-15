@@ -20,7 +20,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StrictInt, StrictStr
 
-from . import adapter, checkpoints, config, continuation, milestones, presets, store
+from . import (adapter, checkpoints, config, continuation, milestones, presets,
+               store, watch_plan)
 
 app = FastAPI(title="文明观察台 OBS-01", docs_url=None, redoc_url=None)
 # observer/web/ 归 UI 分支（Grok）所有；后台只读它，不往里写任何文件。
@@ -646,6 +647,29 @@ def _validate(body: NewRun) -> None:
         raise HTTPException(400, f"arm 只能是 {list(config.ARMS)} 之一")
     if len(body.label) > 60:
         raise HTTPException(400, "备注最长 60 字")
+
+
+@app.get("/api/runs/{run_id}/watch-plan", dependencies=[Depends(require_read)])
+def get_watch_plan(run_id: str, through: Optional[int] = None):
+    """**只读**的观看计划：把已经存下来的这段历史整理成可回放的章节目录。
+
+    口径见 `docs/OBS-WATCH-PLAN-CONTRACT.md`。几条不肯让步的：
+
+      * 只扫描**请求开始那一刻**确定的有效前缀 `0..recorded_through`，
+        尾巴上没写完的那一年不算；不跑模拟、不补事件、不占任务槽。
+      * 身份目录是逐年**实际在世记录**扫出来的，不拿"群体总数变没变多"去猜。
+      * 没发生的事就没有那一章，并在 `missing_kinds` 里说清是**哪一种**缺。
+      * `through=N` 可选：导览开始后固定用自己那份水位，记录长了也不会中途换章节。
+        超过已记录的年数一律 400，不静默夹取。
+    """
+    run = store.get_run(run_id)
+    if not run:
+        raise HTTPException(404, "没有这次运行")
+    try:
+        return watch_plan.get(run_id, run, through)
+    except watch_plan.PlanError as exc:
+        raise HTTPException(400 if exc.code == "through_out_of_range" else 409,
+                            exc.message) from exc
 
 
 @app.post("/api/runs", dependencies=[Depends(require_write)])

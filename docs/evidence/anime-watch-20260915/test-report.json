@@ -1,0 +1,251 @@
+{
+ "task": "C_WATCH_DATA_01",
+ "generated_at": 1789436916.3594198,
+ "schema": "watch-plan-1",
+ "api_version": "obs-1.11",
+ "data_dir": "/tmp/chronicle-watch-20260915/testdata",
+ "commands": [],
+ "results": [
+  {
+   "name": "W0a 契约版本递增到 obs-1.11，默认引擎没改",
+   "state": "PASS",
+   "detail": "obs-1.11 / exp03"
+  },
+  {
+   "name": "W0b 运行不存在给 404",
+   "state": "PASS",
+   "detail": "404"
+  },
+  {
+   "name": "W0c 设了令牌后，取导览无令牌被拒",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "W0d 带正确令牌可以读（沿用既有 require_read，没另造一套鉴权）",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "W1a preset-anime-farm250 按固定 sample_id + kind + 完整模型身份核对",
+   "state": "PASS",
+   "detail": "kind=preset model_run_id=8d6281d91c14"
+  },
+  {
+   "name": "W1b preset-anime-farm250 章节 ≤7、开局在前、末年概览在后、按年份排",
+   "state": "PASS",
+   "detail": "origin@0/clearing@1/harvest@2/migrate@218/aid@267/repay@295/final@300"
+  },
+  {
+   "name": "W1c preset-anime-farm250 每一章的 id / 对象 / 数量 / 依据都回查得上",
+   "state": "PASS",
+   "detail": "[]"
+  },
+  {
+   "name": "W1a preset-anime-exp06 按固定 sample_id + kind + 完整模型身份核对",
+   "state": "PASS",
+   "detail": "kind=preset model_run_id=df1a9f479846"
+  },
+  {
+   "name": "W1b preset-anime-exp06 章节 ≤7、开局在前、末年概览在后、按年份排",
+   "state": "PASS",
+   "detail": "origin@0/migrate@26/aid@73/repay@128/final@300"
+  },
+  {
+   "name": "W1c preset-anime-exp06 每一章的 id / 对象 / 数量 / 依据都回查得上",
+   "state": "PASS",
+   "detail": "[]"
+  },
+  {
+   "name": "W1a preset-anime-farm0 按固定 sample_id + kind + 完整模型身份核对",
+   "state": "PASS",
+   "detail": "kind=preset model_run_id=112c9e1f580a"
+  },
+  {
+   "name": "W1b preset-anime-farm0 章节 ≤7、开局在前、末年概览在后、按年份排",
+   "state": "PASS",
+   "detail": "origin@0/migrate@26/aid@73/repay@128/final@300"
+  },
+  {
+   "name": "W1c preset-anime-farm0 每一章的 id / 对象 / 数量 / 依据都回查得上",
+   "state": "PASS",
+   "detail": "[]"
+  },
+  {
+   "name": "W1a preset-anime-farm1000 按固定 sample_id + kind + 完整模型身份核对",
+   "state": "PASS",
+   "detail": "kind=preset model_run_id=940cca8853e0"
+  },
+  {
+   "name": "W1b preset-anime-farm1000 章节 ≤7、开局在前、末年概览在后、按年份排",
+   "state": "PASS",
+   "detail": "origin@0/migrate@1/clearing@1/harvest@2/final@300"
+  },
+  {
+   "name": "W1c preset-anime-farm1000 每一章的 id / 对象 / 数量 / 依据都回查得上",
+   "state": "PASS",
+   "detail": "[]"
+  },
+  {
+   "name": "W1d 案例 A 的章节锚点与交接清单逐条一致（不符就报差异，不改记录迁就清单）",
+   "state": "PASS",
+   "detail": "开垦1/收成2/迁移218/援助267/回助295"
+  },
+  {
+   "name": "W2a 0..300 年记录、检查点、meta 逐字节不变",
+   "state": "PASS",
+   "detail": "比对 4 条运行的全部文件"
+  },
+  {
+   "name": "W2b 运行条数没变（没有新建任何运行）",
+   "state": "PASS",
+   "detail": "7"
+  },
+  {
+   "name": "W2c 旧接口在取过导览之后照样可读",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "W3a 三个身份都在（净群体数第 1→2 年都是 2，没有漏扫）",
+   "state": "PASS",
+   "detail": "['100', '200', '300']"
+  },
+  {
+   "name": "W3b 消失的那个有 extinct_year、last_year 是最后一次在世的年份",
+   "state": "PASS",
+   "detail": "{\"id\": \"200\", \"first_year\": 0, \"last_year\": 1, \"parent_id\": null, \"extinct_year\": 2}"
+  },
+  {
+   "name": "W3c 新分裂出来的 first_year=2，亲本来自 split 日志",
+   "state": "PASS",
+   "detail": "{\"id\": \"300\", \"first_year\": 2, \"last_year\": 3, \"parent_id\": \"100\", \"extinct_year\": null}"
+  },
+  {
+   "name": "W3d 开局群体的 parent_id 是 null，不是猜出来的",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "W4a 子运行跑完并且能单独取到计划",
+   "state": "PASS",
+   "detail": "status=done through=12"
+  },
+  {
+   "name": "W4b 两边共有的群体 first_year 完全相同（子运行读自己那份完整前缀）",
+   "state": "PASS",
+   "detail": "共有 6 个"
+  },
+  {
+   "name": "W4c 排序也一样（按 first_year + 数值型完整 id）",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "W4d 子运行的 root_run_id 指回同一条根",
+   "state": "PASS",
+   "detail": "b15d66a5f2e5"
+  },
+  {
+   "name": "W4e 父历史被删掉后，子运行的计划照常（不依赖父运行还在）",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "W5a 记录长出新一年后，旧身份的 first_year 一个都没变",
+   "state": "PASS",
+   "detail": "{\"100\": 0}"
+  },
+  {
+   "name": "W5b 新身份是真的新出现的那一个，first_year 是它首次在世那年",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "W5c 水位跟着涨，并如实写在 source 里",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "W5d through=2 钉住旧水位：章节与身份与当时那份一致（导览中途不会换章）",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "W5e through 超过已记录年数给 400，不静默夹取",
+   "state": "PASS",
+   "detail": "400"
+  },
+  {
+   "name": "W5f 尾巴是半截行时，水位停在最后一条完整记录，不把半截行算进来",
+   "state": "PASS",
+   "detail": "{'engine_sha256': None, 'recorded_through': 2, 'identity_complete_through': 2, 'scope': 'recorded_history'}"
+  },
+  {
+   "name": "W5g 一年都读不出来时给 409 明确报错，不返回空目录宣布看完",
+   "state": "PASS",
+   "detail": "409"
+  },
+  {
+   "name": "W6a 全程没有任何事件：只有开局与末年两章，不编事件凑数",
+   "state": "PASS",
+   "detail": "['origin', 'final']"
+  },
+  {
+   "name": "W6b 这时五类全部缺，理由是 not_observed（机制开着、参数非 0，就是没发生）",
+   "state": "PASS",
+   "detail": "[{\"kind\": \"clearing\", \"reason\": \"not_observed\"}, {\"kind\": \"harvest\", \"reason\": \"not_observed\"}, {\"kind\": \"migrate\", \"reason\": \"not_observed\"}, {\"kind\": \"aid\", \"reason\": \"not_observed\"}, {\"kind\": \"repay\", \"reason\": \"not_observed\"}]"
+  },
+  {
+   "name": "W6c 只有第 0 年时只出一章开局（不拿同一年再凑一章末年概览）",
+   "state": "PASS",
+   "detail": ""
+  },
+  {
+   "name": "W6d 旧引擎缺农业 = engine_lacks_mechanism（不是 0）",
+   "state": "PASS",
+   "detail": "{\"clearing\": \"engine_lacks_mechanism\", \"harvest\": \"engine_lacks_mechanism\"}"
+  },
+  {
+   "name": "W6e FARM_M=0 = param_zero（机制在、值确实是 0）",
+   "state": "PASS",
+   "detail": "{\"clearing\": \"param_zero\", \"harvest\": \"param_zero\"}"
+  },
+  {
+   "name": "W6f 机制开着但 300 年没发生 = not_observed",
+   "state": "PASS",
+   "detail": "{\"aid\": \"not_observed\", \"repay\": \"not_observed\"}"
+  },
+  {
+   "name": "W6g 钉住水位时缺的那几类写 outside_watermark，不谎称整段历史没发生",
+   "state": "PASS",
+   "detail": "[{\"kind\": \"migrate\", \"reason\": \"outside_watermark\"}, {\"kind\": \"aid\", \"reason\": \"outside_watermark\"}, {\"kind\": \"repay\", \"reason\": \"outside_watermark\"}]"
+  },
+  {
+   "name": "W6h 运行还在跑时缺项写 history_incomplete（后面可能还会出现）",
+   "state": "PASS",
+   "detail": "[{\"kind\": \"clearing\", \"reason\": \"history_incomplete\"}, {\"kind\": \"harvest\", \"reason\": \"history_incomplete\"}, {\"kind\": \"migrate\", \"reason\": \"history_incomplete\"}, {\"kind\": \"aid\", \"reason\": \"history_incomplete\"}, {\"kind\": \"repay\", \"reason\": \"history_incomplete\"}]"
+  },
+  {
+   "name": "W7a 只留下真实存在且更早的那一条，未来的 / 不存在的一律不进依据",
+   "state": "PASS",
+   "detail": "['t1-aid-0']"
+  },
+  {
+   "name": "W7b 别的运行里有同名 id 也不算数（依据只在本次运行里找）",
+   "state": "PASS",
+   "detail": "[]"
+  },
+  {
+   "name": "W7c 非回助的章节不带依据",
+   "state": "PASS",
+   "detail": ""
+  }
+ ],
+ "totals": {
+  "pass": 47,
+  "fail": 0,
+  "uncovered": 0,
+  "total": 47
+ }
+}

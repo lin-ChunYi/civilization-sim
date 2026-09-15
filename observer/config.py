@@ -81,7 +81,9 @@ CANCEL_GRACE_SEC = float(os.environ.get("OBSERVER_CANCEL_GRACE", "15"))
 # 旧记录里存着的 api_version 保留它自己的历史身份，不回头改写。
 # 本批（EXP-07）新增 farm 段与 farm_m 参数，属于新增，小版本递增到 obs-1.10。
 # 旧记录里存着的 api_version 保留它自己的历史身份，不回头改写。
-API_VERSION = "obs-1.10"
+# 本批（ANIME-WATCH-01）新增只读端点 GET /api/runs/{id}/watch-plan，属于新增端点，
+# 小版本递增到 obs-1.11。既有端点的语义一个字没改。
+API_VERSION = "obs-1.11"
 
 # --- 续演（C_CONT_01）---
 # 只有**新建的 EXP-06 运行**才会写检查点；旧运行与预生成案例没有检查点，

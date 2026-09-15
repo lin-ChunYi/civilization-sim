@@ -745,7 +745,7 @@ with TestClient(app) as c9:
           <= set(spec) and spec["recip_m"]["max"] == 1000
           and spec["recip_m"]["unit"] and spec["recip_m"]["min"] == 0,
           str(spec.get("recip_m"))[:80])
-    check("O27b 契约版本升到 obs-1.10", cfg["api_version"] == "obs-1.10", cfg["api_version"])
+    check("O27b 契约版本升到 obs-1.11", cfg["api_version"] == "obs-1.11", cfg["api_version"])
 
     runs = {r["run_id"]: r for r in c9.get("/api/runs").json()["runs"]}
     pair = ["preset-exp06-recip0", "preset-exp06-recip1000"]

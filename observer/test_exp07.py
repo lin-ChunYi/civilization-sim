@@ -184,8 +184,8 @@ from observer.app import app                                          # noqa: E4
 
 with TestClient(app) as c:
     cfg = c.get("/api/config").json()
-    check("P1 契约版本升到 obs-1.10，默认引擎仍是 exp03",
-          cfg["api_version"] == "obs-1.10" and cfg["default_engine"] == "exp03",
+    check("P1 契约版本升到 obs-1.11，默认引擎仍是 exp03",
+          cfg["api_version"] == "obs-1.11" and cfg["default_engine"] == "exp03",
           "%s / %s" % (cfg["api_version"], cfg["default_engine"]))
     e7 = cfg["engines"].get("exp07", {})
     check("P2 exp07 已登记，farm_m 排在 recip_m 之后",
