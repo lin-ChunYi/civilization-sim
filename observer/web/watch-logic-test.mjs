@@ -165,6 +165,29 @@ ok("L10c Number() would have reordered 20 vs 100 if used as numbers — we did n
   Number("20") < Number("100") && order.indexOf("20") < order.indexOf("100"));
 
 ok("L11 chapter actions", L.chapterAction("clearing") === "till" && L.chapterAction("harvest") === "harvest");
+
+const aliasHome = (id) => id === "p1" ? "云杉2" : "青禾";
+const harSpeech = A.speech({ type: "farm_harvest", participants: ["p1"], kcal: 3849598, cell: 0, id: "t2-farm_harvest-0" }, aliasHome, 730000);
+ok("L13 compact harvest has person-year food, no cell/kcal",
+  /云杉2 收成了作物/.test(harSpeech) && /人一年口粮/.test(harSpeech)
+  && !/第\s*0\s*格/.test(harSpeech) && !/kcal/i.test(harSpeech), harSpeech);
+const zeroSpeech = A.speech({ type: "farm_harvest", band: "p1", kcal: 0, cell: 6 }, aliasHome, 730000);
+ok("L13b harvest 0 is distinct from missing", /数量为 0/.test(zeroSpeech) && !/未记录/.test(zeroSpeech), zeroSpeech);
+const missSpeech = A.speech({ type: "farm_harvest", band: "p1", cell: 6 }, aliasHome, 730000);
+ok("L13c harvest missing kcal is 未记录, not 0", /数量未记录/.test(missSpeech) && !/数量为 0/.test(missSpeech), missSpeech);
+const builtSpeech = A.speech({ type: "field_built", participants: ["p1"], labour_m: 5000, cell: 0 }, aliasHome, 730000);
+ok("L13d compact clearing has units, no 格",
+  /开垦了土地/.test(builtSpeech) && /耕作规模单位/.test(builtSpeech) && !/第\s*0\s*格/.test(builtSpeech), builtSpeech);
+scene.ANIME_CASES = {
+  samples: [
+    { sample_id: "preset-anime-farm250", tag: "A" },
+    { sample_id: "preset-anime-exp06", tag: "B" },
+  ],
+};
+ok("L14 sample selector labels have no EXP/FARM_M/seed",
+  A.ordinaryRunLabel({ run_id: "preset-anime-farm250", kind: "preset", label: "动漫案例 A · EXP-07 耕作 (FARM_M=250) · seed 4242" }) === "示例世界：开垦与收成"
+  && !/EXP|FARM_M|seed/.test(A.ordinaryRunLabel({ run_id: "preset-anime-exp06", kind: "preset", label: "EXP-06" })),
+  A.ordinaryRunLabel({ run_id: "preset-anime-farm250", kind: "preset" }));
 ok("L12 pin path keeps through", L.pinPath("preset-anime-farm250", 300).indexOf("through=300") >= 0);
 
 const failed = out.filter((x) => !x.pass);

@@ -119,10 +119,7 @@
       const share = sharePhrase(facts);
       copy = (who || "有人") + "一行收获了食物" + (share ? ("，" + share) : "") + "。";
     } else if (ch.kind === "migrate") {
-      const place = (ch.from != null && ch.to != null)
-        ? ("从第 " + ch.from + " 格迁到第 " + ch.to + " 格。")
-        : "迁到了另一处。";
-      copy = (who || "有人") + place + "这是群体代表的位置变化，不是某个人走完了整段人生。";
+      copy = (who || "有人") + "迁到了另一处。这是群体代表的位置变化，不是某个人走完了整段人生。";
     } else if (ch.kind === "aid") {
       const a = (ch.actor_ids || [])[0], b = (ch.actor_ids || [])[1];
       const share = sharePhrase(facts);

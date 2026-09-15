@@ -202,21 +202,70 @@
     });
     return out;
   }
-  function speech(ev, alias) {
+  function foodShare(kcal, needPc) {
+    if (kcal == null || kcal === "") return { kind: "missing" };
+    const n = Number(kcal);
+    if (!Number.isFinite(n)) return { kind: "missing" };
+    if (n === 0) return { kind: "zero" };
+    const need = Number(needPc);
+    if (Number.isFinite(need) && need > 0) {
+      const py = n / need;
+      const txt = Math.abs(py) >= 10 ? String(Math.round(py)) : py.toFixed(1).replace(/\.0$/, "");
+      return { kind: "qty", text: "约 " + txt + " 人一年口粮" };
+    }
+    return { kind: "qty", text: "有收成" };
+  }
+  function fieldShare(raw) {
+    if (raw == null || raw === "") return { kind: "missing" };
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return { kind: "missing" };
+    if (n === 0) return { kind: "zero" };
+    const u = n / 1000;
+    const txt = Math.abs(u - Math.round(u)) < 1e-6 ? String(Math.round(u)) : u.toFixed(1).replace(/\.0$/, "");
+    return { kind: "qty", text: "约 " + txt + " 个耕作规模单位" };
+  }
+  function qtyPhrase(share, empty) {
+    if (!share || share.kind === "missing") return empty || "，数量未记录";
+    if (share.kind === "zero") return "，数量为 0";
+    return "，" + share.text;
+  }
+  function ordinaryRunLabel(run) {
+    if (!run) return "世界";
+    const pack = (typeof root !== "undefined" && root.ANIME_CASES) || (typeof window !== "undefined" ? window.ANIME_CASES : null);
+    const s = pack && pack.samples && pack.samples.find((x) => x.sample_id === run.run_id);
+    if (s) {
+      if (s.tag === "A") return "示例世界：开垦与收成";
+      if (s.tag === "B") return "示例世界：没有耕作这件事";
+      if (s.tag === "C") return "示例世界：耕作设成了 0";
+      if (s.tag === "D") return "示例世界：后来有弃耕";
+      return "示例世界";
+    }
+    if (run.kind === "preset") return "示例世界";
+    const lab = String(run.label || "").trim();
+    const seen = run.years_recorded != null ? " · 已看到第 " + run.years_recorded + " 年" : "";
+    if (lab && !/EXP-?\d|FARM_M|seed|exp0/i.test(lab)) return lab + seen;
+    return "自建世界" + seen;
+  }
+  function speech(ev, alias, needPc) {
     if (!ev) return "";
     const a = (id) => alias(id);
-    if (ev.type === "aid") return a(ev.donor) + " 把粮食分给了 " + a(ev.receiver);
+    if (ev.type === "aid") {
+      return a(ev.donor) + " 把粮食分给了 " + a(ev.receiver) + qtyPhrase(foodShare(ev.kcal, needPc));
+    }
     if (ev.type === "share") return a(ev.donor) + " 把见闻告诉了 " + a(ev.receiver);
     if (ev.type === "migrate") return a(ev.band) + " 迁到了另一处";
-    if (ev.type === "field_built" || ev.type === "farm_harvest") {
+    if (ev.type === "field_built") {
       const who = (ev.participants && ev.participants.length)
         ? ev.participants.map((id) => a(id)).join("、")
         : a(ev.band);
-      const verb = ev.type === "field_built" ? " 开垦了土地" : " 收成了作物";
-      const qty = ev.type === "farm_harvest" && ev.kcal != null
-        ? "（" + Math.round(Number(ev.kcal) || 0) + " kcal）" : "";
-      const place = ev.cell != null ? " · 第 " + ev.cell + " 格" : "";
-      return who + verb + place + qty;
+      const raw = ev.labour_m != null ? ev.labour_m : (ev.amount_m != null ? ev.amount_m : ev.built_m);
+      return who + " 开垦了土地" + qtyPhrase(fieldShare(raw), "，规模未记录");
+    }
+    if (ev.type === "farm_harvest") {
+      const who = (ev.participants && ev.participants.length)
+        ? ev.participants.map((id) => a(id)).join("、")
+        : a(ev.band);
+      return who + " 收成了作物" + qtyPhrase(foodShare(ev.kcal, needPc));
     }
     if (ev.type === "field_decay") return "这片耕地在退化";
     if (ev.type === "split") return a(ev.parent || ev.band) + " 分成了两个群体";
@@ -725,7 +774,7 @@
       st.$("an-run").innerHTML = st.runs.map((r) => {
         const sel = r.run_id === cur ? " selected" : "";
         const mark = r.kind === "preset" ? "（示例）" : "";
-        const lab = r.label || ("世界 " + String(r.run_id).slice(0, 6));
+        const lab = ordinaryRunLabel(r);
         return "<option value=\"" + esc(r.run_id) + "\"" + sel + ">" + esc(lab + mark) + "</option>";
       }).join("");
     }
@@ -743,22 +792,28 @@
         : (n ? "<div class=\"muted\">本年共 " + n + " 条</div>" : "");
       list.innerHTML = "<h3>这一年</h3>" + (items.slice(0, 5).map((e) => {
         return "<button type=\"button\" class=\"an-ev\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\">" +
-          esc(speech(e, alias)) + "</button>";
+          esc(speech(e, alias, need)) + "</button>";
       }).join("") || "<p class=\"muted\">这一年没有可核实事件。</p>") + more;
     }
     const all = st.$("an-ev-all");
     if (all) {
       all.innerHTML = filtered.map((e) => {
-        const qty = e.kcal != null ? " · " + e.kcal + " kcal" : (e.labour_m != null ? " · " + (e.labour_m / 1000) + " 单位劳动" : "");
-        const where = e.cell != null ? "第 " + e.cell + " 格" : (e.from != null ? e.from + "→" + e.to : "地点未记录");
+        const exact = [];
+        if (e.id) exact.push("id " + e.id);
+        if (e.cell != null) exact.push("cell " + e.cell);
+        if (e.from != null || e.to != null) exact.push("from " + e.from + " to " + e.to);
+        if (e.kcal != null) exact.push("kcal " + e.kcal);
+        if (e.labour_m != null) exact.push("labour_m " + e.labour_m);
+        if (e.person_years != null) exact.push("person_years " + e.person_years);
         const ek = String((run && run.run_id) || "") + "|" + t + "|" + String(e.id || "");
         const opened = !!(root.AnimeScene && root.AnimeScene.sourceOpen && root.AnimeScene.sourceOpen[ek]);
         return "<div class=\"an-ev-row\">" +
           "<button type=\"button\" class=\"an-ev an-ev-full\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\">" +
-          "<b>" + esc(speech(e, alias)) + "</b>" +
-          "<span class=\"muted\">" + where + qty + " · id " + esc(String(e.id || "")) + "</span></button>" +
+          "<b>" + esc(speech(e, alias, need)) + "</b></button>" +
           "<details class=\"an-ev-src\" data-eid=\"" + esc(String(e.id || "")) + "\" data-year=\"" + t + "\"" +
           (opened ? " open" : "") + "><summary>来源</summary><div class=\"muted an-ev-src-body\">" +
+          esc(exact.join(" · ")) +
+          (exact.length ? " · " : "") +
           esc(e.source || "未标注") +
           (e.unrecorded ? " · 未记录：" + esc(e.unrecorded) : "") +
           "</div></details></div>";
@@ -783,12 +838,13 @@
           const storeLine = b.store == null ? "储粮未记录" : ((b.store / need).toFixed(1) + " 人年" + (days == null ? "" : "，约 " + days + " 天"));
           card.innerHTML = "<div class=\"an-card-h\">" + portraitSvg(b, al, pal) +
             "<div><strong>" + esc(al) + "</strong>" +
-            "<div class=\"muted\">来源 ID " + esc(String(b.id)) + "</div>" +
             "<ul class=\"an-card-kv\">" +
             "<li>人口 " + b.size + " 人</li>" +
             "<li>" + storeLine + "</li>" +
-            "<li>耕地 " + (fu == null ? (farm ? "本格无田" : "未记录") : fu.toFixed(1) + " 单位") + "</li>" +
-            "<li>第 " + b.cell + " 格</li></ul></div></div>";
+            "<li>耕地 " + (fu == null ? (farm ? "这里没有田" : "未记录") : fu.toFixed(1) + " 单位") + "</li></ul>" +
+            "<details class=\"an-card-src\"><summary>来源</summary>" +
+            "<div class=\"muted\">ID " + esc(String(b.id)) +
+            (b.cell != null ? " · cell " + b.cell : "") + "</div></details></div></div>";
         } else {
           const known = !!(ident && ident.pal && ident.alias);
           const firstT = ident && ident.firstT;
@@ -840,6 +896,7 @@
     WORLD_MOBILE: WORLD_MOBILE, worldBase: worldBase, bubbleSpeech: bubbleSpeech,
     poseJoints: poseJoints, chibiBody: chibiBody, cmpId: cmpId,
     applyPose: applyPose, ANIME_JOINT: ANIME_JOINT,
+    ordinaryRunLabel: ordinaryRunLabel, foodShare: foodShare,
   };
   if (typeof globalThis !== "undefined") globalThis.AnimeScene = root.AnimeScene;
 })(typeof window !== "undefined" ? window : globalThis);
